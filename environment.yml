@@ -1,0 +1,14 @@
+name: context-contrasting
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - matplotlib
+  - numpy
+  - pandas
+  - seaborn
+  - pytorch
+  - pip
+  - pip:
+      - -e .
