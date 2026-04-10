@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from typing import Literal
 
-from ..utils import EMA, ThresholdReLU, nonnegative, randn_reparam
+from context_contrasting.utils import EMA, ThresholdReLU, nonnegative, randn_reparam
 
 class CCNeuron(nn.Module):
     """
@@ -55,7 +55,9 @@ class CCNeuron(nn.Module):
         use_lat_connection:bool = True,
         lat_plasticity:bool = True,
         use_pv_connection:bool = True,
-        pv_plasticity:bool = True
+        pv_plasticity:bool = True,
+        use_pv_lat_connection:bool = True,
+        pv_lat_plasticity:bool = True
     ):
         super().__init__()
         if alpha <= 0:
@@ -80,6 +82,7 @@ class CCNeuron(nn.Module):
         self.w_ff = nonnegative(randn_reparam(size=(1,), **w_ff_init))
         self.w_fb = nonnegative(randn_reparam(size=(1,), **w_fb_init)) * self.receives_context
         self.w_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init))
+        self.w_pv_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init))
         self.W_pv = torch.cat((
             nonnegative(randn_reparam(size=(1,), mu = W_pv_init['mu'][0],sigma = W_pv_init['sigma'][0])).unsqueeze(0),
             nonnegative(randn_reparam(size=(1,), mu = W_pv_init['mu'][1],sigma = W_pv_init['sigma'][1])).unsqueeze(0)), 
@@ -102,6 +105,7 @@ class CCNeuron(nn.Module):
         self.w_ff_baseline = self.w_ff.detach().clone()
         self.w_fb_baseline = self.w_fb.detach().clone()
         self.w_lat_baseline = self.w_lat.detach().clone()
+        self.w_pv_lat_baseline = self.w_pv_lat.detach().clone()
         self.W_pv_baseline = self.W_pv.detach().clone()
 
         # Feedback specificity (decoding image identity with 60% accuracy)
@@ -115,6 +119,8 @@ class CCNeuron(nn.Module):
         self.FB_plasticity = FB_plasticity
         self.use_lat_connection = use_lat_connection
         self.lat_plasticity = lat_plasticity
+        self.use_pv_lat_connection = use_pv_lat_connection
+        self.pv_lat_plasticity = pv_lat_plasticity 
         self.use_pv_connection = use_pv_connection
         self.pv_plasticity = pv_plasticity
 
@@ -132,7 +138,8 @@ class CCNeuron(nn.Module):
 
         # feedforward excitation to PV neurons
         pv_ff = self.W_pv @ x * self.use_pv_connection
-        pv_lat = self.pyramidal.ema * self.w_lat * self.use_lat_connection
+        y_t = self.pyramidal.ema
+        pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
         p = self.pv(self.activation(
             pv_ff + pv_lat 
             + randn_reparam(size=self.pv.ema.shape, mu=0, sigma=0.06) # small random baseline input
@@ -143,23 +150,30 @@ class CCNeuron(nn.Module):
         y_ff  = torch.dot(self.w_ff, x) * self.use_FF_connection # feedforward excitation
         y_fb = torch.dot(self.w_fb, c * self.receives_context) * self.use_FB_connection # feedback excitation 
         y_lat = torch.dot(self.w_lat, p) * self.use_lat_connection # "lateral" inhibition 
-        y = self.pyramidal(self.activation(
+        y_next = self.pyramidal(self.activation(
             y_ff + y_fb - y_lat
             + randn_reparam(size=(), mu=0, sigma=0.01) # small random baseline input
             - a # adaptation
             ))
         
-        return x, y, p, c
+        return x, y_t, y_next, p, c
 
     @torch.no_grad()
-    def update(self, x_t: torch.Tensor, y_next:torch.Tensor, 
-               pv_t:torch.Tensor, c_t: torch.Tensor):
+    def update(self, 
+               x_t: torch.Tensor, 
+               y_t: torch.Tensor,
+               y_next: torch.Tensor, 
+               pv_t: torch.Tensor, 
+               c_t: torch.Tensor):
         """
         One local update step using current inputs (x_t, c_t).
         Returns y_{t+1}, p_t as computed for this step.
         """
-        dw_ff, dw_fb, dw_lat, dw_W_pv = (torch.zeros_like(self.w_ff), torch.zeros_like(self.w_fb), 
-                                         torch.zeros_like(self.w_lat), torch.zeros_like(self.W_pv))
+        dw_ff, dw_fb, dw_lat, dw_pv_lat, dw_W_pv = (torch.zeros_like(self.w_ff), 
+                                                    torch.zeros_like(self.w_fb), 
+                                                    torch.zeros_like(self.w_lat), 
+                                                    torch.zeros_like(self.w_pv_lat), 
+                                                    torch.zeros_like(self.W_pv))
         
         # 1) Anti-Hebbian update for w_ff
         if self.FF_plasticity:
@@ -181,9 +195,12 @@ class CCNeuron(nn.Module):
                 case "Hebbian":
                     dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context
 
-        # 3) Hebbian update for w_lat
+        # 3) Hebbian update for w_lat and w_pv_lat
         if self.lat_plasticity:
             dw_lat = self.lr_lat * (y_next * pv_t)
+
+        if self.pv_lat_plasticity:
+            dw_pv_lat = self.lr_lat * (y_t * pv_t)
 
         # 4) Hebbian update for W_pv
         if self.pv_plasticity:
@@ -193,6 +210,7 @@ class CCNeuron(nn.Module):
         self.w_ff += dw_ff
         self.w_fb += dw_fb
         self.w_lat += dw_lat
+        self.w_pv_lat += dw_pv_lat
         self.W_pv += dw_W_pv
         
         # Decay towards baseline
@@ -200,12 +218,14 @@ class CCNeuron(nn.Module):
             self.w_ff -= (self.w_ff - self.w_ff_baseline) * self.weight_decay * self.FF_plasticity
             self.w_fb -= (self.w_fb - self.w_fb_baseline) * self.weight_decay * self.FB_plasticity
             self.w_lat -= (self.w_lat - self.w_lat_baseline) * self.weight_decay * self.lat_plasticity
+            self.w_pv_lat -= (self.w_pv_lat - self.w_pv_lat_baseline) * self.weight_decay * self.pv_lat_plasticity
             self.W_pv -= (self.W_pv - self.W_pv_baseline) * self.weight_decay * self.pv_plasticity
         
         # Ensure non-negativity of weights
         self.w_ff = nonnegative(self.w_ff)
         self.w_fb = nonnegative(self.w_fb) * self.receives_context
         self.w_lat = nonnegative(self.w_lat)
+        self.w_pv_lat = nonnegative(self.w_pv_lat)
         self.W_pv = nonnegative(self.W_pv)
 
 
@@ -221,6 +241,6 @@ if __name__ == "__main__":
     C = torch.randn((n_steps, model.n_context)) # random context sequence
 
     for step in range(n_steps):
-        x, y, p, c = model(X[step], C[step])
-        update = model.update(x, y, p, c)
-        print(f"Step {step}: y={y.item():.4f}, p={p.detach().numpy()}")
+        x, y_t, y_next, p, c = model(X[step], C[step])
+        update = model.update(x, y_t, y_next, p, c)
+        print(f"Step {step}: y={y_next.item():.4f}, p={p.detach().numpy()}")

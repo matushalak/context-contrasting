@@ -9,8 +9,8 @@ from pandas import DataFrame
 import torch
 from typing import Literal
 
-from ..figures import FigureBuilder
-from . import PLOTSDIR
+from context_contrasting.figures import FigureBuilder
+from context_contrasting.minimal import PLOTSDIR
 
 PLOT_CONDITION_LABELS = {
     "full": "Nonoccluded",

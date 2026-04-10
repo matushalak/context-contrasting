@@ -4,13 +4,17 @@ import os
 import torch
 from pandas import DataFrame, concat as pd_concat
 
-from ..utils import randn_reparam
-from . import PLOTSDIR
-from .ablations import ABLATION_COMPONENTS, minimal_ablation_configs
-from .config import *
-from .minimal import CCNeuron
-from .utils import build_res, collect_outputs, prepare_collect
-from .visualize import TRANSITION_LABELS, visualize_experiment_results, visualize_transition_panel
+from context_contrasting.utils import randn_reparam
+from context_contrasting.minimal import PLOTSDIR
+from context_contrasting.minimal.ablations import ABLATION_COMPONENTS, minimal_ablation_configs
+from context_contrasting.minimal.config import *
+from context_contrasting.minimal.minimal import CCNeuron
+from context_contrasting.minimal.utils import build_res, collect_outputs, prepare_collect
+from context_contrasting.minimal.visualize import (
+    TRANSITION_LABELS,
+    visualize_experiment_results,
+    visualize_transition_panel,
+)
 
 EXPERIMENT_METADATA_PREFIX = "_"
 ABLATION_NAME_SEPARATOR = "__no_"

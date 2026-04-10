@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-from ..utils import ThresholdReLU
+from context_contrasting.utils import ThresholdReLU
 
 # Broadly tuned: Familiar -> FB responses, Novel -> FF & FB responses
 # X not seen in experimental data

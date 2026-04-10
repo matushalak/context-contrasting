@@ -1,6 +1,6 @@
 import os
 
-from .config import minimal_configs
+from context_contrasting.minimal.config import minimal_configs
 
 ABLATION_PLOTSDIR = os.path.join(os.path.dirname(__file__), "plots-ablations")
 os.makedirs(ABLATION_PLOTSDIR, exist_ok=True)
