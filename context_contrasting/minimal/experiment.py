@@ -1,110 +1,32 @@
 # author: Matúš Halák (@matushalak)
-import os
-
 import torch
 from pandas import DataFrame, concat as pd_concat
 
 from context_contrasting.utils import randn_reparam
 from context_contrasting.minimal import PLOTSDIR
-from context_contrasting.minimal.ablations import ABLATION_COMPONENTS, minimal_ablation_configs
-from context_contrasting.minimal.config import *
+from context_contrasting.minimal.config import minimal_configs
 from context_contrasting.minimal.minimal import CCNeuron
-from context_contrasting.minimal.utils import build_res, collect_outputs, prepare_collect
-from context_contrasting.minimal.visualize import (
-    TRANSITION_LABELS,
-    visualize_experiment_results,
-    visualize_transition_panel,
-)
+from context_contrasting.minimal.utils import (build_res, collect_outputs, prepare_collect, 
+                                               _rename_phase, _resolve_plots_dir, 
+                                               _save_grouped_transition_panels)
+from context_contrasting.minimal.visualize import visualize_experiment_results
 
-EXPERIMENT_METADATA_PREFIX = "_"
-ABLATION_NAME_SEPARATOR = "__no_"
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
 PRIMARY_EXPERIMENT_SERIES = "training_familiar"
 OCCLUDED_ONLY_EXPERIMENT_SERIES = "training_occluded_only"
 
 
-def _model_kwargs(model_config: dict) -> dict:
-    return {key: value for key, value in model_config.items() if not key.startswith(EXPERIMENT_METADATA_PREFIX)}
+def _run_single_config(
+    cfg_name: str,
+    cfg: dict,
+    n_steps_per_phase: int,
+)-> tuple[str, DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+    print(f"Running experiment for config: {cfg_name}")
+    df, stimuli = run_experiment(cfg, n_steps_per_phase=n_steps_per_phase)
+    return cfg_name, df, stimuli
 
-
-def _resolve_plots_dir(model_config: dict) -> str:
-    return model_config.get("_plots_dir", PLOTSDIR)
-
-
-def _tag_experiment_series(df: DataFrame, experiment_series: str) -> DataFrame:
-    tagged = df.copy()
-    tagged["experiment_series"] = experiment_series
-    return tagged
-
-
-def _iter_experiment_series(long_df: DataFrame) -> list[tuple[str | None, str, DataFrame]]:
-    if "experiment_series" not in long_df.columns:
-        return [(None, "", long_df)]
-
-    series_names = long_df["experiment_series"].dropna().unique().tolist()
-    if not series_names:
-        return [(None, "", long_df)]
-
-    series_entries: list[tuple[str | None, str, DataFrame]] = []
-    for idx, series_name in enumerate(series_names):
-        subset = long_df.loc[long_df["experiment_series"].eq(series_name)].copy()
-        if subset.empty:
-            continue
-        suffix = "" if idx == 0 else f"_{series_name}"
-        series_entries.append((series_name, suffix, subset))
-
-    return series_entries or [(None, "", long_df)]
-
-
-def _save_grouped_ablation_transition_panels(
-    long_dfs_by_transition: dict[str, DataFrame],
-    STIMULI: dict[str, tuple[torch.Tensor, torch.Tensor]],
-    save_path: str,
-    base_transition_order: list[str],
-) -> bool:
-    saved_any = False
-    sample_df = next(iter(long_dfs_by_transition.values()), None)
-    series_entries = _iter_experiment_series(sample_df) if sample_df is not None else [(None, "", DataFrame())]
-
-    for series_name, series_suffix, _ in series_entries:
-        for ablation_name in ABLATION_COMPONENTS:
-            grouped_transitions: dict[str, DataFrame] = {}
-            transition_labels: dict[str, str] = {}
-
-            for base_name in base_transition_order:
-                config_name = f"{base_name}{ABLATION_NAME_SEPARATOR}{ablation_name}"
-                long_df = long_dfs_by_transition.get(config_name)
-                if long_df is None:
-                    continue
-
-                if series_name is not None and "experiment_series" in long_df.columns:
-                    long_df = long_df.loc[long_df["experiment_series"].eq(series_name)].copy()
-                    if long_df.empty:
-                        continue
-
-                grouped_transitions[config_name] = long_df
-                transition_labels[config_name] = TRANSITION_LABELS.get(base_name, base_name)
-
-            if not grouped_transitions:
-                continue
-
-            generated_path = visualize_transition_panel(
-                grouped_transitions,
-                STIMULI=STIMULI,
-                save_path=save_path,
-                name=f"transition_panel_{ablation_name}{series_suffix}",
-                image_mode="both",
-                transition_order=list(grouped_transitions),
-                transition_labels=transition_labels,
-            )
-            target_path = os.path.join(
-                save_path,
-                f"transition_panel_familiar_novel_{ablation_name}{series_suffix}.png",
-            )
-            if generated_path != target_path:
-                os.replace(generated_path, target_path)
-            saved_any = True
-
-    return saved_any
 
 def design_experimental_phase(input_mean:torch.Tensor, input_var:torch.Tensor,
                               context_mean:torch.Tensor, context_var:torch.Tensor,
@@ -129,7 +51,8 @@ def design_experimental_phase(input_mean:torch.Tensor, input_var:torch.Tensor,
         X = X.repeat((n_trials, 1))
         C = C.repeat((n_trials, 1))
     
-    return [X, C] # Image consists of [X, C]
+    return X, C
+
 
 def run_experimental_phase(model:CCNeuron, X:torch.Tensor, C:torch.Tensor,
                            condition_name:str = 'default', 
@@ -145,12 +68,12 @@ def run_experimental_phase(model:CCNeuron, X:torch.Tensor, C:torch.Tensor,
 
     # Run the model over the sequence and collect outputs
     for step in range(X.shape[0]):
-        x, y, p, c = model(X[step], C[step])
+        x, y_t, y_next, p, c = model(X[step], C[step])
         if update:
-            model.update(x, y, p, c)
+            model.update(x, y_t, y_next, p, c)
         
         # Collect the raw tensors
-        data_collection = collect_outputs(step, x, y, p, c, model, data_collection)
+        data_collection = collect_outputs(step, x, y_next, p, c, model, data_collection)
     
     # Make data frame from collected data
     DF:DataFrame = build_res(data_collection, model)
@@ -158,18 +81,28 @@ def run_experimental_phase(model:CCNeuron, X:torch.Tensor, C:torch.Tensor,
     DF['condition'] = condition_name
     return DF
 
-def run_experiment(model_config:dict, n_steps_per_phase:int = 100) -> DataFrame:
-    model = CCNeuron(**_model_kwargs(model_config))
+
+def run_experiment(
+    model_config:dict,
+    n_steps_per_phase:int = 100,
+) -> tuple[DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+    model = CCNeuron(**{key: value for key, value in model_config.items() if not key.startswith("_")})
 
     # Image 1 ("familiar", trained on)
     X1, C1 = design_experimental_phase(input_mean=[1,0], input_var = 0.05,
                                        context_mean=[1,0], context_var=0.05,
                                        n_steps = n_steps_per_phase)
+    
+    X1_long, C1_long = design_experimental_phase(input_mean=[1,0], input_var = 0.05,
+                                                context_mean=[1,0], context_var=0.05,
+                                                n_steps = 2*n_steps_per_phase, n_trials=20)
+    
     # Image 2 ("novel", not trained on)
     X2, C2 = design_experimental_phase(input_mean=[0,1], input_var=0.05,
                                        context_mean=[0,1], context_var=0.05,
                                        n_steps = n_steps_per_phase)
     O = torch.zeros_like(X1) # occlusion (no input)
+    O_long = torch.zeros_like(X1_long)
     
     STIMULI = {'familiar': (X1, C1), 'novel': (X2, C2)}
 
@@ -193,8 +126,8 @@ def run_experiment(model_config:dict, n_steps_per_phase:int = 100) -> DataFrame:
     # Continue from the already-trained state, but train only on the occluded familiar stimulus.
     DF_training_familiar_occluded_only = run_experimental_phase(
         model,
-        O,
-        C1,
+        O_long,
+        C1_long,
         condition_name='occlusion_familiar_training',
         update=True,
     )
@@ -208,28 +141,28 @@ def run_experiment(model_config:dict, n_steps_per_phase:int = 100) -> DataFrame:
 
     df = pd_concat(
         [
-            _tag_experiment_series(DF1, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF2, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO1, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO2, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFNn, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF_training_familiar, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF_familiar, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF_novel, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO_familiar, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO_novel, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFNe, PRIMARY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF1, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF2, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO1, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO2, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFNn, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF_training_familiar_occluded_only, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF_familiar_occluded_only, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DF_novel_occluded_only, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO_familiar_occluded_only, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFO_novel_occluded_only, OCCLUDED_ONLY_EXPERIMENT_SERIES),
-            _tag_experiment_series(DFNe_occluded_only, OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            DF1.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DF2.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DFO1.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DFO2.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DFNn.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DF_training_familiar.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DF_familiar.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DF_novel.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DFO_familiar.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DFO_novel.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DFNe.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES),
+            DF_familiar.assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            DF_novel.assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            DFO_familiar.assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            DFO_novel.assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            DFNe.assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            DF_training_familiar_occluded_only.assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            _rename_phase(DF_familiar_occluded_only, "expert", "expert2").assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            _rename_phase(DF_novel_occluded_only, "expert", "expert2").assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            _rename_phase(DFO_familiar_occluded_only, "expert", "expert2").assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            _rename_phase(DFO_novel_occluded_only, "expert", "expert2").assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
+            _rename_phase(DFNe_occluded_only, "expert", "expert2").assign(experiment_series=OCCLUDED_ONLY_EXPERIMENT_SERIES),
         ],
         ignore_index=True,
     )
@@ -239,35 +172,35 @@ def run_experiment(model_config:dict, n_steps_per_phase:int = 100) -> DataFrame:
 
 
 if __name__ == "__main__":
+    results = Parallel(n_jobs=-1)(
+        delayed(_run_single_config)(
+            cfg_name,
+            cfg,
+            400,
+        )
+        for cfg_name, cfg in minimal_configs.items()
+    )
     long_dfs_by_transition: dict[str, DataFrame] = {}
-    shared_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
-    shared_plots_dir: str | None = None
-    include_novel_no_context = True
+    shared_stimuli = results[0][2] if results else None
+    shared_plots_dir = _resolve_plots_dir(next(iter(minimal_configs.values())), 
+                                          PLOTSDIR=PLOTSDIR) if minimal_configs else PLOTSDIR
 
-    # for cfg_name, cfg in minimal_configs.items():
-    for cfg_name, cfg in minimal_ablation_configs.items():
-        plots_dir = _resolve_plots_dir(cfg)
-        print(f"Running experiment for config: {cfg_name}")
-        df, STIMULI = run_experiment(cfg, n_steps_per_phase=400)
-        # for now just return the long format dataframe for visualization
+    for cfg_name, df, stimuli in results:
+        cfg = minimal_configs[cfg_name]
         long_df = visualize_experiment_results(
             df,
-            STIMULI=STIMULI,
-            save_path=plots_dir,
+            STIMULI=stimuli,
+            save_path=_resolve_plots_dir(cfg, PLOTSDIR=PLOTSDIR),
             name=cfg_name,
-            include_novel_no_context=include_novel_no_context,
-            xlim = (1000,1400)
+            include_novel_no_context=True,
+            xlim=(1000, 1400),
         )
         long_dfs_by_transition[cfg_name] = long_df
-        if shared_stimuli is None:
-            shared_stimuli = STIMULI
-        if shared_plots_dir is None:
-            shared_plots_dir = plots_dir
 
-    if shared_stimuli is not None and shared_plots_dir is not None:
-        _save_grouped_ablation_transition_panels(
+    if shared_stimuli is not None and long_dfs_by_transition:
+        _save_grouped_transition_panels(
             long_dfs_by_transition,
-            STIMULI=shared_stimuli,
+            stimuli=shared_stimuli,
             save_path=shared_plots_dir,
-            base_transition_order=list(minimal_configs),
+            transition_order=list(minimal_configs),
         )

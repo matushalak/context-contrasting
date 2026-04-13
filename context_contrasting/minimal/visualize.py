@@ -10,7 +10,13 @@ import torch
 from typing import Literal
 
 from context_contrasting.figures import FigureBuilder
-from context_contrasting.minimal import PLOTSDIR
+from context_contrasting.minimal import (
+    PLOTSDIR,
+    PLOT_ALL_PANELS_DIR,
+    PLOT_NOVEL_ONLY_DIR,
+    PLOT_PANEL_A_DIR,
+    PLOT_TRANSITION_PANELS_DIR,
+)
 
 PLOT_CONDITION_LABELS = {
     "full": "Nonoccluded",
@@ -46,6 +52,40 @@ TRACE_LABELS = {"full": "Nonoccluded", "occlusion": "Occluded"}
 IMAGE_LABELS = {"familiar": "Familiar Image", "novel": "Novel Image"}
 AXIS_LABEL_FONTSIZE = 32
 AXIS_TICK_FONTSIZE = 32
+PHASE_DISPLAY_LABELS = {
+    "naive": "Naive",
+    "expert": "Expert",
+    "expert2": "Expert2",
+}
+PHASE_ORDER = ["naive", "expert", "expert2"]
+
+
+def _resolve_phase_sequence(long_df: DataFrame) -> list[str]:
+    if "experiment_phase" not in long_df.columns:
+        return []
+    present = long_df["experiment_phase"].dropna().astype(str).unique().tolist()
+    return [phase for phase in PHASE_ORDER if phase in present]
+
+
+def _resolve_plot_dirs(base_dir: str) -> dict[str, str]:
+    if os.path.abspath(base_dir) == os.path.abspath(PLOTSDIR):
+        plot_dirs = {
+            "all_panels": PLOT_ALL_PANELS_DIR,
+            "panel_a": PLOT_PANEL_A_DIR,
+            "novel_only": PLOT_NOVEL_ONLY_DIR,
+            "transition_panels": PLOT_TRANSITION_PANELS_DIR,
+        }
+    else:
+        plot_dirs = {
+            "all_panels": os.path.join(base_dir, "all_panels"),
+            "panel_a": os.path.join(base_dir, "panel_A"),
+            "novel_only": os.path.join(base_dir, "novel_only"),
+            "transition_panels": os.path.join(base_dir, "transition_panels"),
+        }
+
+    for path in plot_dirs.values():
+        os.makedirs(path, exist_ok=True)
+    return plot_dirs
 
 
 def visualize_experiment_results(DF:DataFrame, STIMULI:dict[str, tuple[torch.Tensor, torch.Tensor]], 
@@ -53,6 +93,7 @@ def visualize_experiment_results(DF:DataFrame, STIMULI:dict[str, tuple[torch.Ten
                                  include_novel_no_context: bool = False,
                                  xlim: tuple[float, float] = None)->DataFrame:
     long_df = wide_to_long(DF)
+    plot_dirs = _resolve_plot_dirs(save_path)
     # DF.to_csv(os.path.join(save_path, f"experiment_results_wide_{name}.csv"), index=False)   
     # long_df.to_csv(os.path.join(save_path, f"experiment_results_long_{name}.csv"), index=False)
     if "experiment_series" in long_df.columns:
@@ -82,7 +123,7 @@ def visualize_experiment_results(DF:DataFrame, STIMULI:dict[str, tuple[torch.Ten
         visualize_naive_expert_results(
             series_df,
             STIMULI=STIMULI,
-            save_path=save_path,
+            save_path=plot_dirs["all_panels"],
             name=series_plot_name,
             include_novel_no_context=include_novel_no_context,
             xlim=xlim
@@ -90,7 +131,7 @@ def visualize_experiment_results(DF:DataFrame, STIMULI:dict[str, tuple[torch.Ten
         visualize_naive_expert_results(
             series_df,
             STIMULI=STIMULI,
-            save_path=save_path,
+            save_path=plot_dirs["panel_a"],
             name=panel_a_name,
             full_plots=False,
             include_novel_no_context=include_novel_no_context,
@@ -99,7 +140,7 @@ def visualize_experiment_results(DF:DataFrame, STIMULI:dict[str, tuple[torch.Ten
         visualize_novel_condition_quickplot(
             series_df,
             STIMULI=STIMULI,
-            save_path=save_path,
+            save_path=plot_dirs["novel_only"],
             name=series_plot_name,
             include_novel_no_context=include_novel_no_context,
             xlim=xlim,
@@ -449,7 +490,11 @@ def _plot_panel_a_activity(
         ax.set_xlim(xlim)
         ax.set_xticks(xticks)
         ax.set_xticklabels(xticklabels)
-        ax.set_title(f"{condition.title()} | {phase.title()}", fontsize=19, pad=10)
+        ax.set_title(
+            f"{condition.title()} | {PHASE_DISPLAY_LABELS.get(phase, phase.title())}",
+            fontsize=19,
+            pad=10,
+        )
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.spines["left"].set_linewidth(5.0)
@@ -494,6 +539,7 @@ def visualize_transition_panel(
     transition_labels: dict[str, str] | None = None,
     trace_types: tuple[str, ...] = ("full", "occlusion"),
     step_window: tuple[int, int] = (1000, 1350),
+    save_in_transition_subdir: bool = True,
 ) -> str:
     selected_conditions = _resolve_image_mode(image_mode=image_mode, include_novel_image=include_novel_image)
     if not long_dfs_by_transition:
@@ -531,7 +577,11 @@ def visualize_transition_panel(
     if not stim_windows:
         raise ValueError("STIMULI must contain at least one of the requested conditions.")
 
-    column_specs = [(phase, condition) for phase in ["naive", "expert"] for condition in selected_conditions]
+    sample_df = long_dfs_by_transition[ordered_transitions[0]]
+    phases = _resolve_phase_sequence(sample_df)
+    if not phases:
+        raise ValueError("Transition panel requires experiment_phase values.")
+    column_specs = [(phase, condition) for phase in phases for condition in selected_conditions]
     n_rows = len(ordered_transitions)
     n_cols = len(column_specs)
 
@@ -565,11 +615,18 @@ def visualize_transition_panel(
     for col_idx, (phase, condition) in enumerate(column_specs):
         axes[0, col_idx].set_title(IMAGE_LABELS.get(condition, condition.title()), fontsize=32, pad=12)
 
-    for phase_idx, phase in enumerate(["naive", "expert"]):
+    for phase_idx, phase in enumerate(phases):
         start_col = phase_idx * len(selected_conditions)
         end_col = start_col + len(selected_conditions) - 1
         x_center = 0.5 * (axes[0, start_col].get_position().x0 + axes[0, end_col].get_position().x1)
-        fig.text(x_center, 0.945, phase.title(), ha="center", va="center", fontsize=32)
+        fig.text(
+            x_center,
+            0.945,
+            PHASE_DISPLAY_LABELS.get(phase, phase.title()),
+            ha="center",
+            va="center",
+            fontsize=32,
+        )
 
     for row_idx, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
@@ -636,8 +693,12 @@ def visualize_transition_panel(
                 if ax.get_visible():
                     ax.set_ylim(row_min - pad, row_max + pad)
 
-    os.makedirs(save_path, exist_ok=True)
-    out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.png")
+    if save_in_transition_subdir:
+        plot_dirs = _resolve_plot_dirs(save_path)
+        out_path = os.path.join(plot_dirs["transition_panels"], f"{name}_{'_'.join(selected_conditions)}.png")
+    else:
+        os.makedirs(save_path, exist_ok=True)
+        out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.png")
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     return out_path
@@ -649,8 +710,8 @@ def visualize_naive_expert_results(long_df:DataFrame, STIMULI:dict[str, tuple[to
                                    include_novel_no_context: bool = False,
                                    xlim: tuple[float, float] = None) -> None:
     xlim = _resolve_xlim(xlim)
-    pre_post_df = long_df.loc[long_df["experiment_phase"].isin(["naive", "expert"])].copy()
-    phases = [p for p in ["naive", "expert"] if p in pre_post_df["experiment_phase"].unique()]
+    phases = _resolve_phase_sequence(long_df)
+    pre_post_df = long_df.loc[long_df["experiment_phase"].isin(phases)].copy()
     image_types = sorted(pre_post_df["image_type"].dropna().unique().tolist()) if "image_type" in pre_post_df.columns else []
     conditions = [c for c in ["familiar", "novel"] if c in pre_post_df["condition"].dropna().unique()] if "condition" in pre_post_df.columns else []
     hue_order = _plot_condition_order(image_types)
@@ -800,7 +861,7 @@ def visualize_naive_expert_results(long_df:DataFrame, STIMULI:dict[str, tuple[to
                 ax=ax,
                 legend=(idx == 0),
             )
-            ax.set_title(f"{condition.title()} | {phase.title()}")
+            ax.set_title(f"{condition.title()} | {PHASE_DISPLAY_LABELS.get(phase, phase.title())}")
             ax.set_xlabel("Time steps")
             ax.set_ylabel("Neural Activity")
             _style_axis_fonts(ax)
@@ -838,7 +899,7 @@ def visualize_naive_expert_results(long_df:DataFrame, STIMULI:dict[str, tuple[to
                 ax=ax,
                 legend=(idx == 0),
             )
-            ax.set_title(f"{condition.title()} | {phase.title()}")
+            ax.set_title(f"{condition.title()} | {PHASE_DISPLAY_LABELS.get(phase, phase.title())}")
             ax.set_xlabel("Time steps")
             ax.set_ylabel("Neural Activity")
             _style_axis_fonts(ax)
@@ -977,12 +1038,13 @@ def visualize_novel_condition_quickplot(long_df: DataFrame, save_path: str = PLO
                                         include_novel_no_context: bool = False,
                                         xlim: tuple[float, float] = None) -> None:
     xlim = _resolve_xlim(xlim)
-    pre_post_df = long_df.loc[long_df["experiment_phase"].isin(["naive", "expert"])].copy()
+    phases = _resolve_phase_sequence(long_df)
+    pre_post_df = long_df.loc[long_df["experiment_phase"].isin(phases)].copy()
     novel_df = pre_post_df.loc[pre_post_df["condition"].eq("novel")].copy()
     if novel_df.empty:
         return
 
-    phases = [p for p in ["naive", "expert"] if p in novel_df["experiment_phase"].unique()]
+    phases = [phase for phase in phases if phase in novel_df["experiment_phase"].unique()]
     image_types = sorted(novel_df["image_type"].dropna().unique().tolist()) if "image_type" in novel_df.columns else []
     y_df = _add_plot_condition_labels(
         novel_df[["step", "y", "condition", "experiment_phase", "image_type"]].drop_duplicates()
@@ -1037,7 +1099,7 @@ def wide_to_long(DF:DataFrame) -> DataFrame:
         return pd.DataFrame(columns=[
             "step", "y", "x_index", "x_value", "w_ff",
             "c_index", "c_value", "w_fb", "pv_index", "pv_value",
-            "w_lat", "W_pv", "image_type", "condition", "experiment_phase", "experiment_series", "seed",
+            "w_lat", "w_pv_lat", "W_pv", "image_type", "condition", "experiment_phase", "experiment_series", "seed",
         ])
 
     nx = len(x_idx)
@@ -1053,11 +1115,18 @@ def wide_to_long(DF:DataFrame) -> DataFrame:
     wff_vals = DF[[f"w_ff_{i}" for i in x_idx]].to_numpy()
     p_vals = DF[[f"p_{i}" for i in pv_idx]].to_numpy()
     wlat_vals = DF[[f"w_lat_{i}" for i in pv_idx]].to_numpy()
+    wpvlat_cols = [f"w_pv_lat_{i}" for i in pv_idx]
+    wpvlat_vals = (
+        DF[wpvlat_cols].to_numpy()
+        if all(c in DF.columns for c in wpvlat_cols)
+        else np.full((n, npv), np.nan)
+    )
 
     x_value = np.tile(x_vals, (1, npv)).reshape(-1)
     w_ff = np.tile(wff_vals, (1, npv)).reshape(-1)
     pv_value = np.repeat(p_vals, nx, axis=1).reshape(-1)
     w_lat = np.repeat(wlat_vals, nx, axis=1).reshape(-1)
+    w_pv_lat = np.repeat(wpvlat_vals, nx, axis=1).reshape(-1)
 
     c_cols = [f"c_{i}" for i in pv_idx]
     wfb_cols = [f"w_fb_{i}" for i in pv_idx]
@@ -1086,6 +1155,7 @@ def wide_to_long(DF:DataFrame) -> DataFrame:
         "pv_index": pv_index,
         "pv_value": pv_value,
         "w_lat": w_lat,
+        "w_pv_lat": w_pv_lat,
         "W_pv": W_pv,
     })
 
@@ -1117,6 +1187,6 @@ def wide_to_long(DF:DataFrame) -> DataFrame:
     result_cols = [
         "step", "y", "x_index", "x_value", "w_ff",
         "c_index", "c_value", "w_fb", "pv_index", "pv_value",
-        "w_lat", "W_pv", "image_type", "condition", "experiment_phase", "experiment_series", "seed",
+        "w_lat", "w_pv_lat", "W_pv", "image_type", "condition", "experiment_phase", "experiment_series", "seed",
     ]
     return long_df[[c for c in result_cols if c in long_df.columns]]

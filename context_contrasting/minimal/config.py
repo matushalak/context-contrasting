@@ -2,6 +2,19 @@ import torch.nn as nn
 
 from context_contrasting.utils import ThresholdReLU
 
+
+def _copy_init_dict(init_dict: dict) -> dict:
+    return {
+        "mu": init_dict["mu"],
+        "sigma": init_dict["sigma"],
+    }
+
+
+def _normalize_minimal_config(config: dict) -> dict:
+    normalized = config.copy()
+    normalized.setdefault("w_pv_lat_init", _copy_init_dict(normalized["w_lat_init"]))
+    return normalized
+
 # Broadly tuned: Familiar -> FB responses, Novel -> FF & FB responses
 # X not seen in experimental data
 broad = {
@@ -153,4 +166,9 @@ minimal_configs = {
     "FF_FB_narrow_novel": narrow_novel,
     
     "FB_FB": FB_FB
+}
+
+minimal_configs = {
+    name: _normalize_minimal_config(config)
+    for name, config in minimal_configs.items()
 }

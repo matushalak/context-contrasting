@@ -32,22 +32,26 @@ class CCNeuron(nn.Module):
         n_pv: int = 2,
         n_context: int = 2,
         activation: nn.Module | None = None,
-        lr_ff: float = 0.01,
-        w_ff_init:dict = {'mu': [0.5, 0.5], 'sigma': 1e-2},
-        lr_fb: float = 0.01,
-        w_fb_init:dict = {'mu': [0.1, 0.1], 'sigma': 1e-2},
-        lr_lat: float = 0.01,
-        w_lat_init:dict = {'mu': [0.2, 0.2], 'sigma': 1e-2},
-        lr_pv: float = 0.01,
-        W_pv_init:dict = {'mu': ([0.1, 0.1], [0.1,0.1]), 'sigma': [1e-2, 1e-2]},
+        # Core continuous parameters with a lot of influence
+        lr_ff: float = 0.01, # 1
+        w_ff_init:dict = {'mu': [0.5, 0.5], 'sigma': 1e-2}, # 2,3
+        lr_fb: float = 0.01, # 4
+        w_fb_init:dict = {'mu': [0.1, 0.1], 'sigma': 1e-2}, # 5,6
+        lr_lat: float = 0.01, # 7
+        w_lat_init:dict = {'mu': [0.2, 0.2], 'sigma': 1e-2}, # 8,9
+        w_pv_lat_init:dict | None = None, # 10, 11
+        lr_pv: float = 0.01, # 12
+        W_pv_init:dict = {'mu': ([0.1, 0.1], [0.1,0.1]), 'sigma': [1e-2, 1e-2]}, # 13,14,15,16
+        # Categorical parameters with a lot of influence
+        receives_context:tuple[bool, bool ] = (True, True), # 17,18
+        FFrule:Literal['anti-Hebbian', 'Hebbian'] = 'anti-Hebbian', # 18
+        FBrule:Literal["dampened-anti-Hebbian", "Hebbian"] = "dampened-anti-Hebbian", # 20
+        # Other hyperparameters (fixed between initial conditions)
         pyc_decay:float = 0.1,
         pv_decay:float = 0.25,
         alpha: float = 1.0,
         weight_decay: float = 0.0,
         seed:int = 42,
-        receives_context:tuple[bool, bool ] = (True, True),
-        FFrule:Literal['anti-Hebbian', 'Hebbian'] = 'anti-Hebbian',
-        FBrule:Literal["dampened-anti-Hebbian", "Hebbian"] = "dampened-anti-Hebbian",
         use_FF_connection:bool = True,
         FF_plasticity:bool = True,
         use_FB_connection:bool = True,
@@ -72,6 +76,8 @@ class CCNeuron(nn.Module):
         self.FBrule = FBrule
         assert len(receives_context) == 2, "receives_context must be a tuple of two booleans indicating whether the neuron receives context input for familiar and novel conditions respectively."
         self.receives_context = torch.tensor(receives_context, dtype=torch.bool)
+        if w_pv_lat_init is None:
+            w_pv_lat_init = dict(w_lat_init)
 
         self.n_features = n_features
         self.n_pv = n_pv
@@ -82,7 +88,7 @@ class CCNeuron(nn.Module):
         self.w_ff = nonnegative(randn_reparam(size=(1,), **w_ff_init))
         self.w_fb = nonnegative(randn_reparam(size=(1,), **w_fb_init)) * self.receives_context
         self.w_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init))
-        self.w_pv_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init))
+        self.w_pv_lat = nonnegative(randn_reparam(size=(1,), **w_pv_lat_init))
         self.W_pv = torch.cat((
             nonnegative(randn_reparam(size=(1,), mu = W_pv_init['mu'][0],sigma = W_pv_init['sigma'][0])).unsqueeze(0),
             nonnegative(randn_reparam(size=(1,), mu = W_pv_init['mu'][1],sigma = W_pv_init['sigma'][1])).unsqueeze(0)), 
@@ -176,7 +182,7 @@ class CCNeuron(nn.Module):
                                                     torch.zeros_like(self.W_pv))
         
         # 1) Anti-Hebbian update for w_ff
-        if self.FF_plasticity:
+        if self.FF_plasticity and self.use_FF_connection:
             match self.FFrule:
                 case "anti-Hebbian":
                     dw_ff = - self.lr_ff * (y_next * x_t)
@@ -186,7 +192,7 @@ class CCNeuron(nn.Module):
         # 2) Dampened-Hebbian update for w_fb
         damp = self.alpha / (y_next + self.alpha)
 
-        if self.FB_plasticity:
+        if self.FB_plasticity and self.use_FB_connection:
             match self.FBrule:
                 # contextual strengthening general (not only the experienced context, also novel)
                 case "dampened-anti-Hebbian":
@@ -196,14 +202,14 @@ class CCNeuron(nn.Module):
                     dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context
 
         # 3) Hebbian update for w_lat and w_pv_lat
-        if self.lat_plasticity:
+        if self.lat_plasticity and self.use_lat_connection:
             dw_lat = self.lr_lat * (y_next * pv_t)
 
-        if self.pv_lat_plasticity:
+        if self.pv_lat_plasticity and self.use_pv_lat_connection:
             dw_pv_lat = self.lr_lat * (y_t * pv_t)
 
         # 4) Hebbian update for W_pv
-        if self.pv_plasticity:
+        if self.pv_plasticity and self.use_pv_connection:
             dw_W_pv = self.lr_pv * torch.outer(pv_t, x_t)
 
         # Apply updates
@@ -215,11 +221,11 @@ class CCNeuron(nn.Module):
         
         # Decay towards baseline
         if 0.0 < self.weight_decay < 1.0:
-            self.w_ff -= (self.w_ff - self.w_ff_baseline) * self.weight_decay * self.FF_plasticity
-            self.w_fb -= (self.w_fb - self.w_fb_baseline) * self.weight_decay * self.FB_plasticity
-            self.w_lat -= (self.w_lat - self.w_lat_baseline) * self.weight_decay * self.lat_plasticity
-            self.w_pv_lat -= (self.w_pv_lat - self.w_pv_lat_baseline) * self.weight_decay * self.pv_lat_plasticity
-            self.W_pv -= (self.W_pv - self.W_pv_baseline) * self.weight_decay * self.pv_plasticity
+            self.w_ff -= (self.w_ff - self.w_ff_baseline) * self.weight_decay * self.FF_plasticity * self.use_FF_connection
+            self.w_fb -= (self.w_fb - self.w_fb_baseline) * self.weight_decay * self.FB_plasticity * self.use_FB_connection
+            self.w_lat -= (self.w_lat - self.w_lat_baseline) * self.weight_decay * self.lat_plasticity * self.use_lat_connection
+            self.w_pv_lat -= (self.w_pv_lat - self.w_pv_lat_baseline) * self.weight_decay * self.pv_lat_plasticity * self.use_pv_lat_connection
+            self.W_pv -= (self.W_pv - self.W_pv_baseline) * self.weight_decay * self.pv_plasticity * self.use_pv_connection
         
         # Ensure non-negativity of weights
         self.w_ff = nonnegative(self.w_ff)
