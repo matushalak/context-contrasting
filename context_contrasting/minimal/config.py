@@ -119,7 +119,7 @@ narrow_familiar.update({
     # otherwise no reason not to have full FB response there as well
     "w_lat_init": {'mu': [0.3, 1.5], 'sigma': 0}, 
     "W_pv_init": {'mu': ([0.9, 0.1], [0.1,0.9]), 'sigma': [0, 0]},
-    'lr_lat': 0.1
+    # 'lr_lat': 0.1
     })
 
 
@@ -131,7 +131,7 @@ narrow_novel.update({
     # a bit of FB initial response to match "averaged" novel neurons
     "w_fb_init": {'mu': [0.01, 0.15], 'sigma': 0}, 
     "w_lat_init": {'mu': [0.3, 0.3], 'sigma': 0},
-    "lr_fb": 0.002,
+    # "lr_fb": 0.002,
     })
 
 # Overview

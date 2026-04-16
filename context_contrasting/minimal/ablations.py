@@ -239,12 +239,12 @@ def run_all_ablation_studies(
     xlim: tuple[float, float] = (1000, 1400),
 ) -> dict[str, dict[str, dict[str, DataFrame]]]:
     return {
-        # "component_ablations": run_component_ablation_studies(
-        #     base_configs=base_configs,
-        #     n_steps_per_phase=n_steps_per_phase,
-        #     include_novel_no_context=include_novel_no_context,
-        #     xlim=xlim,
-        # ),
+        "component_ablations": run_component_ablation_studies(
+            base_configs=base_configs,
+            n_steps_per_phase=n_steps_per_phase,
+            include_novel_no_context=include_novel_no_context,
+            xlim=xlim,
+        ),
         "adaptation_ablations": run_adaptation_ablation_studies(
             base_configs=base_configs,
             n_steps_per_phase=n_steps_per_phase,

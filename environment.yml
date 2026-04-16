@@ -8,7 +8,10 @@ dependencies:
   - numpy
   - pandas
   - seaborn
-  - pytorch
+  - pytorch>=2.5,<2.6
+  - joblib
+  - tqdm
+  - scikit-learn
   - pip
   - pip:
       - -e .
