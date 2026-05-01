@@ -1,0 +1,21 @@
+class_a,class_b,candidate_idx_a,candidate_idx_b,first_switch_alpha,first_class_b_alpha,path_sequence,switch_type
+FF_FB_narrow_familiar,un_FB,1546,1065,0.8333333333333333,0.8333333333333333,FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | un_FB | FF_FB_narrow_familiar,direct_switch
+FF_FB_narrow_familiar,un_FB,609,1139,0.1666666666666666,0.1666666666666666,FF_FB_narrow_familiar | un_FB | un_FB | un_FB | un_FB | un_FB | un_FB,direct_switch
+FF_FB_narrow_novel,un_FB,393,127,0.1666666666666666,0.1666666666666666,FF_FB_narrow_novel | un_FB | un_FB | un_FB | un_FB | un_FB | un_FB,direct_switch
+FF_FB_narrow_novel,un_FB,916,816,0.6666666666666666,0.6666666666666666,FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | un_FB | un_FB | un_FB,direct_switch
+FB_FB,FF_FB_broad,539,1396,1.0,1.0,FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FF_FB_broad,direct_switch
+FF_FB_broad,FF_FB_narrow_novel,276,1416,0.5,0.5,FF_FB_broad | FF_FB_broad | FF_FB_broad | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel,direct_switch
+FB_FB,FF_FB_narrow_novel,991,920,,,FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB,no_switch_along_path
+FB_FB,un_FB,535,495,,,FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB,no_switch_along_path
+FB_FB,un_FB,967,495,,,FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB,no_switch_along_path
+FB_FB,FF_FB_narrow_novel,474,268,0.1666666666666666,0.1666666666666666,FB_FB | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel,direct_switch
+FB_FB,FF_FB_narrow_familiar,539,1799,0.5,0.5,FB_FB | FB_FB | FB_FB | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar,direct_switch
+FF_FB_narrow_familiar,FF_FB_narrow_novel,1153,1202,0.5,0.5,FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel,direct_switch
+FF_FB_broad,un_FB,302,1149,0.3333333333333333,1.0,FF_FB_broad | FF_FB_broad | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | un_FB,detour_switch
+FB_FB,FF_FB_narrow_familiar,352,298,0.5,0.5,FB_FB | FB_FB | FB_FB | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar,direct_switch
+FF_FB_broad,FF_FB_narrow_familiar,662,1606,0.5,0.5,FF_FB_broad | FF_FB_broad | FF_FB_broad | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar,direct_switch
+FF_FB_broad,FF_FB_narrow_familiar,302,1166,0.3333333333333333,0.3333333333333333,FF_FB_broad | FF_FB_broad | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar,direct_switch
+FF_FB_narrow_familiar,FF_FB_narrow_novel,609,393,1.0,1.0,FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_familiar | FF_FB_narrow_novel,direct_switch
+FF_FB_broad,FF_FB_narrow_novel,1550,1241,0.3333333333333333,0.3333333333333333,FF_FB_broad | FF_FB_broad | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FF_FB_narrow_novel | FB_FB,direct_switch
+FB_FB,FF_FB_broad,352,1396,1.0,1.0,FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FB_FB | FF_FB_broad,direct_switch
+FF_FB_broad,un_FB,1472,1223,0.3333333333333333,0.3333333333333333,FF_FB_broad | FF_FB_broad | un_FB | un_FB | un_FB | un_FB | un_FB,direct_switch

@@ -1,0 +1,7 @@
+target,n_region_points,familiar_primary_transition,novel_primary_transition
+un_FB,1644,unresponsive -> unresponsive,unresponsive -> unresponsive
+FF_FB_broad,276,FF -> unresponsive,FF -> FF
+FF_FB_narrow_familiar,606,FF -> unresponsive,unresponsive -> unresponsive
+FF_FB_narrow_novel,557,unresponsive -> unresponsive,FF -> FF
+FB_FB,558,FB -> FB,FB -> FB
+FF_un,298,FF -> unresponsive,FF -> FF

@@ -1,6 +1,21 @@
 from collections.abc import Mapping
 
 
+def single_state_scalar(
+        NO_response: float,
+        O_response: float,
+        activity_threshold: float = 0.025) -> tuple[float, bool]:
+    """
+    Scalar FF-vs-FB state summary for a single phase.
+    """
+    no_active = NO_response > activity_threshold
+    o_active = O_response > activity_threshold
+    return (
+        (NO_response * no_active) - (O_response * o_active),
+        no_active or o_active,
+    )
+
+
 def neuron_state_metrics(
         NO_response_naive:float, O_response_naive:float,
         NO_response_expert:float, O_response_expert:float,
@@ -15,17 +30,20 @@ def neuron_state_metrics(
     - Expert State: (NO_response_expert - O_response_expert) * 1[Expert State > threshold]
 
     '''
-    no_naive, no_expert, o_naive, o_expert = (NO_response_naive > activity_threshold,
-                                              NO_response_expert > activity_threshold,
-                                              O_response_naive > activity_threshold,
-                                              O_response_expert > activity_threshold)
-    
-    naive_state = (NO_response_naive * no_naive) - (O_response_naive * o_naive)
-    expert_state = (NO_response_expert * no_expert) - (O_response_expert * o_expert)
+    naive_state, naive_responsive = single_state_scalar(
+        NO_response_naive,
+        O_response_naive,
+        activity_threshold=activity_threshold,
+    )
+    expert_state, expert_responsive = single_state_scalar(
+        NO_response_expert,
+        O_response_expert,
+        activity_threshold=activity_threshold,
+    )
 
     return {
-        "naive": (naive_state, no_naive or o_naive),
-        "expert": (expert_state, no_expert or o_expert)
+        "naive": (naive_state, naive_responsive),
+        "expert": (expert_state, expert_responsive)
             }
 
 
