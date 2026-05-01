@@ -1,0 +1,72 @@
+{
+  "settings": {
+    "n_steps_per_phase": 30,
+    "n_trials": 2,
+    "tail_window": 20,
+    "intertrial_sigma": 0.05,
+    "global_samples": 16,
+    "local_samples": 4,
+    "local_parents": 2,
+    "local_sigma": 0.22,
+    "n_jobs": 1,
+    "random_seed": 7,
+    "activity_threshold": 0.025,
+    "weight_floor": 0.0001,
+    "weight_ceiling": 2.0,
+    "fit_scale": 0.025
+  },
+  "targets": {
+    "un_un": {
+      "summary": {
+        "full_familiar_naive": 0.0,
+        "occlusion_familiar_naive": 1e-05,
+        "full_novel_naive": 5.6e-05,
+        "occlusion_novel_naive": 8.4e-05,
+        "full_familiar_expert": 1e-06,
+        "occlusion_familiar_expert": 0.0,
+        "full_novel_expert": 0.0,
+        "occlusion_novel_expert": 0.0
+      },
+      "transitions": {
+        "familiar": "unresponsive -> unresponsive",
+        "novel": "unresponsive -> unresponsive"
+      },
+      "reference_weights": {
+        "w_ff_0": 0.01,
+        "w_ff_1": 0.01,
+        "w_fb_0": 0.01,
+        "w_fb_1": 0.01,
+        "w_lat_0": 1.5,
+        "w_lat_1": 1.5,
+        "w_pv_lat_0": 1.5,
+        "w_pv_lat_1": 1.5
+      }
+    },
+    "FF_FB_broad": {
+      "summary": {
+        "full_familiar_naive": 0.058476,
+        "occlusion_familiar_naive": 0.005271,
+        "full_novel_naive": 0.055179,
+        "occlusion_novel_naive": 0.003155,
+        "full_familiar_expert": 0.045312,
+        "occlusion_familiar_expert": 0.005423,
+        "full_novel_expert": 0.057998,
+        "occlusion_novel_expert": 0.00545
+      },
+      "transitions": {
+        "familiar": "FF -> FF",
+        "novel": "FF -> FF"
+      },
+      "reference_weights": {
+        "w_ff_0": 0.5,
+        "w_ff_1": 0.5,
+        "w_fb_0": 0.05,
+        "w_fb_1": 0.05,
+        "w_lat_0": 0.3,
+        "w_lat_1": 0.3,
+        "w_pv_lat_0": 0.3,
+        "w_pv_lat_1": 0.3
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ dependencies:
   - joblib
   - tqdm
   - scikit-learn
+  - sbi
   - pip
   - pip:
       - -e .

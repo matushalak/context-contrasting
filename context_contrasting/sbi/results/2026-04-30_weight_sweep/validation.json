@@ -1,0 +1,163 @@
+{
+  "FB_FB": {
+    "candidate_summary": {
+      "full_familiar_naive": 0.00027577548228970293,
+      "occlusion_familiar_naive": 0.03839122258650605,
+      "full_familiar_expert": 7.012149793013122e-05,
+      "occlusion_familiar_expert": 0.05272173634439241,
+      "full_novel_naive": 0.00019587155833278302,
+      "occlusion_novel_naive": 0.03813712694391143,
+      "full_novel_expert": 0.001041759398663089,
+      "occlusion_novel_expert": 0.045693064192892055
+    },
+    "target_summary": {
+      "full_familiar_naive": 0.0003199649031628213,
+      "occlusion_familiar_naive": 0.03839122258650605,
+      "full_familiar_expert": 6.577890974881483e-05,
+      "occlusion_familiar_expert": 0.0527276833425276,
+      "full_novel_naive": 0.0001239252907055288,
+      "occlusion_novel_naive": 0.03813712694391143,
+      "full_novel_expert": 0.00022205776327339778,
+      "occlusion_novel_expert": 0.045697946718428285
+    },
+    "max_abs_diff": 0.0008197016353896913
+  },
+  "FF_FB_broad": {
+    "candidate_summary": {
+      "full_familiar_naive": 0.04050645109382458,
+      "occlusion_familiar_naive": 0.005875765456585214,
+      "full_familiar_expert": 0.004329676533234306,
+      "occlusion_familiar_expert": 0.036723841200000606,
+      "full_novel_naive": 0.04361469211871736,
+      "occlusion_novel_naive": 0.006192213068061392,
+      "full_novel_expert": 0.059474634495563804,
+      "occlusion_novel_expert": 0.025949994515394793
+    },
+    "target_summary": {
+      "full_familiar_naive": 0.04050645109382458,
+      "occlusion_familiar_naive": 0.005875765456585214,
+      "full_familiar_expert": 0.004329676533234306,
+      "occlusion_familiar_expert": 0.036723841200000606,
+      "full_novel_naive": 0.04361469211871736,
+      "occlusion_novel_naive": 0.006192213068061392,
+      "full_novel_expert": 0.059474634495563804,
+      "occlusion_novel_expert": 0.025949994515394793
+    },
+    "max_abs_diff": 0.0
+  },
+  "FF_FB_narrow_familiar": {
+    "candidate_summary": {
+      "full_familiar_naive": 0.04233973363006953,
+      "occlusion_familiar_naive": 0.00014823685114606633,
+      "full_familiar_expert": 0.005261807674105512,
+      "occlusion_familiar_expert": 0.01761697024194291,
+      "full_novel_naive": 0.003233768842619611,
+      "occlusion_novel_naive": 0.00010400406014241526,
+      "full_novel_expert": 0.0013739961625105935,
+      "occlusion_novel_expert": 0.011109062794275815
+    },
+    "target_summary": {
+      "full_familiar_naive": 0.04233973363006953,
+      "occlusion_familiar_naive": 0.00014823685114606633,
+      "full_familiar_expert": 0.005261807674105512,
+      "occlusion_familiar_expert": 0.01761697024194291,
+      "full_novel_naive": 0.003233768842619611,
+      "occlusion_novel_naive": 0.00010400406014241526,
+      "full_novel_expert": 0.0013739961625105935,
+      "occlusion_novel_expert": 0.011109062794275815
+    },
+    "max_abs_diff": 0.0
+  },
+  "FF_FB_narrow_novel": {
+    "candidate_summary": {
+      "full_familiar_naive": 0.005935675313230604,
+      "occlusion_familiar_naive": 0.0016559948831854853,
+      "full_familiar_expert": 0.006765815816470422,
+      "occlusion_familiar_expert": 0.03183730518212542,
+      "full_novel_naive": 0.1213404429727234,
+      "occlusion_novel_naive": 0.02229263251647353,
+      "full_novel_expert": 0.14146039357874543,
+      "occlusion_novel_expert": 0.04280803848523647
+    },
+    "target_summary": {
+      "full_familiar_naive": 0.005935675313230604,
+      "occlusion_familiar_naive": 0.0016559948831854853,
+      "full_familiar_expert": 0.006765815816470422,
+      "occlusion_familiar_expert": 0.03183730518212542,
+      "full_novel_naive": 0.1213404429727234,
+      "occlusion_novel_naive": 0.02229263251647353,
+      "full_novel_expert": 0.14146039357874543,
+      "occlusion_novel_expert": 0.04280803848523647
+    },
+    "max_abs_diff": 0.0
+  },
+  "FF_un": {
+    "candidate_summary": {
+      "full_familiar_naive": 0.06608117159921675,
+      "occlusion_familiar_naive": 0.0015599045240378474,
+      "full_familiar_expert": 0.007225237264356111,
+      "occlusion_familiar_expert": 0.030278097189147958,
+      "full_novel_naive": 0.06781990102608688,
+      "occlusion_novel_naive": 0.0008745623716094996,
+      "full_novel_expert": 0.08245695999939925,
+      "occlusion_novel_expert": 0.01950253959366819
+    },
+    "target_summary": {
+      "full_familiar_naive": 0.06608115897979587,
+      "occlusion_familiar_naive": 0.0015599001068039796,
+      "full_familiar_expert": 0.003335608638008125,
+      "occlusion_familiar_expert": 0.0012932670160807902,
+      "full_novel_naive": 0.06781987197464331,
+      "occlusion_novel_naive": 0.0008745558818191058,
+      "full_novel_expert": 0.06274349020677619,
+      "occlusion_novel_expert": 0.0013997408670547884
+    },
+    "max_abs_diff": 0.028984830173067168
+  },
+  "un_FB": {
+    "candidate_summary": {
+      "full_familiar_naive": 5.598903734658964e-05,
+      "occlusion_familiar_naive": 5.9756403292254845e-06,
+      "full_familiar_expert": 5.177754037493016e-12,
+      "occlusion_familiar_expert": 0.012834225114784204,
+      "full_novel_naive": 4.3630275161632424e-07,
+      "occlusion_novel_naive": 9.73415781670428e-06,
+      "full_novel_expert": 6.490286988352327e-13,
+      "occlusion_novel_expert": 0.007901496717386181
+    },
+    "target_summary": {
+      "full_familiar_naive": 5.598903734658964e-05,
+      "occlusion_familiar_naive": 5.9756403292254845e-06,
+      "full_familiar_expert": 5.177754037493016e-12,
+      "occlusion_familiar_expert": 0.012834225114784204,
+      "full_novel_naive": 4.3630275161632424e-07,
+      "occlusion_novel_naive": 9.73415781670428e-06,
+      "full_novel_expert": 6.490286988352327e-13,
+      "occlusion_novel_expert": 0.007901496717386181
+    },
+    "max_abs_diff": 0.0
+  },
+  "un_un": {
+    "candidate_summary": {
+      "full_familiar_naive": 8.910332955994032e-06,
+      "occlusion_familiar_naive": 9.769996437647422e-07,
+      "full_familiar_expert": 2.2310603277019804e-12,
+      "occlusion_familiar_expert": 0.009676593359472463,
+      "full_novel_naive": 3.146825001465459e-07,
+      "occlusion_novel_naive": 3.874727699937352e-06,
+      "full_novel_expert": 2.7142231833331034e-13,
+      "occlusion_novel_expert": 0.006254512003579293
+    },
+    "target_summary": {
+      "full_familiar_naive": 7.031625400519209e-05,
+      "occlusion_familiar_naive": 6.476436803737329e-06,
+      "full_familiar_expert": 4.6843726808631914e-07,
+      "occlusion_familiar_expert": 5.899283481980433e-06,
+      "full_novel_naive": 4.351672631575099e-07,
+      "occlusion_novel_naive": 1.4135947921933845e-08,
+      "full_novel_expert": 4.471059670640516e-17,
+      "occlusion_novel_expert": 2.2006867721469093e-07
+    },
+    "max_abs_diff": 0.009670694075990482
+  }
+}

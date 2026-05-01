@@ -1,0 +1,137 @@
+[
+  {
+    "candidate_idx": 1914,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1899,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1839,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1856,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 780,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 956,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 991,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1231,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1404,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 732,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1180,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1132,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 607,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1797,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  },
+  {
+    "candidate_idx": 1861,
+    "success_rate": 1.0,
+    "preds": [
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar",
+      "FF_FB_narrow_familiar"
+    ]
+  }
+]

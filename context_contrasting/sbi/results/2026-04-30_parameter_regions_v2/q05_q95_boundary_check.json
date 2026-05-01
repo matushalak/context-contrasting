@@ -1,0 +1,134 @@
+{
+  "FF_FB_narrow_familiar": [
+    {
+      "candidate_idx": 1914,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1899,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1452,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 572,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1780,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 860,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 79,
+      "success_rate": 0.0
+    },
+    {
+      "candidate_idx": 1407,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1132,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1797,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1484,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1732,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 999,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1841,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 727,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1689,
+      "success_rate": 1.0
+    }
+  ],
+  "FF_FB_narrow_novel": [
+    {
+      "candidate_idx": 2017,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 353,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 845,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1281,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 803,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1139,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1958,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1061,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 389,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1151,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 653,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1059,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 701,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1927,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1522,
+      "success_rate": 1.0
+    },
+    {
+      "candidate_idx": 1069,
+      "success_rate": 1.0
+    }
+  ]
+}
