@@ -1,0 +1,24 @@
+context_label,novel_transition_label,count
+"ctx=(F,F)",unresponsive -> unresponsive,2870
+"ctx=(F,F)",FF -> FF,1152
+"ctx=(F,F)",FF -> unresponsive,74
+"ctx=(F,T)",FF -> FF,1544
+"ctx=(F,T)",unresponsive -> unresponsive,1440
+"ctx=(F,T)",FB -> FB,927
+"ctx=(F,T)",FF -> FB,133
+"ctx=(F,T)",FF -> unresponsive,32
+"ctx=(F,T)",FB -> FF,20
+"ctx=(T,F)",unresponsive -> unresponsive,2846
+"ctx=(T,F)",FF -> FF,1105
+"ctx=(T,F)",FF -> unresponsive,118
+"ctx=(T,F)",FB -> unresponsive,22
+"ctx=(T,F)",FB -> FB,4
+"ctx=(T,F)",unresponsive -> FB,1
+"ctx=(T,T)",unresponsive -> unresponsive,1422
+"ctx=(T,T)",FF -> FF,1354
+"ctx=(T,T)",FB -> FB,1002
+"ctx=(T,T)",FF -> FB,219
+"ctx=(T,T)",FF -> unresponsive,57
+"ctx=(T,T)",FB -> FF,34
+"ctx=(T,T)",FB -> unresponsive,7
+"ctx=(T,T)",unresponsive -> FB,1

@@ -1,0 +1,26 @@
+{
+  "source_dir": "/Users/matushalak/Documents/context-contrasting/context_contrasting/param_explore/results/2026-05-06_transition_plane_sobol_fixed",
+  "basin_settings": {
+    "knn_k": 24,
+    "purity_threshold": 0.65,
+    "min_component_size": 20
+  },
+  "exploration_settings": {
+    "n_steps_per_phase": 100,
+    "n_trials": 10,
+    "tail_window": 25,
+    "intertrial_sigma": 0.05,
+    "weight_floor": 0.0001,
+    "weight_ceiling": 2.0,
+    "grid_levels": 2,
+    "sobol_samples": 1024,
+    "random_seed": 7,
+    "activity_threshold": 0.025,
+    "n_jobs": -1,
+    "max_grid_points": 50000
+  },
+  "n_samples": 4096,
+  "n_stable_points_familiar": 1931,
+  "n_stable_points_novel": 1786,
+  "n_basins": 14
+}

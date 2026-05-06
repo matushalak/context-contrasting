@@ -1,0 +1,19 @@
+{
+  "method": "sobol",
+  "n_samples_total": 2048,
+  "n_weight_points": 512,
+  "settings": {
+    "n_steps_per_phase": 100,
+    "n_trials": 10,
+    "tail_window": 25,
+    "intertrial_sigma": 0.05,
+    "weight_floor": 0.0001,
+    "weight_ceiling": 2.0,
+    "grid_levels": 2,
+    "sobol_samples": 512,
+    "random_seed": 7,
+    "activity_threshold": 0.025,
+    "n_jobs": -1,
+    "max_grid_points": 50000
+  }
+}

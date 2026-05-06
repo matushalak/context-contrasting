@@ -1,0 +1,20 @@
+image_type,context_mode,context_label,subclass_label,n_stable_points,median_naive_state,median_expert_state,dominant_transition_label
+familiar,0,"ctx=(F,F)",other,614,0.0,0.0,unresponsive -> unresponsive
+familiar,1,"ctx=(F,T)",other,589,0.0,0.0,unresponsive -> unresponsive
+familiar,10,"ctx=(T,F)",other,289,0.0,-0.0195962999351322,unresponsive -> FB
+familiar,10,"ctx=(T,F)",FF_FB_narrow_novel,41,0.0,-0.0373851764611899,unresponsive -> FB
+familiar,10,"ctx=(T,F)",FF_FB_broad,36,0.08599365405645215,-0.0653832930857315,FF -> FB
+familiar,11,"ctx=(T,T)",other,185,0.0,-0.0253178848624229,unresponsive -> FB
+familiar,11,"ctx=(T,T)",FF_FB_narrow_novel,63,0.0,-0.0209889803193509,unresponsive -> FB
+familiar,11,"ctx=(T,T)",FF_FB_narrow_familiar,59,0.093118352536112,-0.0202067846581339,FF -> FB
+familiar,11,"ctx=(T,T)",FF_FB_broad,55,0.0693870437331497,-0.034562746014446,FF -> FB
+novel,0,"ctx=(F,F)",other,663,0.0,0.0,unresponsive -> unresponsive
+novel,1,"ctx=(F,T)",other,260,0.1206928800232708,0.11792667703703039,FF -> FF
+novel,1,"ctx=(F,T)",FF_FB_broad,1,0.0094498013854026,0.0080154365003108,FF -> FF
+novel,10,"ctx=(T,F)",other,611,0.0,0.0,unresponsive -> unresponsive
+novel,10,"ctx=(T,F)",FF_FB_narrow_novel,16,0.37390615653246634,0.3713831145912409,FF -> FF
+novel,10,"ctx=(T,F)",FF_FB_broad,10,0.46054232520610094,0.3318699437901378,FF -> FF
+novel,11,"ctx=(T,T)",other,81,0.0982980422079563,0.0811338118016719,FF -> FF
+novel,11,"ctx=(T,T)",FF_FB_narrow_novel,60,0.1558504198081791,0.15593610154325133,FF -> FF
+novel,11,"ctx=(T,T)",FF_FB_broad,57,0.2149922556057572,0.1924836175227537,FF -> FF
+novel,11,"ctx=(T,T)",FF_FB_narrow_familiar,27,0.0,-0.0323731772603932,unresponsive -> FB

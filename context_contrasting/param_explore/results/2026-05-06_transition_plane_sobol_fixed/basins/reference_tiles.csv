@@ -1,0 +1,19 @@
+reference_name,image_type,context_mode,context_label,transition_label,naive_state,expert_state
+un_un,familiar,00,"ctx=(F,F)",unresponsive -> unresponsive,0.0,0.0
+un_un,novel,00,"ctx=(F,F)",unresponsive -> unresponsive,0.0,0.0
+un_FF,familiar,11,"ctx=(T,T)",unresponsive -> FB,0.0,-0.0034728907719254465
+un_FF,novel,11,"ctx=(T,T)",unresponsive -> FF,0.0,0.0013000836651772193
+un_FB,familiar,11,"ctx=(T,T)",unresponsive -> FB,0.0,-0.029580914234742524
+un_FB,novel,11,"ctx=(T,T)",unresponsive -> unresponsive,0.0,0.0
+FF_un,familiar,00,"ctx=(F,F)",FF -> unresponsive,0.15479097659885882,0.0
+FF_un,novel,00,"ctx=(F,F)",FF -> FF,0.15614786357432603,0.1458232259452343
+FF_FF,familiar,00,"ctx=(F,F)",FF -> unresponsive,0.18917534501105546,0.0
+FF_FF,novel,00,"ctx=(F,F)",FF -> FF,0.1908849628791213,0.18880563286691904
+FF_FB_broad,familiar,11,"ctx=(T,T)",FF -> FB,0.09835278385132551,-0.08530670027434827
+FF_FB_broad,novel,11,"ctx=(T,T)",FF -> FF,0.09862790922820568,0.07591100732795894
+FF_FB_narrow_familiar,familiar,11,"ctx=(T,T)",FF -> FB,0.11430342364311218,-0.04051829104218632
+FF_FB_narrow_familiar,novel,11,"ctx=(T,T)",unresponsive -> FB,0.0,-0.02679996691364795
+FF_FB_narrow_novel,familiar,11,"ctx=(T,T)",unresponsive -> FB,0.0,-0.07373838710412384
+FF_FB_narrow_novel,novel,11,"ctx=(T,T)",FF -> FF,0.23631665330938995,0.23067532225325701
+FB_FB,familiar,11,"ctx=(T,T)",FB -> FB,-0.09686200684309006,-0.12801557560265064
+FB_FB,novel,11,"ctx=(T,T)",FB -> FB,-0.0944912900403142,-0.11821785314381122

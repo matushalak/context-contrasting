@@ -108,6 +108,43 @@ def split_transition_label(transition_label: str) -> tuple[str, str]:
     return canonical_state_label(parts[0]), canonical_state_label(parts[1])
 
 
+def transition_point(
+        NO_response_naive: float,
+        O_response_naive: float,
+        NO_response_expert: float,
+        O_response_expert: float,
+        activity_threshold: float = 0.025) -> tuple[float, float]:
+    """
+    Continuous 2D transition-space coordinate.
+
+    The first axis is the naive-state scalar and the second axis is the
+    expert-state scalar. Positive values indicate FF-dominant responses,
+    negative values indicate FB-dominant responses, and values close to 0
+    indicate weak or unresponsive behavior.
+    """
+    metrics = neuron_state_metrics(
+        NO_response_naive,
+        O_response_naive,
+        NO_response_expert,
+        O_response_expert,
+        activity_threshold=activity_threshold,
+    )
+    naive_state, _ = metrics["naive"]
+    expert_state, _ = metrics["expert"]
+    return naive_state, expert_state
+
+
+def transition_point_distance(
+        target_point: tuple[float, float],
+        observed_point: tuple[float, float]) -> float:
+    """
+    Euclidean distance in the `(naive_state, expert_state)` plane.
+    """
+    dx = observed_point[0] - target_point[0]
+    dy = observed_point[1] - target_point[1]
+    return (dx ** 2 + dy ** 2) ** 0.5
+
+
 def state_match_score(
         target_state: str,
         NO_response: float,
@@ -195,6 +232,30 @@ def transition_profile_from_summary(
             activity_threshold=activity_threshold,
         ),
         "novel": transitions(
+            summary["full_novel_naive"],
+            summary["occlusion_novel_naive"],
+            summary["full_novel_expert"],
+            summary["occlusion_novel_expert"],
+            activity_threshold=activity_threshold,
+        ),
+    }
+
+
+def transition_points_from_summary(
+        summary: Mapping[str, float],
+        activity_threshold: float = 0.025) -> dict[str, tuple[float, float]]:
+    """
+    Return the familiar and novel coordinates in transition space.
+    """
+    return {
+        "familiar": transition_point(
+            summary["full_familiar_naive"],
+            summary["occlusion_familiar_naive"],
+            summary["full_familiar_expert"],
+            summary["occlusion_familiar_expert"],
+            activity_threshold=activity_threshold,
+        ),
+        "novel": transition_point(
             summary["full_novel_naive"],
             summary["occlusion_novel_naive"],
             summary["full_novel_expert"],

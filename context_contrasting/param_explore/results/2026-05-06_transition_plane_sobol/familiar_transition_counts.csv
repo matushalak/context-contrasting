@@ -1,0 +1,26 @@
+context_label,familiar_transition_label,count
+"ctx=(F,F)",unresponsive -> unresponsive,1486
+"ctx=(F,F)",FF -> FF,471
+"ctx=(F,F)",FF -> unresponsive,91
+"ctx=(F,T)",unresponsive -> unresponsive,1440
+"ctx=(F,T)",FF -> FF,488
+"ctx=(F,T)",FF -> unresponsive,111
+"ctx=(F,T)",FF -> FB,6
+"ctx=(F,T)",FB -> unresponsive,2
+"ctx=(F,T)",FB -> FB,1
+"ctx=(T,F)",unresponsive -> unresponsive,1033
+"ctx=(T,F)",FF -> FF,681
+"ctx=(T,F)",FF -> FB,189
+"ctx=(T,F)",FB -> FB,83
+"ctx=(T,F)",FF -> unresponsive,40
+"ctx=(T,F)",unresponsive -> FB,11
+"ctx=(T,F)",unresponsive -> FF,9
+"ctx=(T,F)",FB -> FF,2
+"ctx=(T,T)",unresponsive -> unresponsive,995
+"ctx=(T,T)",FF -> FF,679
+"ctx=(T,T)",FF -> FB,219
+"ctx=(T,T)",FB -> FB,85
+"ctx=(T,T)",FF -> unresponsive,50
+"ctx=(T,T)",unresponsive -> FB,11
+"ctx=(T,T)",unresponsive -> FF,8
+"ctx=(T,T)",FB -> FF,1

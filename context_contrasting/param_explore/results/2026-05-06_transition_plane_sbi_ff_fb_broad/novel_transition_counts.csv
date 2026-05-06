@@ -1,0 +1,10 @@
+context_label,novel_transition_label,count
+"ctx=(F,F)",FF -> FF,102
+"ctx=(F,F)",unresponsive -> unresponsive,24
+"ctx=(F,F)",unresponsive -> FF,2
+"ctx=(F,T)",FF -> FF,127
+"ctx=(F,T)",unresponsive -> unresponsive,1
+"ctx=(T,F)",FF -> FF,125
+"ctx=(T,F)",unresponsive -> unresponsive,3
+"ctx=(T,T)",FF -> FF,127
+"ctx=(T,T)",unresponsive -> unresponsive,1

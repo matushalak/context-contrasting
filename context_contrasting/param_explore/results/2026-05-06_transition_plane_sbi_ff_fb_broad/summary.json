@@ -1,0 +1,44 @@
+{
+  "settings": {
+    "n_steps_per_phase": 60,
+    "n_trials": 2,
+    "tail_window": 30,
+    "intertrial_sigma": 0.05,
+    "weight_floor": 0.0001,
+    "weight_ceiling": 2.0,
+    "grid_levels": 2,
+    "sobol_samples": 4096,
+    "random_seed": 7,
+    "activity_threshold": 0.025,
+    "n_jobs": -1,
+    "max_grid_points": 50000
+  },
+  "target": {
+    "target_from_reference": "FF_FB_broad",
+    "target_mode": "joint"
+  },
+  "num_simulations": 512,
+  "posterior_samples_per_context": 128,
+  "contexts": [
+    {
+      "context_mode": "ctx=(T,T)",
+      "n_training_samples": 512,
+      "n_posterior_samples": 128
+    },
+    {
+      "context_mode": "ctx=(T,F)",
+      "n_training_samples": 512,
+      "n_posterior_samples": 128
+    },
+    {
+      "context_mode": "ctx=(F,T)",
+      "n_training_samples": 512,
+      "n_posterior_samples": 128
+    },
+    {
+      "context_mode": "ctx=(F,F)",
+      "n_training_samples": 512,
+      "n_posterior_samples": 128
+    }
+  ]
+}
