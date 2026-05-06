@@ -18,7 +18,6 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.manifold import TSNE
 from sklearn.metrics import classification_report
 from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.neighbors import KNeighborsClassifier, NearestNeighbors
@@ -869,21 +868,10 @@ def _compute_embeddings(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, An
     pca3 = PCA(n_components=3, random_state=0)
     pca_coords = pca3.fit_transform(X)
 
-    tsne = TSNE(
-        n_components=2,
-        perplexity=min(35.0, max(10.0, len(frame) / 30.0)),
-        learning_rate="auto",
-        init="pca",
-        random_state=0,
-    )
-    tsne_coords = tsne.fit_transform(X)
-
     embedded = frame.copy()
     embedded["pca1"] = pca_coords[:, 0]
     embedded["pca2"] = pca_coords[:, 1]
     embedded["pca3"] = pca_coords[:, 2]
-    embedded["tsne1"] = tsne_coords[:, 0]
-    embedded["tsne2"] = tsne_coords[:, 1]
     metadata = {
         "pca_explained_variance_ratio": pca3.explained_variance_ratio_.tolist(),
         "pca_components": pca3.components_.tolist(),
@@ -1119,13 +1107,12 @@ def _save_fig(fig: plt.Figure, path: Path) -> None:
 
 
 def _plot_embeddings(frame: pd.DataFrame, output_dir: Path) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
-    _plot_scatter(axes[0], frame, "pca1", "pca2", title="PCA (2D)")
-    _plot_scatter(axes[1], frame, "tsne1", "tsne2", title="t-SNE (2D)")
-    handles, labels = axes[1].get_legend_handles_labels()
+    fig, ax = plt.subplots(1, 1, figsize=(7, 5.5))
+    _plot_scatter(ax, frame, "pca1", "pca2", title="PCA (2D)")
+    handles, labels = ax.get_legend_handles_labels()
     if handles:
         unique = dict(zip(labels, handles))
-        axes[1].legend(unique.values(), unique.keys(), frameon=False, fontsize=9)
+        ax.legend(unique.values(), unique.keys(), frameon=False, fontsize=9)
     _save_fig(fig, output_dir / "embedding_overview_2d.png")
 
     fig = plt.figure(figsize=(7, 6))

@@ -1,0 +1,8 @@
+pair,n_points,median_objective_gap,q10_objective_gap,dominant_assigned_target
+FF_FB_narrow_familiar__un_FB,1999,1.1737638366719088,0.8102031578434009,un_FB
+FF_FB_narrow_novel__FF_un,457,1.753470111847855,0.34707292539378004,FF_FB_narrow_novel
+FF_FB_broad__FF_un,433,0.3292599320411682,0.08576672077178951,FF_un
+FF_FB_narrow_familiar__FF_un,197,1.1657212330261246,0.059787490597615525,FF_FB_narrow_familiar
+FF_FB_broad__FF_FB_narrow_novel,155,0.3043386962109555,0.051242338841160064,FF_FB_narrow_novel
+FF_FB_broad__un_FB,64,0.5361405261331432,0.20663948439061627,un_FB
+FF_FB_broad__FF_FB_narrow_familiar,58,1.1970102757215502,0.1271731928068525,FF_FB_narrow_familiar

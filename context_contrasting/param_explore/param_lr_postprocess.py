@@ -171,14 +171,14 @@ def _plot_boundary_pair_clouds(embedded: pd.DataFrame, boundary_cloud: pd.DataFr
         for idx, pair_name in enumerate(pairs)
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.4))
+    fig, ax = plt.subplots(1, 1, figsize=(7.2, 5.4))
 
     for pair_name in pairs:
         subset = cloud.loc[cloud["boundary_pair"].eq(pair_name)]
         if subset.empty:
             continue
         label = pair_name.replace("__", " vs ")
-        axes[0].scatter(
+        ax.scatter(
             subset["pca1"],
             subset["pca2"],
             s=12,
@@ -187,23 +187,10 @@ def _plot_boundary_pair_clouds(embedded: pd.DataFrame, boundary_cloud: pd.DataFr
             label=label,
             edgecolors="none",
         )
-        axes[1].scatter(
-            subset["tsne1"],
-            subset["tsne2"],
-            s=12,
-            alpha=0.55,
-            color=pair_palette[pair_name],
-            label=label,
-            edgecolors="none",
-        )
-
-    axes[0].set_title("Low-Margin Boundary Clouds in PCA")
-    axes[0].set_xlabel("pca1")
-    axes[0].set_ylabel("pca2")
-    axes[1].set_title("Low-Margin Boundary Clouds in t-SNE")
-    axes[1].set_xlabel("tsne1")
-    axes[1].set_ylabel("tsne2")
-    axes[1].legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
+    ax.set_title("Low-Margin Boundary Clouds in PCA")
+    ax.set_xlabel("pca1")
+    ax.set_ylabel("pca2")
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
     _save_fig(fig, output_dir / "boundary_pair_clouds.png")
 
 

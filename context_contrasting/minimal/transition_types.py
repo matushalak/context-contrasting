@@ -30,6 +30,9 @@ def neuron_state_metrics(
     - Expert State: (NO_response_expert - O_response_expert) * 1[Expert State > threshold]
 
     '''
+    # If responsive, positive state indicates FF-driven, 
+    # negative state indicates FB-driven. 
+    # If not responsive, state is 0.
     naive_state, naive_responsive = single_state_scalar(
         NO_response_naive,
         O_response_naive,
