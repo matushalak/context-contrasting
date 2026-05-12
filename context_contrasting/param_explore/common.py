@@ -15,6 +15,7 @@ from context_contrasting.minimal.config import broad, minimal_configs
 from context_contrasting.minimal.experiment import design_experimental_phase
 from context_contrasting.minimal.minimal import CCNeuron
 from context_contrasting.minimal.transition_types import (
+    independent_response_profile_from_summary,
     scalar_state_profile_from_summary,
     transition_points_from_summary,
 )
@@ -98,6 +99,17 @@ CONTEXT_LABELS = {
     (False, True): "ctx=(F,T)",
     (False, False): "ctx=(F,F)",
 }
+
+INHIBITORY_PARAMETER_ORDER = [
+    "w_lat_0",
+    "w_lat_1",
+    "w_pv_lat_0",
+    "w_pv_lat_1",
+    "W_pv_00",
+    "W_pv_01",
+    "W_pv_10",
+    "W_pv_11",
+]
 
 
 @dataclass(frozen=True)
@@ -337,6 +349,156 @@ def simulate_summary(
     return summary
 
 
+def _inhibitory_norm_snapshot(model: CCNeuron, *, prefix: str) -> dict[str, float]:
+    w_lat = model.w_lat.detach().float()
+    w_pv_lat = model.w_pv_lat.detach().float()
+    W_pv = model.W_pv.detach().float()
+
+    w_lat_sq = torch.sum(w_lat ** 2)
+    w_pv_lat_sq = torch.sum(w_pv_lat ** 2)
+    W_pv_sq = torch.sum(W_pv ** 2)
+
+    return {
+        f"{prefix}_w_lat_norm": float(torch.sqrt(w_lat_sq)),
+        f"{prefix}_w_pv_lat_norm": float(torch.sqrt(w_pv_lat_sq)),
+        f"{prefix}_W_pv_norm": float(torch.sqrt(W_pv_sq)),
+        f"{prefix}_inhibitory_norm_8d": float(torch.sqrt(w_lat_sq + w_pv_lat_sq + W_pv_sq)),
+    }
+
+
+def simulate_summary_with_inhibitory_snapshots(
+    params: dict[str, float],
+    *,
+    receives_context: tuple[bool, bool],
+    settings: ExplorationSettings,
+    seed: int,
+) -> tuple[dict[str, float], dict[str, float]]:
+    config = config_from_params(params, receives_context=receives_context, seed=seed)
+    model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
+
+    X1, C1 = design_experimental_phase(
+        input_mean=[1, 0],
+        input_var=0.05,
+        context_mean=[1, 0],
+        context_var=0.05,
+        n_steps=settings.n_steps_per_phase,
+        n_trials=settings.n_trials,
+        intertrial_sigma=settings.intertrial_sigma,
+    )
+    X2, C2 = design_experimental_phase(
+        input_mean=[0, 1],
+        input_var=0.05,
+        context_mean=[0, 1],
+        context_var=0.05,
+        n_steps=settings.n_steps_per_phase,
+        n_trials=settings.n_trials,
+        intertrial_sigma=settings.intertrial_sigma,
+    )
+    O = torch.zeros_like(X1)
+
+    snapshots = _inhibitory_norm_snapshot(model, prefix="naive")
+    summary = {
+        "full_familiar_naive": _run_phase_mean_response(
+            model,
+            X1,
+            C1,
+            update=False,
+            reset_rates=True,
+            tail_window=settings.tail_window,
+            n_steps_per_phase=settings.n_steps_per_phase,
+            n_trials=settings.n_trials,
+        ),
+        "occlusion_familiar_naive": _run_phase_mean_response(
+            model,
+            O,
+            C1,
+            update=False,
+            reset_rates=True,
+            tail_window=settings.tail_window,
+            n_steps_per_phase=settings.n_steps_per_phase,
+            n_trials=settings.n_trials,
+        ),
+        "full_novel_naive": _run_phase_mean_response(
+            model,
+            X2,
+            C2,
+            update=False,
+            reset_rates=True,
+            tail_window=settings.tail_window,
+            n_steps_per_phase=settings.n_steps_per_phase,
+            n_trials=settings.n_trials,
+        ),
+        "occlusion_novel_naive": _run_phase_mean_response(
+            model,
+            O,
+            C2,
+            update=False,
+            reset_rates=True,
+            tail_window=settings.tail_window,
+            n_steps_per_phase=settings.n_steps_per_phase,
+            n_trials=settings.n_trials,
+        ),
+    }
+
+    _run_phase_mean_response(
+        model,
+        X1,
+        C1,
+        update=True,
+        reset_rates=True,
+        tail_window=settings.tail_window,
+        n_steps_per_phase=settings.n_steps_per_phase,
+        n_trials=settings.n_trials,
+    )
+    snapshots.update(_inhibitory_norm_snapshot(model, prefix="expert"))
+
+    summary.update(
+        {
+            "full_familiar_expert": _run_phase_mean_response(
+                model,
+                X1,
+                C1,
+                update=False,
+                reset_rates=True,
+                tail_window=settings.tail_window,
+                n_steps_per_phase=settings.n_steps_per_phase,
+                n_trials=settings.n_trials,
+            ),
+            "occlusion_familiar_expert": _run_phase_mean_response(
+                model,
+                O,
+                C1,
+                update=False,
+                reset_rates=True,
+                tail_window=settings.tail_window,
+                n_steps_per_phase=settings.n_steps_per_phase,
+                n_trials=settings.n_trials,
+            ),
+            "full_novel_expert": _run_phase_mean_response(
+                model,
+                X2,
+                C2,
+                update=False,
+                reset_rates=True,
+                tail_window=settings.tail_window,
+                n_steps_per_phase=settings.n_steps_per_phase,
+                n_trials=settings.n_trials,
+            ),
+            "occlusion_novel_expert": _run_phase_mean_response(
+                model,
+                O,
+                C2,
+                update=False,
+                reset_rates=True,
+                tail_window=settings.tail_window,
+                n_steps_per_phase=settings.n_steps_per_phase,
+                n_trials=settings.n_trials,
+            ),
+        }
+    )
+    return summary, snapshots
+
+
 def summarize_candidate(
     params: dict[str, float],
     *,
@@ -354,6 +516,10 @@ def summarize_candidate(
         summary,
         activity_threshold=settings.activity_threshold,
     )
+    independent_profile = independent_response_profile_from_summary(
+        summary,
+        activity_threshold=settings.activity_threshold,
+    )
     transition_points = transition_points_from_summary(
         summary,
         activity_threshold=settings.activity_threshold,
@@ -363,6 +529,7 @@ def summarize_candidate(
         **params,
         **summary,
         **state_profile,
+        **independent_profile,
         "familiar_transition_label": state_profile["familiar_transition"],
         "novel_transition_label": state_profile["novel_transition"],
         "familiar_transition_point_x": float(transition_points["familiar"][0]),
@@ -386,24 +553,60 @@ def evaluate_parameter_sets(
     settings: ExplorationSettings,
     method: str,
 ) -> pd.DataFrame:
-    tasks = [
-        (idx, params, receives_context, settings.random_seed + idx)
-        for receives_context in CONTEXT_MODES
-        for idx, params in enumerate(parameter_sets)
-    ]
-    def _run_task(weight_point_idx: int, params: dict[str, float], receives_context: tuple[bool, bool], seed: int) -> dict[str, Any]:
+    def _run_task(weight_point_idx: int, params: dict[str, float]) -> list[dict[str, Any]]:
+        rows_for_weight: list[dict[str, Any]] = []
+        base_seed = settings.random_seed + weight_point_idx
+        for context_idx, receives_context in enumerate(CONTEXT_MODES):
+            row = summarize_candidate(
+                params,
+                receives_context=receives_context,
+                settings=settings,
+                seed=base_seed + context_idx,
+            )
+            row["weight_point_idx"] = int(weight_point_idx)
+            rows_for_weight.append(row)
+        return rows_for_weight
+
+    grouped_rows = Parallel(n_jobs=settings.n_jobs, prefer="processes")(
+        delayed(_run_task)(weight_point_idx, params)
+        for weight_point_idx, params in tqdm(
+            enumerate(parameter_sets),
+            total=len(parameter_sets),
+            desc=f"Simulating {method} exploration",
+        )
+    )
+    rows = [row for rows_for_weight in grouped_rows for row in rows_for_weight]
+    frame = pd.DataFrame(rows)
+    frame.insert(0, "method", method)
+    frame.insert(1, "sample_idx", range(len(frame)))
+    return frame
+
+
+def evaluate_parameter_sets_for_context(
+    parameter_sets: list[dict[str, float]],
+    *,
+    receives_context: tuple[bool, bool],
+    settings: ExplorationSettings,
+    method: str,
+    seed_offset: int = 0,
+) -> pd.DataFrame:
+    def _run_task(weight_point_idx: int, params: dict[str, float]) -> dict[str, Any]:
         row = summarize_candidate(
             params,
             receives_context=receives_context,
             settings=settings,
-            seed=seed,
+            seed=settings.random_seed + seed_offset + weight_point_idx,
         )
         row["weight_point_idx"] = int(weight_point_idx)
         return row
 
     rows = Parallel(n_jobs=settings.n_jobs, prefer="processes")(
-        delayed(_run_task)(weight_point_idx, params, receives_context, seed)
-        for weight_point_idx, params, receives_context, seed in tqdm(tasks, desc=f"Simulating {method} exploration")
+        delayed(_run_task)(weight_point_idx, params)
+        for weight_point_idx, params in tqdm(
+            enumerate(parameter_sets),
+            total=len(parameter_sets),
+            desc=f"Simulating {method} exploration",
+        )
     )
     frame = pd.DataFrame(rows)
     frame.insert(0, "method", method)
@@ -466,6 +669,10 @@ def reference_transition_table(settings: ExplorationSettings) -> pd.DataFrame:
             summary,
             activity_threshold=settings.activity_threshold,
         )
+        independent_profile = independent_response_profile_from_summary(
+            summary,
+            activity_threshold=settings.activity_threshold,
+        )
         points = transition_points_from_summary(
             summary,
             activity_threshold=settings.activity_threshold,
@@ -478,6 +685,7 @@ def reference_transition_table(settings: ExplorationSettings) -> pd.DataFrame:
                 **params,
                 **summary,
                 **profile,
+                **independent_profile,
                 "familiar_transition_label": profile["familiar_transition"],
                 "novel_transition_label": profile["novel_transition"],
                 "familiar_transition_point_x": float(points["familiar"][0]),

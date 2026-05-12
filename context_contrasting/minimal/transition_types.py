@@ -265,6 +265,96 @@ def transition_points_from_summary(
     }
 
 
+INDEPENDENT_STATE_ORDER = ("FF", "FB", "un", "FF&FB")
+NAIVE_SUBCLASS_ORDER = ("broad", "narrow_familiar", "narrow_novel", "unresponsive")
+
+
+def ff_excess_response(
+        full_response: float,
+        occlusion_response: float) -> float:
+    """
+    FF-specific component above the occlusion-driven baseline.
+
+    A diagonal point with ``full ~= occlusion`` therefore has near-zero FF
+    excess and should not be treated as a genuine simultaneous FF and FB
+    response.
+    """
+    return full_response - occlusion_response
+
+
+def contrast_component_state_label(
+        full_response: float,
+        occlusion_response: float,
+        activity_threshold: float = 0.025) -> str:
+    """
+    Endpoint label using FF excess and raw occlusion response.
+
+    - ``FF``: FF excess active, occlusion inactive
+    - ``FB``: occlusion active, FF excess inactive
+    - ``un``: neither active
+    - ``FF&FB``: both active
+    """
+    ff_excess = ff_excess_response(full_response, occlusion_response)
+    ff_active = ff_excess > activity_threshold
+    fb_active = occlusion_response > activity_threshold
+
+    if ff_active and fb_active:
+        return "FF&FB"
+    if ff_active:
+        return "FF"
+    if fb_active:
+        return "FB"
+    return "un"
+
+
+def independent_state_label(
+        FF_response: float,
+        FB_response: float,
+        activity_threshold: float = 0.025) -> str:
+    """
+    Independent endpoint label based on full-vs-occluded activity.
+
+    Unlike the signed FF-vs-FB state scalar, this treats FF and FB activity as
+    separate binary dimensions. The returned label is one of:
+    - ``FF``: full active, occluded inactive
+    - ``FB``: occluded active, full inactive
+    - ``un``: neither active
+    - ``FF&FB``: both active
+    """
+    ff_active = FF_response > activity_threshold
+    fb_active = FB_response > activity_threshold
+
+    if ff_active and fb_active:
+        return "FF&FB"
+    if ff_active:
+        return "FF"
+    if fb_active:
+        return "FB"
+    return "un"
+
+
+def cross_image_subclass_label(
+        familiar_response: float,
+        novel_response: float,
+        activity_threshold: float = 0.025) -> str:
+    """
+    Broad/narrow subclass label for one response component across images.
+
+    This is used independently for the naive FF component (full responses) and
+    the naive FB component (occluded responses).
+    """
+    familiar_active = familiar_response > activity_threshold
+    novel_active = novel_response > activity_threshold
+
+    if familiar_active and novel_active:
+        return "broad"
+    if familiar_active:
+        return "narrow_familiar"
+    if novel_active:
+        return "narrow_novel"
+    return "unresponsive"
+
+
 def scalar_state_profile_from_summary(
         summary: Mapping[str, float],
         activity_threshold: float = 0.025) -> dict[str, float | bool | str]:
@@ -320,6 +410,89 @@ def scalar_state_profile_from_summary(
             summary["occlusion_novel_naive"],
             summary["full_novel_expert"],
             summary["occlusion_novel_expert"],
+            activity_threshold=activity_threshold,
+        ),
+    }
+
+
+def independent_response_profile_from_summary(
+        summary: Mapping[str, float],
+        activity_threshold: float = 0.025) -> dict[str, float | bool | str]:
+    """
+    Return independent FF/FB activity labels and naive cross-image subclasses.
+
+    These labels do not collapse FF and FB into a single signed scalar. They
+    are designed for analyses conditioned on the final expert state.
+    The FF channel is defined as ``full - occlusion`` and the FB channel as the
+    raw occlusion response.
+    """
+    familiar_naive_ff_excess = ff_excess_response(
+        summary["full_familiar_naive"],
+        summary["occlusion_familiar_naive"],
+    )
+    familiar_naive_ff_active = familiar_naive_ff_excess > activity_threshold
+    familiar_naive_fb_active = summary["occlusion_familiar_naive"] > activity_threshold
+    familiar_expert_ff_excess = ff_excess_response(
+        summary["full_familiar_expert"],
+        summary["occlusion_familiar_expert"],
+    )
+    familiar_expert_ff_active = familiar_expert_ff_excess > activity_threshold
+    familiar_expert_fb_active = summary["occlusion_familiar_expert"] > activity_threshold
+
+    novel_naive_ff_excess = ff_excess_response(
+        summary["full_novel_naive"],
+        summary["occlusion_novel_naive"],
+    )
+    novel_naive_ff_active = novel_naive_ff_excess > activity_threshold
+    novel_naive_fb_active = summary["occlusion_novel_naive"] > activity_threshold
+    novel_expert_ff_excess = ff_excess_response(
+        summary["full_novel_expert"],
+        summary["occlusion_novel_expert"],
+    )
+    novel_expert_ff_active = novel_expert_ff_excess > activity_threshold
+    novel_expert_fb_active = summary["occlusion_novel_expert"] > activity_threshold
+
+    return {
+        "familiar_naive_ff_excess": familiar_naive_ff_excess,
+        "familiar_expert_ff_excess": familiar_expert_ff_excess,
+        "novel_naive_ff_excess": novel_naive_ff_excess,
+        "novel_expert_ff_excess": novel_expert_ff_excess,
+        "familiar_naive_ff_active": familiar_naive_ff_active,
+        "familiar_naive_fb_active": familiar_naive_fb_active,
+        "familiar_expert_ff_active": familiar_expert_ff_active,
+        "familiar_expert_fb_active": familiar_expert_fb_active,
+        "novel_naive_ff_active": novel_naive_ff_active,
+        "novel_naive_fb_active": novel_naive_fb_active,
+        "novel_expert_ff_active": novel_expert_ff_active,
+        "novel_expert_fb_active": novel_expert_fb_active,
+        "familiar_naive_component_state": contrast_component_state_label(
+            summary["full_familiar_naive"],
+            summary["occlusion_familiar_naive"],
+            activity_threshold=activity_threshold,
+        ),
+        "familiar_expert_component_state": contrast_component_state_label(
+            summary["full_familiar_expert"],
+            summary["occlusion_familiar_expert"],
+            activity_threshold=activity_threshold,
+        ),
+        "novel_naive_component_state": contrast_component_state_label(
+            summary["full_novel_naive"],
+            summary["occlusion_novel_naive"],
+            activity_threshold=activity_threshold,
+        ),
+        "novel_expert_component_state": contrast_component_state_label(
+            summary["full_novel_expert"],
+            summary["occlusion_novel_expert"],
+            activity_threshold=activity_threshold,
+        ),
+        "naive_ff_subclass": cross_image_subclass_label(
+            familiar_naive_ff_excess,
+            novel_naive_ff_excess,
+            activity_threshold=activity_threshold,
+        ),
+        "naive_fb_subclass": cross_image_subclass_label(
+            summary["occlusion_familiar_naive"],
+            summary["occlusion_novel_naive"],
             activity_threshold=activity_threshold,
         ),
     }

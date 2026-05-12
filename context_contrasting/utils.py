@@ -31,7 +31,6 @@ class EMA(torch.nn.Module):
     def reset_state(self):
         self.ema = self.baseline.clone()
 
-
 class ExponentialMovingAverage(torch.nn.Module):
     """
     Wrapper around torch.optim.swa_utils.AveragedModel for model-weight EMA.
@@ -96,6 +95,13 @@ def nonnegative(x:torch.Tensor)->torch.Tensor:
     Performs x'= max(0, x) elementwise, ensuring all synaptic weights are non-negative.
     '''
     return torch.clamp(x, min=0.0)
+
+def nonpositive(x:torch.Tensor)->torch.Tensor:
+    '''
+    Performs x'= min(0, x) elementwise, ensuring all synaptic weights are non-positive.
+    '''
+    return torch.clamp(x, max=0.0)
+
 
 def randn_reparam(size:tuple[int, ...], mu:float|Iterable, sigma:float|Iterable) -> torch.Tensor:
     '''
