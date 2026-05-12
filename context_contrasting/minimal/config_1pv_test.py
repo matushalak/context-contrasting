@@ -28,8 +28,8 @@ broad = {
     "lr_pv": 0.0025,
     "w_ff_init": {'mu': [0.5, 0.5], 'sigma': 0},
     "w_fb_init": {'mu': [0.05, 0.05], 'sigma': 0},
-    "w_lat_init": {'mu': [0.3, 0.3], 'sigma': 0},
-    "W_pv_init": {'mu': ([0.9, 0.1], [0.1,0.9]), 'sigma': [0, 0]},
+    "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0},
+    "W_pv_init": {'mu': ([0.9, 0.9], [0.0,0.0]), 'sigma': [0, 0]},
     "pyc_decay": 0.05,
     "pv_decay": 0.5,
     "alpha": 1.0,
@@ -42,11 +42,11 @@ broad = {
 
 # 1) unresponsive -> unresponsive; ✅ (subthreshold only PV get stronger because just FF inhibition) 
 # nonresponder (subthreshold), only FF PV strengthening
-nonresponder = broad.copy() 
+nonresponder = broad.copy()
 nonresponder.update({
     "w_ff_init": {'mu': [0.01, 0.01], 'sigma': 0},
     "w_fb_init": {'mu': [0.01, 0.01], 'sigma': 0},
-    "w_lat_init": {'mu': [1.5, 1.5], 'sigma': 0},
+    "w_lat_init": {'mu': [1.5, 0.0], 'sigma': 0},
     'receives_context': (False, False)
     })
 # [NOTE] Might need spiking models to capture sub-threshold behavior
@@ -85,7 +85,7 @@ FF_un = broad.copy()
 FF_un.update({
     "w_ff_init": {'mu': [0.5, 0.5], 'sigma': 0},
     "w_fb_init": {'mu': [1e-7, 1e-7], 'sigma': 0},
-    "w_lat_init": {'mu': [0.1, 0.1], 'sigma': 0},
+    "w_lat_init": {'mu': [0.1, 0.0], 'sigma': 0},
     'receives_context': (False, False)
     })
 
@@ -107,6 +107,8 @@ FF_FF.update({
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
 FF_FB_broad = broad # no reason why novel response should be adapted (boosted novel FF & FB responses)
+# FF_FB_broad.update({
+#     "w_lat_init": {'mu': [0.05, 0.0], 'sigma': 0}})
 
 # narrow, familiar ✅
 narrow_familiar = broad.copy()
@@ -115,7 +117,9 @@ narrow_familiar.update({
     "w_fb_init": {'mu': [0.01, 0.01], 'sigma': 0},
     # NOTE: need to already have more PV inhibition for the novel stim. 
     # otherwise no reason not to have full FB response there as well
-    "w_lat_init": {'mu': [0.3, 1.5], 'sigma': 0}, 
+    # "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0}, 
+    # "W_pv_init": {'mu': ([0.9, 0.9], [0.0,0.0]), 'sigma': [0, 0]},
+    # 'lr_lat': 0.1
     })
 
 
@@ -125,7 +129,9 @@ narrow_novel = broad.copy()
 narrow_novel.update({
     "w_ff_init": {'mu': [0.01, 0.9], 'sigma': 0},
     # a bit of FB initial response to match "averaged" novel neurons
-    "w_fb_init": {'mu': [0.01, 0.15], 'sigma': 0}, 
+    "w_fb_init": {'mu': [0.01, 0.01], 'sigma': 0}, 
+    # "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0},
+    # "lr_fb": 0.002,
     })
 
 # Overview
@@ -143,8 +149,7 @@ FB_FB = broad.copy()
 FB_FB.update({
     "w_ff_init": {'mu': [1e-7, 1e-7], 'sigma': 0},
     "w_fb_init": {'mu': [0.6, 0.6], 'sigma': 0},
-    "w_lat_init": {'mu': [1.5, 1.5], 'sigma': 0},
-    "W_pv_init": {'mu': ([1, 0.2], [0.2,1]), 'sigma': [0, 0]},
+    "w_lat_init": {'mu': [1.5, 0.0], 'sigma': 0},
     })
 
 minimal_configs = {
@@ -162,7 +167,7 @@ minimal_configs = {
     "FB_FB": FB_FB
 }
 
-minimal_configs = {
+minimal_configs2 = {
     name: _normalize_minimal_config(config)
     for name, config in minimal_configs.items()
 }

@@ -9,12 +9,12 @@ class CCNeuron(nn.Module):
     """
     Minimal contextual-contrasting model with:
       - one pyramidal neuron y (scalar),
-      - two PV neurons p (vector of size 2),
-      - feedforward input x (size 2),
-      - contextual input c (size 2).
+      - one PV neuron p (scalar),
+      - feedforward input x (size D),
+      - contextual input c (size D).
 
     Dynamics:
-      p = phi(W_pv x)
+      p = phi(w_pv^T x)
       y = phi(w_ff^T x + w_fb^T c - w_lat^T p)
 
     Local learning rules:
@@ -27,22 +27,22 @@ class CCNeuron(nn.Module):
     # using randn_reparam
     def __init__(
         self,
-        n_features: int = 2,
-        n_pv: int = 2,
-        n_context: int = 2,
+        n_features: int = 3,
+        n_pv: int = 1,
+        n_context: int = 3,
         activation: nn.Module | None = None,
         # Core continuous parameters with a lot of influence
         lr_ff: float = 0.01, # 1
-        w_ff_init:dict = {'mu': [0.5, 0.5], 'sigma': 1e-2}, # 2,3
+        w_ff_init:dict = {'mu': [0.5, 0.5, 0.5], 'sigma': 1e-2}, # 2,3
         lr_fb: float = 0.01, # 4
-        w_fb_init:dict = {'mu': [0.1, 0.1], 'sigma': 1e-2}, # 5,6
+        w_fb_init:dict = {'mu': [0.1, 0.1, 0.1], 'sigma': 1e-2}, # 5,6
         lr_lat: float = 0.01, # 7
-        w_lat_init:dict = {'mu': [0.2, 0.2], 'sigma': 1e-2}, # 8,9
+        w_lat_init:dict = {'mu': [0.2, 0.2, 0.2], 'sigma': 1e-2}, # 8,9
         w_pv_lat_init:dict | None = None, # 10, 11
         lr_pv: float = 0.01, # 12
-        W_pv_init:dict = {'mu': ([0.1, 0.1], [0.1,0.1]), 'sigma': [1e-2, 1e-2]}, # 13,14,15,16
+        W_pv_init:dict = {'mu': ([0.1, 0.1, 0.1]), 'sigma': [1e-2, 1e-2, 1e-2]}, # 13,14,15,16
         # Categorical parameters with a lot of influence
-        receives_context:tuple[bool, bool ] = (True, True), # 17,18
+        receives_context:tuple[bool, bool ] = (True, True, True), # 17,18
         FFrule:Literal['anti-Hebbian', 'Hebbian'] = 'anti-Hebbian', # 18
         FBrule:Literal["dampened-anti-Hebbian", "Hebbian"] = "dampened-anti-Hebbian", # 20
         # Other hyperparameters (fixed between initial conditions)
@@ -74,7 +74,7 @@ class CCNeuron(nn.Module):
         assert FBrule in ["dampened-anti-Hebbian", "Hebbian"], "FBrule must be either 'dampened-anti-Hebbian' or 'Hebbian'."
         self.FBrule = FBrule
         assert len(receives_context) == n_context, "receives_context must be a tuple of two booleans indicating whether the neuron receives context input for familiar and novel conditions respectively."
-        self.receives_context = torch.tensor(receives_context, dtype=torch.float)
+        self.receives_context = torch.tensor(receives_context, dtype=torch.bool)
         assert n_features == n_context
         if w_pv_lat_init is None:
             w_pv_lat_init = dict(w_lat_init)
@@ -89,10 +89,8 @@ class CCNeuron(nn.Module):
         self.w_fb = nonnegative(randn_reparam(size=(1,), **w_fb_init)) * self.receives_context
         self.w_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init))
         self.w_pv_lat = nonnegative(randn_reparam(size=(1,), **w_pv_lat_init))
-        self.W_pv = torch.cat((
-            nonnegative(randn_reparam(size=(1,), mu = W_pv_init['mu'][0],sigma = W_pv_init['sigma'][0])).unsqueeze(0),
-            nonnegative(randn_reparam(size=(1,), mu = W_pv_init['mu'][1],sigma = W_pv_init['sigma'][1])).unsqueeze(0)), 
-                             dim=0)
+        self.W_pv = nonnegative(randn_reparam(size=(1,), **W_pv_init))
+        
         # Hyperpatameters
         self.lr_ff = lr_ff
         self.lr_fb = lr_fb
@@ -115,8 +113,8 @@ class CCNeuron(nn.Module):
         self.W_pv_baseline = self.W_pv.detach().clone()
 
         # Feedback specificity (decoding image identity with 60% accuracy)
-        self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.4/(self.n_features-1)
-        # self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.2/(self.n_features-1)
+        # self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.4/(self.n_features-1)
+        self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.2/(self.n_features-1)
         
         # Ablation parameters
         self.use_FF_connection = use_FF_connection
@@ -143,7 +141,7 @@ class CCNeuron(nn.Module):
         assert x.shape == (self.n_features,) and c.shape == (self.n_context,)
 
         # feedforward excitation to PV neurons
-        pv_ff = self.W_pv @ x * self.use_pv_connection
+        pv_ff = torch.dot(self.W_pv, x) * self.use_pv_connection
         y_t = self.pyramidal.ema
         pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
         p = self.pv(self.activation(
@@ -175,13 +173,6 @@ class CCNeuron(nn.Module):
         One local update step using current inputs (x_t, c_t).
         Returns y_{t+1}, p_t as computed for this step.
         """
-        # drives
-        # y_ff  = torch.dot(self.w_ff, x_t) * self.use_FF_connection # feedforward excitation
-        # y_fb = torch.dot(self.w_fb, c_t * self.receives_context) * self.use_FB_connection # feedback excitation 
-        # y_lat = torch.dot(self.w_lat, pv_t) * self.use_lat_connection # "lateral" inhibition 
-        # membrane potential
-        # u_next = y_ff + y_fb - y_lat
-
         dw_ff, dw_fb, dw_lat, dw_pv_lat, dw_W_pv = (torch.zeros_like(self.w_ff), 
                                                     torch.zeros_like(self.w_fb), 
                                                     torch.zeros_like(self.w_lat), 
@@ -192,12 +183,7 @@ class CCNeuron(nn.Module):
         if self.FF_plasticity and self.use_FF_connection:
             match self.FFrule:
                 case "anti-Hebbian":
-                    # antihebbian rule
                     dw_ff = - self.lr_ff * (y_next * x_t)
-
-                    # try new FF rule - interesting
-                    # dw_ff = torch.sign(c_t - y_next) * self.lr_ff * (y_next * x_t)
-                
                 case "Hebbian":
                     dw_ff = self.lr_ff * (y_next * x_t)
 
@@ -208,18 +194,10 @@ class CCNeuron(nn.Module):
             match self.FBrule:
                 # contextual strengthening general (not only the experienced context, also novel)
                 case "dampened-anti-Hebbian":
-                    # dampened anti-Hebbian rule (strengthen if weak y, saturate if strong y)
-                    dw_fb = self.lr_fb * (damp * self.fb_specificity @ (c_t* self.receives_context))
-                    
-                    # alterntive Difference rules
-                    # difference rule (interesting) - issue is what happens in ITI when no c_t
-                    # dw_fb = self.lr_fb * y_next - (c_t * self.receives_context)
-
-                    # another one combinatino dampened antihebbian and difference rule
-                    # dw_fb = self.lr_fb * ((damp - y_next) * self.fb_specificity @ (c_t* self.receives_context))
-
+                    # dw_fb = self.lr_fb * (damp * y_next * c_t)
+                    dw_fb = self.lr_fb * (damp * self.fb_specificity @ c_t) * self.receives_context
                 case "Hebbian":
-                    dw_fb = self.lr_fb * (y_next * self.fb_specificity @ (c_t* self.receives_context)) 
+                    dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context
 
         # 3) Hebbian update for w_lat and w_pv_lat
         if self.lat_plasticity and self.use_lat_connection:

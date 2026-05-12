@@ -18,36 +18,36 @@ def _normalize_minimal_config(config: dict) -> dict:
 # Broadly tuned: Familiar -> FB responses, Novel -> FF & FB responses
 # X not seen in experimental data
 broad = {
-    "n_features": 2,
-    "n_pv": 2,
-    "n_context": 2,
+    "n_features": 3,
+    "n_pv": 1,
+    "n_context": 3,
     "activation": ThresholdReLU(threshold=0),
     "lr_ff": 0.03,
     "lr_fb": 0.003,
     "lr_lat": 0.01,
     "lr_pv": 0.0025,
-    "w_ff_init": {'mu': [0.5, 0.5], 'sigma': 0},
-    "w_fb_init": {'mu': [0.05, 0.05], 'sigma': 0},
-    "w_lat_init": {'mu': [0.3, 0.3], 'sigma': 0},
-    "W_pv_init": {'mu': ([0.9, 0.1], [0.1,0.9]), 'sigma': [0, 0]},
+    "w_ff_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
+    "w_fb_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "w_lat_init": {'mu': [0.3,], 'sigma': 0},
+    "W_pv_init": {'mu': [0.9, 0.9, 0.9], 'sigma': 0},
     "pyc_decay": 0.05,
     "pv_decay": 0.5,
     "alpha": 1.0,
     "weight_decay": 0.00025,
     "seed": 42,
-    "receives_context": (True, True),
+    "receives_context": (True, True, True),
     "FBrule": "dampened-anti-Hebbian"
 }
 # NOTE: simple model cannot capture broadly tuned cell adapting to multiple familiar
 
 # 1) unresponsive -> unresponsive; ✅ (subthreshold only PV get stronger because just FF inhibition) 
 # nonresponder (subthreshold), only FF PV strengthening
-nonresponder = broad.copy() 
+nonresponder = broad.copy()
 nonresponder.update({
-    "w_ff_init": {'mu': [0.01, 0.01], 'sigma': 0},
-    "w_fb_init": {'mu': [0.01, 0.01], 'sigma': 0},
-    "w_lat_init": {'mu': [1.5, 1.5], 'sigma': 0},
-    'receives_context': (False, False)
+    "w_ff_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
+    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
+    "w_lat_init": {'mu': [1.5,], 'sigma': 0},
+    'receives_context': (False, False, False)
     })
 # [NOTE] Might need spiking models to capture sub-threshold behavior
 # [NOTE] Because just FF inhibition, no way to prevent FB responses
@@ -63,14 +63,14 @@ un_FF = nonresponder.copy()
 un_FF.update({
     "FFrule": "Hebbian",
     'FBrule': "Hebbian",
-    "w_ff_init": {'mu': [0.01, 0.01], 'sigma': 0},
-    'receives_context': (True, True),
+    "w_ff_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
+    'receives_context': (True, True, True),
     "lr_ff": 0.008,
     "lr_fb": 0.0001,
     'lr_lat': 0.001,
     "lr_pv": 0.001,
-    "w_lat_init": {'mu': [0.05, 0.05], 'sigma': 0},
-    "W_pv_init": {'mu': ([0.1, 0.0], [0.0,0.1]), 'sigma': [0, 0]},
+    "w_lat_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "W_pv_init": {'mu': [0.1, 0.1, 0.1], 'sigma': 0},
     })
 
 # 3) unresponsive -> FB responsive ✅
@@ -78,15 +78,15 @@ un_FF.update({
 # especially because context independent of input
 # unresponsive probably because sub-threshold
 un_FB = nonresponder.copy()
-un_FB.update({'receives_context': (True, True)})
+un_FB.update({'receives_context': (True, True, True)})
 
 # FF -> unresponsive; ✅ (simple) cells that don't receive context and only adapt
 FF_un = broad.copy()
 FF_un.update({
-    "w_ff_init": {'mu': [0.5, 0.5], 'sigma': 0},
-    "w_fb_init": {'mu': [1e-7, 1e-7], 'sigma': 0},
-    "w_lat_init": {'mu': [0.1, 0.1], 'sigma': 0},
-    'receives_context': (False, False)
+    "w_ff_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
+    "w_fb_init": {'mu': [1e-7, 1e-7, 1e-7], 'sigma': 0},
+    "w_lat_init": {'mu': [0.1,], 'sigma': 0},
+    'receives_context': (False, False, False)
     })
 
 # FF -> FF, FB still strengthened, novel FF no adaptation; FF strengthened (diff mechanism)
@@ -97,25 +97,29 @@ FF_un.update({
 FF_FF = FF_un.copy()
 FF_FF.update({
     "FFrule": "Hebbian",
-    'receives_context': (False, False),
+    'receives_context': (False, False, False),
     "lr_ff": 0.001,
     "lr_lat": 0.0001,
-    "w_lat_init": {'mu': [0.05, 0.05], 'sigma': 0},
-    "W_pv_init": {'mu': ([0.1, 0.0], [0.0,0.1]), 'sigma': [0, 0]},
+    "w_lat_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "W_pv_init": {'mu': [0.1, 0.1, 0.1], 'sigma': 0},
     })
 
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
 FF_FB_broad = broad # no reason why novel response should be adapted (boosted novel FF & FB responses)
+# FF_FB_broad.update({
+#     "w_lat_init": {'mu': [0.05, 0.0], 'sigma': 0}})
 
 # narrow, familiar ✅
 narrow_familiar = broad.copy()
 narrow_familiar.update({
-    "w_ff_init": {'mu': [0.9, 0.01], 'sigma': 0},
-    "w_fb_init": {'mu': [0.01, 0.01], 'sigma': 0},
+    "w_ff_init": {'mu': [0.9, 0.01, 0.01], 'sigma': 0},
+    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
     # NOTE: need to already have more PV inhibition for the novel stim. 
     # otherwise no reason not to have full FB response there as well
-    "w_lat_init": {'mu': [0.3, 1.5], 'sigma': 0}, 
+    # "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0}, 
+    # "W_pv_init": {'mu': ([0.9, 0.9], [0.0,0.0]), 'sigma': [0, 0]},
+    # 'lr_lat': 0.1
     })
 
 
@@ -123,9 +127,11 @@ narrow_familiar.update({
 # also (less) strengthened FB to unfamiliar context + also enhanced novel response (due to no adaptation + FB boost)
 narrow_novel = broad.copy()
 narrow_novel.update({
-    "w_ff_init": {'mu': [0.01, 0.9], 'sigma': 0},
+    "w_ff_init": {'mu': [0.01, 0.01, 0.9], 'sigma': 0},
     # a bit of FB initial response to match "averaged" novel neurons
-    "w_fb_init": {'mu': [0.01, 0.15], 'sigma': 0}, 
+    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0}, 
+    # "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0},
+    # "lr_fb": 0.002,
     })
 
 # Overview
@@ -141,10 +147,9 @@ narrow_novel.update({
 # already FB responsive, becomes even more FB responsive
 FB_FB = broad.copy()
 FB_FB.update({
-    "w_ff_init": {'mu': [1e-7, 1e-7], 'sigma': 0},
-    "w_fb_init": {'mu': [0.6, 0.6], 'sigma': 0},
-    "w_lat_init": {'mu': [1.5, 1.5], 'sigma': 0},
-    "W_pv_init": {'mu': ([1, 0.2], [0.2,1]), 'sigma': [0, 0]},
+    "w_ff_init": {'mu': [1e-7, 1e-7, 1e-7], 'sigma': 0},
+    "w_fb_init": {'mu': [0.6, 0.6, 0.6], 'sigma': 0},
+    "w_lat_init": {'mu': [1.5,], 'sigma': 0},
     })
 
 minimal_configs = {
@@ -162,7 +167,10 @@ minimal_configs = {
     "FB_FB": FB_FB
 }
 
-minimal_configs = {
+minimal_configs3 = {
     name: _normalize_minimal_config(config)
     for name, config in minimal_configs.items()
 }
+
+# TODO: adjust plotting around this for experiment_s
+# and define new broad vs narrow on the familiar images, with novel responsiveness as a separate dimension

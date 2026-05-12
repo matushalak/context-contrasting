@@ -6,7 +6,7 @@ from context_contrasting.utils import randn_reparam
 from context_contrasting.minimal import PLOTSDIR
 from context_contrasting.minimal.config import minimal_configs
 from context_contrasting.minimal.config_1pv_test import minimal_configs2
-from context_contrasting.minimal.minimal import CCNeuron
+from context_contrasting.minimal.minimal_s import CCNeuron
 from context_contrasting.minimal.utils import (build_res, collect_outputs, prepare_collect, 
                                                _rename_phase, _resolve_plots_dir, 
                                                _save_grouped_transition_panels)
@@ -29,8 +29,8 @@ def _run_single_config(
     return cfg_name, df, stimuli
 
 
-def design_experimental_phase(input_mean:torch.Tensor, input_var:torch.Tensor,
-                              context_mean:torch.Tensor, context_var:torch.Tensor,
+def design_experimental_phase(input_means:tuple[torch.Tensor], input_vars:tuple[torch.Tensor],
+                              context_means:tuple[torch.Tensor], context_vars:tuple[torch.Tensor],
                               n_steps:int = 100, n_trials:int | None = 10,
                               intertrial_sigma:float = 0.05
                               ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -38,15 +38,19 @@ def design_experimental_phase(input_mean:torch.Tensor, input_var:torch.Tensor,
     Example experiment stimulation for using the minimal CCNeuron model.
         Generates random input and context sequences.
     """
+    # number of stimuli to (randomly) interleave
+    n_stimuli = len(input_means)
     nzeros = 3 * n_steps // 4
     # Generate random input and context sequences according to provided distributions
-    X = randn_reparam(size = (n_steps-nzeros,), mu = input_mean, sigma = input_var)
-    C = randn_reparam(size = (n_steps-nzeros,), mu = context_mean, sigma = context_var)
-    intertrial = randn_reparam(size=(nzeros, *X.shape[1:]), mu=0.0, sigma=intertrial_sigma)
+    Xs = [randn_reparam(size = (n_steps-nzeros,), mu = input_mean, sigma = input_var) 
+          for input_mean, input_var in zip(input_means, input_vars)]
+    Cs = [randn_reparam(size = (n_steps-nzeros,), mu = context_mean, sigma = context_var) 
+          for context_mean, context_var in zip(context_means, context_vars)]
+    intertrial = randn_reparam(size=(nzeros, *Xs[0].shape[1:]), mu=0.0, sigma=intertrial_sigma)
     
     # append a few 0's to indicate initial state
-    X = torch.cat((intertrial, X), dim=0)
-    C = torch.cat((intertrial, C), dim=0)
+    X = torch.cat([torch.cat(intertrial, Xs[i]) for i in range(len(Xs))], dim=0)
+    C = torch.cat([torch.cat(intertrial, Cs[i]) for i in range(len(Cs))], dim=0)
     
     if n_trials is not None:
         X = X.repeat((n_trials, 1))
@@ -90,17 +94,23 @@ def run_experiment(
     model = CCNeuron(**{key: value for key, value in model_config.items() if not key.startswith("_")})
 
     # Image 1 ("familiar", trained on)
-    X1, C1 = design_experimental_phase(input_mean=[1,0], input_var = 0.05,
-                                       context_mean=[1,0], context_var=0.05,
+    X1, C1 = design_experimental_phase(input_means=([1,0,0], [0,1,0]), 
+                                       input_vars=[0.05, 0.05],
+                                       context_means=([1,0,0], [0,1,0]), 
+                                       context_vars=[0.05, 0.05],
                                        n_steps = n_steps_per_phase)
     
-    X1_long, C1_long = design_experimental_phase(input_mean=[1,0], input_var = 0.05,
-                                                context_mean=[1,0], context_var=0.05,
+    X1_long, C1_long = design_experimental_phase(input_means=([1,0,0], [0,1,0]), 
+                                                input_vars=[0.05, 0.05],
+                                                context_means=([1,0,0], [0,1,0]), 
+                                                context_vars=[0.05, 0.05],
                                                 n_steps = 2*n_steps_per_phase, n_trials=40)
     
     # Image 2 ("novel", not trained on)
-    X2, C2 = design_experimental_phase(input_mean=[0,1], input_var=0.05,
-                                       context_mean=[0,1], context_var=0.05,
+    X2, C2 = design_experimental_phase(input_means=([0,0,1],), 
+                                       input_vars=([0.05],),
+                                       context_means=([0,0,1],), 
+                                       context_vars=([0.05],),
                                        n_steps = n_steps_per_phase)
     O = torch.zeros_like(X1) # occlusion (no input)
     O_long = torch.zeros_like(X1_long)
