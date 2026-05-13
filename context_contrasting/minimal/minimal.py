@@ -115,8 +115,8 @@ class CCNeuron(nn.Module):
         self.W_pv_baseline = self.W_pv.detach().clone()
 
         # Feedback specificity (decoding image identity with 60% accuracy)
-        self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.4/(self.n_features-1)
-        # self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.2/(self.n_features-1)
+        # self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.4/(self.n_features-1)
+        self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.2/(self.n_features-1)
         
         # Ablation parameters
         self.use_FF_connection = use_FF_connection
@@ -158,7 +158,7 @@ class CCNeuron(nn.Module):
         y_lat = torch.dot(self.w_lat, p) * self.use_lat_connection # "lateral" inhibition 
         y_next = self.pyramidal(self.activation(
             y_ff + y_fb - y_lat
-            + randn_reparam(size=(), mu=0, sigma=0.01) # small random baseline input
+            + randn_reparam(size=(), mu=0.05, sigma=0.1) # small random baseline input
             - a # adaptation
             ))
         

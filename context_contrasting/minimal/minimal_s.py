@@ -37,10 +37,10 @@ class CCNeuron(nn.Module):
         lr_fb: float = 0.01, # 4
         w_fb_init:dict = {'mu': [0.1, 0.1, 0.1], 'sigma': 1e-2}, # 5,6
         lr_lat: float = 0.01, # 7
-        w_lat_init:dict = {'mu': [0.2, 0.2, 0.2], 'sigma': 1e-2}, # 8,9
+        w_lat_init:dict = {'mu': [0.2], 'sigma': 1e-2}, # 8,9
         w_pv_lat_init:dict | None = None, # 10, 11
         lr_pv: float = 0.01, # 12
-        W_pv_init:dict = {'mu': ([0.1, 0.1, 0.1]), 'sigma': [1e-2, 1e-2, 1e-2]}, # 13,14,15,16
+        W_pv_init:dict = {'mu': [0.1, 0.1, 0.1], 'sigma': [1e-2, 1e-2, 1e-2]}, # 13,14,15,16
         # Categorical parameters with a lot of influence
         receives_context:tuple[bool, bool ] = (True, True, True), # 17,18
         FFrule:Literal['anti-Hebbian', 'Hebbian'] = 'anti-Hebbian', # 18
@@ -73,7 +73,7 @@ class CCNeuron(nn.Module):
         self.FFrule = FFrule
         assert FBrule in ["dampened-anti-Hebbian", "Hebbian"], "FBrule must be either 'dampened-anti-Hebbian' or 'Hebbian'."
         self.FBrule = FBrule
-        assert len(receives_context) == n_context, "receives_context must be a tuple of two booleans indicating whether the neuron receives context input for familiar and novel conditions respectively."
+        assert len(receives_context) == n_context, "receives_context must match n_context."
         self.receives_context = torch.tensor(receives_context, dtype=torch.bool)
         assert n_features == n_context
         if w_pv_lat_init is None:
@@ -87,9 +87,9 @@ class CCNeuron(nn.Module):
         # Learnable weights updated manually via local rules
         self.w_ff = nonnegative(randn_reparam(size=(1,), **w_ff_init))
         self.w_fb = nonnegative(randn_reparam(size=(1,), **w_fb_init)) * self.receives_context
-        self.w_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init))
-        self.w_pv_lat = nonnegative(randn_reparam(size=(1,), **w_pv_lat_init))
-        self.W_pv = nonnegative(randn_reparam(size=(1,), **W_pv_init))
+        self.w_lat = nonnegative(randn_reparam(size=(1,), **w_lat_init)).reshape(-1)
+        self.w_pv_lat = nonnegative(randn_reparam(size=(1,), **w_pv_lat_init)).reshape(-1)
+        self.W_pv = nonnegative(randn_reparam(size=(1,), **W_pv_init)).reshape(1, -1)
         
         # Hyperpatameters
         self.lr_ff = lr_ff
@@ -114,7 +114,7 @@ class CCNeuron(nn.Module):
 
         # Feedback specificity (decoding image identity with 60% accuracy)
         # self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.4/(self.n_features-1)
-        self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.2/(self.n_features-1)
+        self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.2#/(self.n_features-1)
         
         # Ablation parameters
         self.use_FF_connection = use_FF_connection
@@ -141,7 +141,7 @@ class CCNeuron(nn.Module):
         assert x.shape == (self.n_features,) and c.shape == (self.n_context,)
 
         # feedforward excitation to PV neurons
-        pv_ff = torch.dot(self.W_pv, x) * self.use_pv_connection
+        pv_ff = (self.W_pv @ x).reshape(-1) * self.use_pv_connection
         y_t = self.pyramidal.ema
         pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
         p = self.pv(self.activation(
@@ -156,7 +156,7 @@ class CCNeuron(nn.Module):
         y_lat = torch.dot(self.w_lat, p) * self.use_lat_connection # "lateral" inhibition 
         y_next = self.pyramidal(self.activation(
             y_ff + y_fb - y_lat
-            + randn_reparam(size=(), mu=0, sigma=0.01) # small random baseline input
+            + randn_reparam(size=(), mu=0.05, sigma=0.1) # small random baseline input
             - a # adaptation
             ))
         
@@ -194,7 +194,6 @@ class CCNeuron(nn.Module):
             match self.FBrule:
                 # contextual strengthening general (not only the experienced context, also novel)
                 case "dampened-anti-Hebbian":
-                    # dw_fb = self.lr_fb * (damp * y_next * c_t)
                     dw_fb = self.lr_fb * (damp * self.fb_specificity @ c_t) * self.receives_context
                 case "Hebbian":
                     dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context
@@ -208,7 +207,7 @@ class CCNeuron(nn.Module):
 
         # 4) Hebbian update for W_pv
         if self.pv_plasticity and self.use_pv_connection:
-            dw_W_pv = self.lr_pv * torch.outer(pv_t, x_t)
+            dw_W_pv = self.lr_pv * torch.outer(pv_t.reshape(-1), x_t)
 
         # Apply updates
         self.w_ff += dw_ff

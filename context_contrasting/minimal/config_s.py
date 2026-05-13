@@ -22,14 +22,15 @@ broad = {
     "n_pv": 1,
     "n_context": 3,
     "activation": ThresholdReLU(threshold=0),
-    "lr_ff": 0.03,
-    "lr_fb": 0.003,
-    "lr_lat": 0.01,
-    "lr_pv": 0.0025,
+    "lr_ff": 0.004,
+    "lr_fb": 0.002,
+    "lr_lat": 0.002,
+    "lr_pv": 0.003,
     "w_ff_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
-    "w_fb_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "w_fb_init": {'mu': [0.15, 0.15, 0.15], 'sigma': 0},
     "w_lat_init": {'mu': [0.3,], 'sigma': 0},
-    "W_pv_init": {'mu': [0.9, 0.9, 0.9], 'sigma': 0},
+    # "W_pv_init": {'mu': [0.9, 0.9, 0.9], 'sigma': 0},
+    "W_pv_init": {'mu': [0.7, 0.7, 0.7], 'sigma': 0},
     "pyc_decay": 0.05,
     "pv_decay": 0.5,
     "alpha": 1.0,
@@ -46,7 +47,7 @@ nonresponder = broad.copy()
 nonresponder.update({
     "w_ff_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
     "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
-    "w_lat_init": {'mu': [1.5,], 'sigma': 0},
+    # "w_lat_init": {'mu': [1.5,], 'sigma': 0},
     'receives_context': (False, False, False)
     })
 # [NOTE] Might need spiking models to capture sub-threshold behavior
@@ -69,7 +70,7 @@ un_FF.update({
     "lr_fb": 0.0001,
     'lr_lat': 0.001,
     "lr_pv": 0.001,
-    "w_lat_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "w_lat_init": {'mu': [0.05], 'sigma': 0},
     "W_pv_init": {'mu': [0.1, 0.1, 0.1], 'sigma': 0},
     })
 
@@ -78,7 +79,9 @@ un_FF.update({
 # especially because context independent of input
 # unresponsive probably because sub-threshold
 un_FB = nonresponder.copy()
-un_FB.update({'receives_context': (True, True, True)})
+un_FB.update({'receives_context': (True, True, True),
+            #   "W_pv_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
+            })
 
 # FF -> unresponsive; ✅ (simple) cells that don't receive context and only adapt
 FF_un = broad.copy()
@@ -100,28 +103,30 @@ FF_FF.update({
     'receives_context': (False, False, False),
     "lr_ff": 0.001,
     "lr_lat": 0.0001,
-    "w_lat_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "w_lat_init": {'mu': [0.05], 'sigma': 0},
     "W_pv_init": {'mu': [0.1, 0.1, 0.1], 'sigma': 0},
     })
 
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
-FF_FB_broad = broad # no reason why novel response should be adapted (boosted novel FF & FB responses)
-# FF_FB_broad.update({
-#     "w_lat_init": {'mu': [0.05, 0.0], 'sigma': 0}})
+FF_FB_broad_novel = broad # no reason why novel response should be adapted (boosted novel FF & FB responses)
+# FF_FB_broad_novel.update({
+#     "w_lat_init": {'mu': [0.05], 'sigma': 0}})
+
+FF_FB_broad = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
+FF_FB_broad.update({
+    "w_ff_init": {'mu': [0.5, 0.5,0.01], 'sigma': 0},})
 
 # narrow, familiar ✅
 narrow_familiar = broad.copy()
 narrow_familiar.update({
     "w_ff_init": {'mu': [0.9, 0.01, 0.01], 'sigma': 0},
-    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
-    # NOTE: need to already have more PV inhibition for the novel stim. 
-    # otherwise no reason not to have full FB response there as well
-    # "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0}, 
-    # "W_pv_init": {'mu': ([0.9, 0.9], [0.0,0.0]), 'sigma': [0, 0]},
-    # 'lr_lat': 0.1
+    # "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
     })
 
+narrow_familiar_novel = narrow_familiar.copy()
+narrow_familiar_novel.update({
+    "w_ff_init": {'mu': [0.9, 0.01,0.9], 'sigma': 0},})
 
 # narrow novel ✅ strengthen FB to familiar context
 # also (less) strengthened FB to unfamiliar context + also enhanced novel response (due to no adaptation + FB boost)
@@ -129,9 +134,7 @@ narrow_novel = broad.copy()
 narrow_novel.update({
     "w_ff_init": {'mu': [0.01, 0.01, 0.9], 'sigma': 0},
     # a bit of FB initial response to match "averaged" novel neurons
-    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0}, 
-    # "w_lat_init": {'mu': [0.3, 0.0], 'sigma': 0},
-    # "lr_fb": 0.002,
+    # "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0}, 
     })
 
 # Overview
@@ -160,8 +163,10 @@ minimal_configs = {
     "FF_un": FF_un,
     "FF_FF": FF_FF, # Hebbian FF plasticity
     
-    "FF_FB_broad":broad,
+    "FF_FB_broad":FF_FB_broad,
+    "FF_FB_broad_novel": FF_FB_broad_novel,
     "FF_FB_narrow_familiar": narrow_familiar,
+    "FF_FB_narrow_familiar_novel": narrow_familiar_novel,
     "FF_FB_narrow_novel": narrow_novel,
     
     "FB_FB": FB_FB

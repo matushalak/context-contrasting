@@ -107,8 +107,8 @@ FF_FF.update({
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
 FF_FB_broad = broad # no reason why novel response should be adapted (boosted novel FF & FB responses)
-# FF_FB_broad.update({
-#     "w_lat_init": {'mu': [0.05, 0.0], 'sigma': 0}})
+FF_FB_broad.update({
+    "w_lat_init": {'mu': [0.05, 0.0], 'sigma': 0}})
 
 # narrow, familiar ✅
 narrow_familiar = broad.copy()
