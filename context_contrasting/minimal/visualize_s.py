@@ -993,12 +993,12 @@ def visualize_transition_panel(
 
     if save_in_transition_subdir:
         plot_dirs = _resolve_plot_dirs(save_path)
-        out_path = os.path.join(plot_dirs["transition_panels"], f"{name}_{'_'.join(selected_conditions)}.png")
+        out_path = os.path.join(plot_dirs["transition_panels"], f"{name}_{'_'.join(selected_conditions)}.svg")
     else:
         os.makedirs(save_path, exist_ok=True)
-        out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.png")
+        out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.svg")
 
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     if transition_export_df is not None:
         transition_export_df.to_csv(os.path.splitext(out_path)[0] + ".csv", index=False)
