@@ -1,4 +1,6 @@
 # author: Matúš Halák (@matushalak)
+from contextlib import contextmanager
+
 import torch
 from joblib import Parallel, delayed
 from pandas import DataFrame, concat as pd_concat
@@ -26,6 +28,16 @@ STIMULUS_SPECS = {
     "familiar_1": ([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
     "familiar_2": ([0.0, 1.0, 0.0], [0.0, 1.0, 0.0]),
     "novel": ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0]),
+}
+
+NO_RESPONSE_ABLATION_SPECS = {
+    "no_context": {"condition_prefix": "nocontext", "zero_context": True},
+    "nopvff": {"condition_prefix": "nopvff", "model_overrides": {"use_pv_connection": False}},
+    "no_context_nopvff": {
+        "condition_prefix": "nocontextnopvff",
+        "zero_context": True,
+        "model_overrides": {"use_pv_connection": False},
+    },
 }
 
 
@@ -77,6 +89,18 @@ def _combine_experimental_phases(
     return X, C
 
 
+@contextmanager
+def _temporary_model_overrides(model: CCNeuron, **overrides: bool):
+    originals = {name: getattr(model, name) for name in overrides}
+    try:
+        for name, value in overrides.items():
+            setattr(model, name, value)
+        yield
+    finally:
+        for name, value in originals.items():
+            setattr(model, name, value)
+
+
 def run_experimental_phase(
     model: CCNeuron,
     X: torch.Tensor,
@@ -99,6 +123,49 @@ def run_experimental_phase(
     df = build_res(data_collection, model)
     df["condition"] = condition_name
     return df
+
+
+def _run_test_phase_variants(
+    model: CCNeuron,
+    stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    *,
+    phase_label: str,
+) -> list[DataFrame]:
+    frames: list[DataFrame] = []
+
+    for condition_name, (X, C) in stimuli.items():
+        occluded_X = torch.zeros_like(X)
+        no_context_C = torch.zeros_like(C)
+
+        frames.append(
+            run_experimental_phase(model, X, C, condition_name=f"full_{condition_name}_{phase_label}", update=False)
+        )
+        frames.append(
+            run_experimental_phase(
+                model,
+                occluded_X,
+                C,
+                condition_name=f"occlusion_{condition_name}_{phase_label}",
+                update=False,
+            )
+        )
+
+        for ablation_label, ablation_spec in NO_RESPONSE_ABLATION_SPECS.items():
+            ablated_C = no_context_C if ablation_spec.get("zero_context", False) else C
+            model_overrides = ablation_spec.get("model_overrides", {})
+            condition_prefix = ablation_spec.get("condition_prefix", ablation_label)
+            with _temporary_model_overrides(model, **model_overrides):
+                frames.append(
+                    run_experimental_phase(
+                        model,
+                        X,
+                        ablated_C,
+                        condition_name=f"{condition_prefix}_{condition_name}_{phase_label}",
+                        update=False,
+                    )
+                )
+
+    return frames
 
 
 def _build_test_stimuli(
@@ -148,23 +215,7 @@ def run_experiment(
     stimuli = _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=10)
     training_X, training_C = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=5)
 
-    naive_frames: list[DataFrame] = []
-    expert_frames: list[DataFrame] = []
-
-    for condition_name, (X, C) in stimuli.items():
-        occluded_X = torch.zeros_like(X)
-
-        naive_frames.append(
-            run_experimental_phase(model, X, C, condition_name=f"full_{condition_name}_naive", update=False)
-        )
-        naive_frames.append(
-            run_experimental_phase(model, occluded_X, C, condition_name=f"occlusion_{condition_name}_naive", update=False)
-        )
-
-    novel_X, novel_C = stimuli["novel"]
-    naive_frames.append(
-        run_experimental_phase(model, novel_X, torch.zeros_like(novel_C), condition_name="full_novel_nocontext_naive", update=False)
-    )
+    naive_frames = _run_test_phase_variants(model, stimuli, phase_label="naive")
 
     training_frame = run_experimental_phase(
         model,
@@ -174,19 +225,7 @@ def run_experiment(
         update=True,
     )
 
-    for condition_name, (X, C) in stimuli.items():
-        occluded_X = torch.zeros_like(X)
-
-        expert_frames.append(
-            run_experimental_phase(model, X, C, condition_name=f"full_{condition_name}_expert", update=False)
-        )
-        expert_frames.append(
-            run_experimental_phase(model, occluded_X, C, condition_name=f"occlusion_{condition_name}_expert", update=False)
-        )
-
-    expert_frames.append(
-        run_experimental_phase(model, novel_X, torch.zeros_like(novel_C), condition_name="full_novel_nocontext_expert", update=False)
-    )
+    expert_frames = _run_test_phase_variants(model, stimuli, phase_label="expert")
 
     df = pd_concat(
         [

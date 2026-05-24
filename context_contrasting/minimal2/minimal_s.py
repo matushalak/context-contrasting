@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from typing import Literal
 
-from context_contrasting.utils import EMA, ThresholdReLU, nonnegative, randn_reparam
+from context_contrasting.utils import EMA, ThresholdReLU, GainSigmoid, nonnegative, randn_reparam
 
 class CCNeuron(nn.Module):
     """
@@ -48,6 +48,14 @@ class CCNeuron(nn.Module):
         # Other hyperparameters (fixed between initial conditions)
         pyc_decay:float = 0.1,
         pv_decay:float = 0.25,
+        apical_drive_threshold: float = 0.2,
+        apical_drive_hard: bool = True,
+        apical_gain_strength: float = 2.0,
+        apical_gain_k: float = 5.0,
+        apical_gain_threshold: float = 0.0,
+        baseline_drive_mu: float = 0.0,
+        baseline_drive_sigma: float = 0.2,
+        pv_noise_sigma: float = 0.06,
         alpha: float = 1.0,
         weight_decay: float = 0.0,
         seed:int = 42,
@@ -98,13 +106,17 @@ class CCNeuron(nn.Module):
         self.lr_pv = lr_pv
         self.alpha = alpha
         self.weight_decay = weight_decay
+        self.baseline_drive_mu = baseline_drive_mu
+        self.baseline_drive_sigma = baseline_drive_sigma
+        self.pv_noise_sigma = pv_noise_sigma
 
         # State variables for PV and pyramidal neurons, implemented as EMAs.
         self.pv = EMA(shape=(n_pv,), alpha=pv_decay)
         self.pyramidal = EMA(shape=(), alpha=pyc_decay)
         self.adapt = EMA(shape=(), alpha=pyc_decay*0.2)
 
-        self.threshold = ThresholdReLU(threshold=0.15)
+        self.threshold = ThresholdReLU(threshold=apical_drive_threshold, hard=apical_drive_hard)
+        self.sigmoid = GainSigmoid(gain=apical_gain_strength, k=apical_gain_k, threshold=apical_gain_threshold)
 
         # EMA of weights to implement decay towards baseline in absence of input (optional)
         # Baselines
@@ -115,8 +127,9 @@ class CCNeuron(nn.Module):
         self.W_pv_baseline = self.W_pv.detach().clone()
 
         # Feedback specificity (decoding image identity with 60% accuracy)
-        # self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.4/(self.n_features-1)
-        self.fb_specificity = torch.eye(self.n_features)*0.3 + (1 - torch.eye(self.n_features))*0.05#/(self.n_features-1)
+        self.fb_specificity = torch.eye(self.n_features)*0.5 + (1 - torch.eye(self.n_features))*0.1
+        self.pv_specificity = torch.eye(self.n_features)
+
         # Ablation parameters
         self.use_FF_connection = use_FF_connection
         self.FF_plasticity = FF_plasticity
@@ -129,6 +142,7 @@ class CCNeuron(nn.Module):
         self.use_pv_connection = use_pv_connection
         self.pv_plasticity = pv_plasticity
 
+    @torch.no_grad()
     def forward(self, x: torch.Tensor, c: torch.Tensor
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -147,7 +161,7 @@ class CCNeuron(nn.Module):
         pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
         p = self.pv(self.activation(
             pv_ff + pv_lat 
-            + randn_reparam(size=self.pv.ema.shape, mu=0, sigma=0.06) # small random baseline input
+            + randn_reparam(size=self.pv.ema.shape, mu=0, sigma=self.pv_noise_sigma) # small random baseline input
             )) 
         
         a = self.adapt(self.pyramidal.ema) # update adaptation variable 
@@ -155,15 +169,23 @@ class CCNeuron(nn.Module):
         y_ff  = torch.dot(self.w_ff, x) * self.use_FF_connection # feedforward excitation
         y_fb = torch.dot(self.w_fb, c * self.receives_context) * self.use_FB_connection # feedback excitation 
         y_lat = torch.dot(self.w_lat, p) * self.use_lat_connection # "lateral" inhibition 
+        
+        baseline_drive = randn_reparam(
+            size=(),
+            mu=self.baseline_drive_mu,
+            sigma=self.baseline_drive_sigma,
+        ) # small random baseline input
+        
+        basal = y_ff + baseline_drive - y_lat - a
+        apical_drive = self.threshold(y_fb) * self.use_FB_connection
+        apical_gain = self.sigmoid(y_fb)
+        
         y_next = self.pyramidal(self.activation(
-            torch.sigmoid(y_fb)*(
-            y_ff
-            + randn_reparam(size=(), mu=0.1, sigma=0.1) # small random baseline input
-            - y_lat
-            )
-            + self.threshold(y_fb)
-            - a # adaptation
+            apical_gain * basal + apical_drive
             ))
+        
+        # TODO:
+        # FF adaptation should play bigger role; shouldn't be just about PV strengthening a lot
         
         return x, y_t, y_next, p, c
 
@@ -221,13 +243,21 @@ class CCNeuron(nn.Module):
         self.w_pv_lat += dw_pv_lat
         self.W_pv += dw_W_pv
         
-        # Decay towards baseline
+        # Weight Decay 
         if 0.0 < self.weight_decay < 1.0:
+            # towards baseline (initial) weights
             self.w_ff -= (self.w_ff - self.w_ff_baseline) * self.weight_decay * self.FF_plasticity * self.use_FF_connection
             self.w_fb -= (self.w_fb - self.w_fb_baseline) * self.weight_decay * self.FB_plasticity * self.use_FB_connection
             self.w_lat -= (self.w_lat - self.w_lat_baseline) * self.weight_decay * self.lat_plasticity * self.use_lat_connection
             self.w_pv_lat -= (self.w_pv_lat - self.w_pv_lat_baseline) * self.weight_decay * self.pv_lat_plasticity * self.use_pv_lat_connection
             self.W_pv -= (self.W_pv - self.W_pv_baseline) * self.weight_decay * self.pv_plasticity * self.use_pv_connection
+            
+            # towards zero
+            # self.w_ff -= (self.w_ff) * self.weight_decay * self.FF_plasticity * self.use_FF_connection
+            # self.w_fb -= (self.w_fb) * self.weight_decay * self.FB_plasticity * self.use_FB_connection
+            # self.w_lat -= (self.w_lat) * self.weight_decay * self.lat_plasticity * self.use_lat_connection
+            # self.w_pv_lat -= (self.w_pv_lat) * self.weight_decay * self.pv_lat_plasticity * self.use_pv_lat_connection
+            # self.W_pv -= (self.W_pv) * self.weight_decay * self.pv_plasticity * self.use_pv_connection
         
         # Ensure non-negativity of weights
         self.w_ff = nonnegative(self.w_ff)

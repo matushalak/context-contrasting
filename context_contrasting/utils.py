@@ -82,12 +82,32 @@ class ThresholdReLU(torch.nn.Module):
     '''
     Thresholded ReLU activation function: f(x) = max(0, x - threshold)
     '''
-    def __init__(self, threshold:float = 0.0):
+    def __init__(self, threshold:float = 0.0, hard:bool = True):
         super().__init__()
+        self.threshold = threshold
+        self.hard = hard
+    
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
+        if self.hard:
+            return (x > self.threshold).float() * x
+        else:
+            return torch.clamp(x - self.threshold, min=0.0)
+
+
+class GainSigmoid(torch.nn.Module):
+    '''
+    Gain modulation by sigmoid function: f(x) = 1 + gain * sigmoid(k * (x - threshold)) - g/2
+
+    As a results, with 0 input, the output is always 1; while with high input, the output is controlled by gain
+    '''
+    def __init__(self, gain:float = 1.0, k:float = 1.0, threshold:float = 0.0):
+        super().__init__()
+        self.gain = gain
+        self.k = k
         self.threshold = threshold
     
     def forward(self, x:torch.Tensor) -> torch.Tensor:
-        return torch.clamp(x - self.threshold, min=0.0)
+        return 1 + self.gain * torch.sigmoid(self.k * (x - self.threshold)) - self.gain / 2
 
 
 def nonnegative(x:torch.Tensor)->torch.Tensor:

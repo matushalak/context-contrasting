@@ -21,16 +21,26 @@ from context_contrasting.minimal2 import (
 PLOT_CONDITION_LABELS = {
     "full": "Nonoccluded",
     "occlusion": "Occluded",
-    "novel_no_context": "No feedback",
+    "no_context": "No feedback",
+    "nopvff": "No pv_ff",
+    "no_context_nopvff": "No fb/no pv_ff",
 }
-PLOT_CONDITION_ORDER = ["full", "occlusion", "novel_no_context"]
-PLOT_COLORS = {"Nonoccluded": "black", "Occluded": "red", "No feedback": "blue"}
+PLOT_CONDITION_ORDER = ["full", "occlusion", "no_context", "nopvff", "no_context_nopvff"]
+PLOT_COLORS = {
+    "Nonoccluded": "black",
+    "Occluded": "red",
+    "No feedback": "blue",
+    "No pv_ff": "green",
+    "No fb/no pv_ff": "darkorange",
+}
 TRANSITION_ORDER = [
     "un_un",
     "un_FB",
     "FF_un",
     "FF_FB_broad",
+    "FF_FB_broad_novel",
     "FF_FB_narrow_familiar",
+    "FF_FB_narrow_familiar_novel",
     "FF_FB_narrow_novel",
     "FB_FB",
 ]
@@ -39,12 +49,26 @@ TRANSITION_LABELS = {
     "un_FB": "un -> FB",
     "FF_un": "FF -> un",
     "FF_FB_broad": "FF -> FB\n(broad)",
+    "FF_FB_broad_novel": "FF_FB_broad_novel",
     "FF_FB_narrow_familiar": "FF -> FB\n(narrow fam)",
+    "FF_FB_narrow_familiar_novel": "FF_FB_narrow_familiar_novel",
     "FF_FB_narrow_novel": "FF -> FB\n(narrow nov)",
     "FB_FB": "FB -> FB",
 }
-TRACE_COLORS = {"full": "black", "occlusion": "red"}
-TRACE_LABELS = {"full": "Nonoccluded", "occlusion": "Occluded"}
+TRACE_COLORS = {
+    "full": "black",
+    "occlusion": "red",
+    "no_context": "blue",
+    "nopvff": "green",
+    "no_context_nopvff": "darkorange",
+}
+TRACE_LABELS = {
+    "full": "Nonoccluded",
+    "occlusion": "Occluded",
+    "no_context": "No feedback",
+    "nopvff": "No pv_ff",
+    "no_context_nopvff": "No fb/no pv_ff",
+}
 IMAGE_LABELS = {"familiar": "Familiar Image", "novel": "Novel Image"}
 AXIS_LABEL_FONTSIZE = 32
 AXIS_TICK_FONTSIZE = 32
@@ -172,11 +196,33 @@ def _to_np_2d(ts: torch.Tensor | np.ndarray) -> np.ndarray:
 
 
 def _condition_token_to_image_type(image_type: str, condition_token: str) -> tuple[str, str]:
+    if image_type == "nocontext":
+        return "no_context", condition_token
+    if image_type == "nocontextnopvff":
+        return "no_context_nopvff", condition_token
     if condition_token.endswith("_nocontext"):
         base_condition = condition_token.removesuffix("_nocontext")
-        no_context_type = "novel_no_context" if base_condition == "novel" else "no_context"
-        return no_context_type, base_condition
+        return "no_context", base_condition
     return image_type, condition_token
+
+
+def _resolve_trace_types(
+    image_types: list[str] | set[str],
+    *,
+    include_no_response_ablations: bool,
+    base_trace_types: tuple[str, ...] = ("full", "occlusion"),
+) -> tuple[str, ...]:
+    available = {str(image_type) for image_type in image_types if pd.notna(image_type)}
+    trace_types = [trace_type for trace_type in base_trace_types if trace_type in available]
+
+    if include_no_response_ablations:
+        for trace_type in PLOT_CONDITION_ORDER:
+            if trace_type in base_trace_types:
+                continue
+            if trace_type in available:
+                trace_types.append(trace_type)
+
+    return tuple(trace_types)
 
 
 def _indexed_palette(indices: list[int], palette_name: str) -> dict[int, tuple[float, float, float]]:
@@ -614,12 +660,15 @@ def _plot_panel_a_activity(
         ax.sharey(ref_ax)
 
     available_image_types = set(image_types or y_df["image_type"].dropna().unique().tolist())
+    trace_types = _resolve_trace_types(
+        available_image_types,
+        include_no_response_ablations=include_novel_no_context,
+    )
     legend_handles = [
-        Line2D([0], [0], color="black", lw=5.0, label="Nonoccluded (NO)"),
-        Line2D([0], [0], color="red", lw=5.0, label="Occluded (O)"),
+        Line2D([0], [0], color=TRACE_COLORS[trace_type], lw=5.0, label=TRACE_LABELS[trace_type])
+        for trace_type in trace_types
+        if trace_type in TRACE_COLORS
     ]
-    if include_novel_no_context and "novel_no_context" in available_image_types:
-        legend_handles.append(Line2D([0], [0], color="blue", lw=5.0, label="No feedback"))
 
     phase_baseline_stats: dict[str, dict[str, float | int]] = {}
     for phase in list(dict.fromkeys(phase_name for _, phase_name in activity_layout)):
@@ -627,9 +676,7 @@ def _plot_panel_a_activity(
         for condition, condition_phase in activity_layout:
             if condition_phase != phase or condition not in STIMULI:
                 continue
-            trace_specs.extend([(condition, phase, "full"), (condition, phase, "occlusion")])
-            if include_novel_no_context and _is_novel_condition(condition) and "novel_no_context" in available_image_types:
-                trace_specs.append((condition, phase, "novel_no_context"))
+            trace_specs.extend((condition, phase, trace_type) for trace_type in trace_types)
         baseline_stats = _collect_shared_baseline_stats(
             y_df,
             trace_specs=trace_specs,
@@ -674,13 +721,10 @@ def _plot_panel_a_activity(
     global_y_bounds: list[tuple[float, float]] = []
     for idx, (condition, phase) in enumerate(activity_layout):
         ax = flat_axes[idx]
-        allowed_image_types = ["full", "occlusion"]
-        if include_novel_no_context and _is_novel_condition(condition) and "novel_no_context" in available_image_types:
-            allowed_image_types.append("novel_no_context")
-
-        trace_specs = [("full", "black"), ("occlusion", "red")]
-        if include_novel_no_context and _is_novel_condition(condition) and "novel_no_context" in available_image_types:
-            trace_specs.append(("novel_no_context", "blue"))
+        trace_specs = [
+            (trace_type, TRACE_COLORS.get(trace_type, "black"))
+            for trace_type in trace_types
+        ]
 
         has_trace = False
         for image_type, color in trace_specs:
@@ -778,7 +822,7 @@ def visualize_transition_panel(
     include_novel_image: bool | None = None,
     transition_order: list[str] | None = None,
     transition_labels: dict[str, str] | None = None,
-    trace_types: tuple[str, ...] = ("full", "occlusion"),
+    trace_types: tuple[str, ...] | None = None,
     step_window: tuple[int, int] = (1000, 1350),
     save_in_transition_subdir: bool = True,
     save_csv: bool = True,
@@ -804,6 +848,11 @@ def visualize_transition_panel(
     available_conditions = _resolve_condition_sequence(
         phase_filtered_df["condition"].dropna().astype(str).unique().tolist() if "condition" in phase_filtered_df.columns else [],
         preferred=list(STIMULI),
+    )
+    available_image_types = phase_filtered_df["image_type"].dropna().astype(str).unique().tolist() if "image_type" in phase_filtered_df.columns else []
+    resolved_trace_types = trace_types or _resolve_trace_types(
+        available_image_types,
+        include_no_response_ablations=True,
     )
     selected_conditions = _resolve_image_mode(
         available_conditions=available_conditions or list(STIMULI),
@@ -833,7 +882,7 @@ def visualize_transition_panel(
             sample_df,
             condition=condition,
             phase=phases[0],
-            image_type=trace_types[0],
+            image_type=resolved_trace_types[0],
             stim_pair=stim_pair,
             focus_window=plot_window,
             zscore=True,
@@ -864,7 +913,7 @@ def visualize_transition_panel(
             labels=labels,
             phases=phases,
             selected_conditions=selected_conditions,
-            trace_types=trace_types,
+            trace_types=resolved_trace_types,
             stimuli=STIMULI,
             plot_window=plot_window,
         )
@@ -882,7 +931,7 @@ def visualize_transition_panel(
 
     legend_handles = [
         Line2D([0], [0], color=TRACE_COLORS[trace_type], lw=1.6, label=TRACE_LABELS.get(trace_type, trace_type))
-        for trace_type in trace_types
+        for trace_type in resolved_trace_types
         if trace_type in TRACE_COLORS
     ]
     if legend_handles:
@@ -921,7 +970,7 @@ def visualize_transition_panel(
                 trace_specs=[
                     (condition, phase, trace_type)
                     for condition in selected_conditions
-                    for trace_type in trace_types
+                    for trace_type in resolved_trace_types
                 ],
                 stimuli=STIMULI,
                 focus_window=plot_window,
@@ -940,7 +989,7 @@ def visualize_transition_panel(
                 ax.axvspan(stim_interval[0], stim_interval[1], color="0.9", zorder=0)
             ax.axhline(0.0, color="0.85", lw=0.6, zorder=0)
 
-            for trace_type in trace_types:
+            for trace_type in resolved_trace_types:
                 summary = _summarize_windowed_repeated_trace(
                     long_df,
                     condition=condition,

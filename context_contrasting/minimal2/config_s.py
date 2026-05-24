@@ -21,8 +21,8 @@ broad = {
     "n_features": 3,
     "n_pv": 1,
     "n_context": 3,
-    "activation": ThresholdReLU(threshold=0),
-    "lr_ff": 0.004,
+    "activation": ThresholdReLU(threshold=0.1),
+    "lr_ff": 0.032,
     "lr_fb": 0.002,
     "lr_lat": 0.002,
     "lr_pv": 0.003,
@@ -32,8 +32,13 @@ broad = {
     "W_pv_init": {'mu': [0.7, 0.7, 0.7], 'sigma': 0},
     "pyc_decay": 0.05,
     "pv_decay": 0.5,
+    "apical_drive_threshold": 0.2,
+    "apical_drive_hard": True,
+    "apical_gain_strength": 2.0,
+    "apical_gain_k": 5.0,
+    "apical_gain_threshold": 0.0,
     "alpha": 1.0,
-    "weight_decay": 0.00025,
+    "weight_decay": 0.0,
     "seed": 42,
     "receives_context": (True, True, True),
     "FBrule": "dampened-anti-Hebbian"
@@ -75,9 +80,11 @@ FF_un.update({
 
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
-FF_FB_broad_novel = broad # no reason why novel response should be adapted (boosted novel FF & FB responses)
-# FF_FB_broad_novel.update({
-#     "w_lat_init": {'mu': [0.05], 'sigma': 0}})
+FF_FB_broad_novel = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
+FF_FB_broad_novel.update({
+    "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
+    "lr_pv": 0.005,
+})
 
 FF_FB_broad = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
 FF_FB_broad.update({
@@ -92,13 +99,18 @@ narrow_familiar.update({
 
 narrow_familiar_novel = narrow_familiar.copy()
 narrow_familiar_novel.update({
-    "w_ff_init": {'mu': [0.9, 0.01,0.9], 'sigma': 0},})
+    "w_ff_init": {'mu': [0.9, 0.01,0.9], 'sigma': 0},
+    "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
+    "lr_pv": 0.005,
+})
 
 # narrow novel ✅ strengthen FB to familiar context
 # also (less) strengthened FB to unfamiliar context + also enhanced novel response (due to no adaptation + FB boost)
 narrow_novel = broad.copy()
 narrow_novel.update({
     "w_ff_init": {'mu': [0.01, 0.01, 0.9], 'sigma': 0},
+    "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
+    "lr_pv": 0.005,
     # a bit of FB initial response to match "averaged" novel neurons
     # "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0}, 
     })

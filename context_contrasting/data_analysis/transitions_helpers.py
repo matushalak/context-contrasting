@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyArrowPatch
 import numpy as np
@@ -35,10 +36,15 @@ DEFAULT_PLOT_STYLE = {
     "point_size": 28,
     "pre_vector_alpha": 0.42,
     "target_vector_alpha": 0.62,
+    "alpha_min": 0.3,
+    "alpha_max": 1.0,
     "individual_vector_width": 0.0046,
     "mean_arrow_width": 2.9,
     "mean_arrow_mutation_scale": 16.0,
 }
+
+# small epsilon to avoid log(0)
+LOG_NORM_EPS = 1e-6
 
 
 def resolve_plot_style(style: dict | None = None) -> dict:
@@ -192,6 +198,9 @@ def build_mean_summary(
     )
     summary["dNO"] = summary["NO_Target"] - summary["NO_Pre"]
     summary["dO"] = summary["O_Target"] - summary["O_Pre"]
+    # add displacement norm and its log for downstream analysis/plotting
+    summary["dNorm"] = np.hypot(summary["dNO"].to_numpy(dtype=float), summary["dO"].to_numpy(dtype=float))
+    summary["log_dNorm"] = np.log(summary["dNorm"] + LOG_NORM_EPS)
     summary = add_direction_columns(summary)
     summary = assign_rotated_sectors(summary)
 
@@ -267,6 +276,30 @@ def sector_labels_with_counts(summary_df: pd.DataFrame) -> dict[str, str]:
     }
 
 
+def sector_fraction_table(summary_df: pd.DataFrame) -> pd.DataFrame:
+    total = max(len(summary_df), 1)
+    counts = (
+        summary_df["RotatedSector"]
+        .value_counts(sort=False)
+        .reindex(ROTATED_SECTOR_ORDER)
+        .fillna(0)
+        .astype(int)
+    )
+
+    fractions = counts / total
+    table = pd.DataFrame(
+        {
+            "RotatedSector": list(ROTATED_SECTOR_ORDER),
+            "Count": counts.to_numpy(),
+            "Fraction": fractions.to_numpy(dtype=float),
+        }
+    )
+    table["ExpectedFraction"] = 0.25
+    table["DeltaFromExpected"] = table["Fraction"] - table["ExpectedFraction"]
+    table["AboveExpected"] = table["DeltaFromExpected"] > 0.0
+    return table
+
+
 def sector_mean_table(summary_df: pd.DataFrame) -> pd.DataFrame:
     sector_means = (
         summary_df.groupby("RotatedSector", observed=True, as_index=False)
@@ -288,24 +321,48 @@ def _stack_pre_colors(summary_df: pd.DataFrame) -> np.ndarray:
     return np.vstack(summary_df["PreColor"].to_numpy())
 
 
+def _stack_pre_colors_with_alpha(summary_df: pd.DataFrame, alphas: np.ndarray | None = None) -> np.ndarray:
+    """Return Nx3 (RGB) or Nx4 (RGBA) color array from `PreColor` and optional per-point alphas."""
+    rgb = np.vstack(summary_df["PreColor"].to_numpy())
+    if alphas is None:
+        return rgb
+    alphas = np.asarray(alphas, dtype=float)
+    if alphas.ndim != 1 or alphas.shape[0] != rgb.shape[0]:
+        raise ValueError("alphas must be a 1-D array with same length as summary_df")
+    rgba = np.concatenate([rgb, alphas.reshape(-1, 1)], axis=1)
+    return rgba
+
+
+def _map_norms_to_alphas(norms: np.ndarray, *, min_alpha: float = 0.3, max_alpha: float = 1.0) -> np.ndarray:
+    norms = np.asarray(norms, dtype=float)
+    if norms.size == 0:
+        return np.array([], dtype=float)
+    mn = float(np.nanmin(norms))
+    mx = float(np.nanmax(norms))
+    if not np.isfinite(mn) or not np.isfinite(mx) or mx <= mn:
+        return np.full_like(norms, max_alpha, dtype=float)
+    scaled = (norms - mn) / (mx - mn)
+    return min_alpha + scaled * (max_alpha - min_alpha)
+
+
 def _draw_individual_vectors(
     ax: plt.Axes,
     summary_df: pd.DataFrame,
     *,
-    alpha: float,
+    alphas: np.ndarray | None,
     width: float,
 ) -> None:
+    colors = _stack_pre_colors_with_alpha(summary_df, alphas=alphas)
     ax.quiver(
         summary_df["NO_Pre"],
         summary_df["O_Pre"],
         summary_df["dNO"],
         summary_df["dO"],
-        color=_stack_pre_colors(summary_df),
+        color=colors,
         angles="xy",
         scale_units="xy",
         scale=1,
         width=width,
-        alpha=alpha,
         zorder=2,
     )
 
@@ -319,7 +376,8 @@ def _draw_arrow(
     linewidth: float,
     mutation_scale: float,
     zorder: int = 4,
-) -> None:
+    alpha: float = 0.98,
+) -> FancyArrowPatch:
     arrow = FancyArrowPatch(
         start_xy,
         end_xy,
@@ -327,12 +385,13 @@ def _draw_arrow(
         mutation_scale=mutation_scale,
         linewidth=linewidth,
         color=color,
-        alpha=0.98,
+        alpha=alpha,
         shrinkA=0.0,
         shrinkB=0.0,
         zorder=zorder,
     )
     ax.add_patch(arrow)
+    return arrow
 
 
 def _draw_diagonal(ax: plt.Axes, lims: list[float]) -> None:
@@ -380,31 +439,42 @@ def plot_mean_transition_summary(
 ) -> plt.Figure:
     summary_df = attach_pre_colors(summary_df)
     style = resolve_plot_style(style)
-    start_label = start_label or summary_df.attrs.get("pre_stage", "Pre")
-    end_label = end_label or summary_df.attrs.get("target_stage", "Target")
     response_lims = compute_response_limits(summary_df) if response_lims is None else response_lims
     shift_lims = compute_shift_limits(summary_df) if shift_lims is None else shift_lims
 
     sector_means = sector_mean_table(summary_df)
     sector_labels = sector_labels_with_counts(summary_df)
 
-    fig, axes = plt.subplots(2, 3, figsize=(16.5, 10.2), sharex=False, sharey=False)
+    # use pre-computed norm/log from summary if available (preferred)
+    if "dNorm" in summary_df.columns and "log_dNorm" in summary_df.columns:
+        norms = summary_df["dNorm"].to_numpy(dtype=float)
+        log_norms = summary_df["log_dNorm"].to_numpy(dtype=float)
+    else:
+        # fallback: compute locally
+        norms = np.hypot(summary_df["dNO"].to_numpy(dtype=float), summary_df["dO"].to_numpy(dtype=float))
+        log_norms = np.log(norms + LOG_NORM_EPS)
+    # rows 0 and 1 should use a tighter alpha range for points
+    alphas_row01 = _map_norms_to_alphas(log_norms, min_alpha=0.2, max_alpha=0.8)
+    # third row keeps the style-configured alpha bounds
+    alphas_row2 = _map_norms_to_alphas(log_norms, min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])
+
+    fig, axes = plt.subplots(3, 3, figsize=(16.5, 14.8), sharex=False, sharey=False)
     fig.suptitle(title, fontsize=16, fontweight="bold")
 
     ax = axes[0, 0]
+    colors_rgba = _stack_pre_colors_with_alpha(summary_df, alphas=alphas_row01)
     ax.scatter(
         summary_df["NO_Pre"],
         summary_df["O_Pre"],
         s=style["point_size"],
-        c=_stack_pre_colors(summary_df),
-        alpha=style["pre_point_alpha"],
+        c=colors_rgba,
         edgecolors="none",
         zorder=1,
     )
     _draw_individual_vectors(
         ax,
         summary_df,
-        alpha=style["pre_vector_alpha"],
+        alphas=np.full(len(summary_df), 0.5),
         width=style["individual_vector_width"],
     )
     _draw_diagonal(ax, response_lims)
@@ -420,15 +490,14 @@ def plot_mean_transition_summary(
         summary_df["NO_Target"],
         summary_df["O_Target"],
         s=style["point_size"],
-        c=_stack_pre_colors(summary_df),
-        alpha=style["target_point_alpha"],
+        c=colors_rgba,
         edgecolors="none",
         zorder=1,
     )
     _draw_individual_vectors(
         ax,
         summary_df,
-        alpha=style["target_vector_alpha"],
+        alphas=np.full(len(summary_df), 0.5),
         width=style["individual_vector_width"],
     )
     _draw_diagonal(ax, response_lims)
@@ -444,8 +513,7 @@ def plot_mean_transition_summary(
         summary_df["dNO"],
         summary_df["dO"],
         s=style["point_size"],
-        c=_stack_pre_colors(summary_df),
-        alpha=style["shift_point_alpha"],
+        c=colors_rgba,
         edgecolors="none",
         zorder=1,
     )
@@ -464,23 +532,20 @@ def plot_mean_transition_summary(
         if sector_rows.empty:
             continue
         color = ROTATED_SECTOR_PALETTE[sector]
+        # sector-colored points with per-point alpha inherited from global mapping
+        pos_idx = np.flatnonzero(summary_df["RotatedSector"].to_numpy() == sector)
+        sector_alphas = alphas_row01[pos_idx]
+        rgb = np.array(mcolors.to_rgb(color)).reshape(1, 3)
+        rgba = np.repeat(rgb, len(sector_rows), axis=0)
+        rgba = np.concatenate([rgba, sector_alphas.reshape(-1, 1)], axis=1)
         ax.scatter(
             sector_rows["NO_Pre"],
             sector_rows["O_Pre"],
             s=style["point_size"],
-            color=color,
-            alpha=style["sector_point_alpha"],
+            c=rgba,
             edgecolors="none",
         )
-        mean_row = sector_means.loc[sector_means["RotatedSector"] == sector].iloc[0]
-        _draw_arrow(
-            ax,
-            (float(mean_row["NO_Pre"]), float(mean_row["O_Pre"])),
-            (float(mean_row["NO_Target"]), float(mean_row["O_Target"])),
-            color=color,
-            linewidth=style["mean_arrow_width"],
-            mutation_scale=style["mean_arrow_mutation_scale"],
-        )
+        # mean arrow removed from this subplot to reduce visual clutter
     _draw_diagonal(ax, response_lims)
     ax.set_xlim(response_lims)
     ax.set_ylim(response_lims)
@@ -495,23 +560,19 @@ def plot_mean_transition_summary(
         if sector_rows.empty:
             continue
         color = ROTATED_SECTOR_PALETTE[sector]
+        pos_idx = np.flatnonzero(summary_df["RotatedSector"].to_numpy() == sector)
+        sector_alphas = alphas_row01[pos_idx]
+        rgb = np.array(mcolors.to_rgb(color)).reshape(1, 3)
+        rgba = np.repeat(rgb, len(sector_rows), axis=0)
+        rgba = np.concatenate([rgba, sector_alphas.reshape(-1, 1)], axis=1)
         ax.scatter(
             sector_rows["NO_Target"],
             sector_rows["O_Target"],
             s=style["point_size"],
-            color=color,
-            alpha=style["sector_point_alpha"],
+            c=rgba,
             edgecolors="none",
         )
-        mean_row = sector_means.loc[sector_means["RotatedSector"] == sector].iloc[0]
-        _draw_arrow(
-            ax,
-            (float(mean_row["NO_Pre"]), float(mean_row["O_Pre"])),
-            (float(mean_row["NO_Target"]), float(mean_row["O_Target"])),
-            color=color,
-            linewidth=style["mean_arrow_width"],
-            mutation_scale=style["mean_arrow_mutation_scale"],
-        )
+        # mean arrow removed from this subplot to reduce visual clutter
     _draw_diagonal(ax, response_lims)
     ax.set_xlim(response_lims)
     ax.set_ylim(response_lims)
@@ -526,22 +587,31 @@ def plot_mean_transition_summary(
         if sector_rows.empty:
             continue
         color = ROTATED_SECTOR_PALETTE[sector]
+        pos_idx = np.flatnonzero(summary_df["RotatedSector"].to_numpy() == sector)
+        sector_alphas = alphas_row01[pos_idx]
+        rgb = np.array(mcolors.to_rgb(color)).reshape(1, 3)
+        rgba = np.repeat(rgb, len(sector_rows), axis=0)
+        rgba = np.concatenate([rgba, sector_alphas.reshape(-1, 1)], axis=1)
         ax.scatter(
             sector_rows["dNO"],
             sector_rows["dO"],
             s=style["point_size"],
-            color=color,
-            alpha=style["sector_point_alpha"],
+            c=rgba,
             edgecolors="none",
         )
         mean_row = sector_means.loc[sector_means["RotatedSector"] == sector].iloc[0]
+        mean_norm = float(np.hypot(mean_row["dNO"], mean_row["dO"]))
+        mean_log = float(np.log(mean_norm + LOG_NORM_EPS))
+        mean_alpha = _map_norms_to_alphas(np.array([mean_log]), min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])[0]
         _draw_arrow(
             ax,
             (0.0, 0.0),
             (float(mean_row["dNO"]), float(mean_row["dO"])),
-            color=color,
-            linewidth=style["mean_arrow_width"],
+            color="black",
+            linewidth=max(3.0, style["mean_arrow_width"] * 0.9),
             mutation_scale=style["mean_arrow_mutation_scale"],
+            alpha=max(mean_alpha, 0.95),
+            zorder=4,
         )
     _draw_origin_guides(ax)
     _draw_rotated_guides(ax, shift_lims)
@@ -556,6 +626,93 @@ def plot_mean_transition_summary(
         frameon=False,
         loc="best",
     )
+
+    # --- Third row: color + alpha mapped to displacement norm (coolwarm colormap) ---
+    ax = axes[2, 0]
+    # normalized scalars for colormap using log norms
+    mn = float(np.nanmin(log_norms)) if log_norms.size else 0.0
+    mx = float(np.nanmax(log_norms)) if log_norms.size else 0.0
+    if mx <= mn:
+        norm_scaled = np.zeros_like(log_norms, dtype=float)
+    else:
+        norm_scaled = (log_norms - mn) / (mx - mn)
+    cmap = plt.cm.coolwarm
+    colors_by_norm = cmap(norm_scaled)
+    # replace alpha channel with mapped alphas for third row
+    colors_by_norm[:, 3] = alphas_row2
+
+    ax.scatter(
+        summary_df["NO_Pre"],
+        summary_df["O_Pre"],
+        s=style["point_size"],
+        c=colors_by_norm,
+        edgecolors="none",
+        zorder=1,
+    )
+    _draw_diagonal(ax, response_lims)
+    ax.set_xlim(response_lims)
+    ax.set_ylim(response_lims)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title(f"{start_label} colored by |d| (coolwarm)")
+    ax.set_xlabel("NO")
+    ax.set_ylabel("O")
+
+    ax = axes[2, 1]
+    ax.scatter(
+        summary_df["NO_Target"],
+        summary_df["O_Target"],
+        s=style["point_size"],
+        c=colors_by_norm,
+        edgecolors="none",
+        zorder=1,
+    )
+    _draw_diagonal(ax, response_lims)
+    ax.set_xlim(response_lims)
+    ax.set_ylim(response_lims)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title(f"{end_label} colored by |d| (coolwarm)")
+    ax.set_xlabel("NO")
+    ax.set_ylabel("O")
+
+    ax = axes[2, 2]
+    for sector in ROTATED_SECTOR_ORDER:
+        sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
+        if sector_rows.empty:
+            continue
+        pos_idx = np.flatnonzero(summary_df["RotatedSector"].to_numpy() == sector)
+        ax.scatter(
+            sector_rows["dNO"],
+            sector_rows["dO"],
+            s=style["point_size"],
+            c=colors_by_norm[pos_idx],
+            edgecolors="none",
+        )
+        mean_row = sector_means.loc[sector_means["RotatedSector"] == sector].iloc[0]
+        mean_norm = float(np.hypot(mean_row["dNO"], mean_row["dO"]))
+        mean_log = float(np.log(mean_norm + LOG_NORM_EPS))
+        if mx <= mn:
+            mean_scaled = 0.0
+        else:
+            mean_scaled = (mean_log - mn) / (mx - mn)
+        mean_alpha = _map_norms_to_alphas(np.array([mean_log]), min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])[0]
+        _draw_arrow(
+            ax,
+            (0.0, 0.0),
+            (float(mean_row["dNO"]), float(mean_row["dO"])),
+            color="black",
+            linewidth=max(3.2, style["mean_arrow_width"]),
+            mutation_scale=style["mean_arrow_mutation_scale"],
+            zorder=4,
+            alpha=max(mean_alpha, 0.95),
+        )
+    _draw_origin_guides(ax)
+    _draw_rotated_guides(ax, shift_lims)
+    ax.set_xlim(shift_lims)
+    ax.set_ylim(shift_lims)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_title("|d| colored by coolwarm, alpha scaled by |d|")
+    ax.set_xlabel("dNO")
+    ax.set_ylabel("dO")
 
     fig.text(
         0.5,
