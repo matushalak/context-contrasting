@@ -23,20 +23,22 @@ broad = {
     "n_context": 3,
     "activation": ThresholdReLU(threshold=0.1),
     "lr_ff": 0.032,
-    "lr_fb": 0.002,
+    "lr_fb": 0.0035,
     "lr_lat": 0.002,
-    "lr_pv": 0.003,
+    "lr_pv": 0.005,
     "w_ff_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
     "w_fb_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
     "w_lat_init": {'mu': [0.3,], 'sigma': 0},
-    "W_pv_init": {'mu': [0.7, 0.7, 0.7], 'sigma': 0},
+    "W_pv_init": {'mu': [0.4, 0.4, 0.4], 'sigma': 0},
     "pyc_decay": 0.05,
     "pv_decay": 0.5,
-    "apical_drive_threshold": 0.2,
+    "apical_drive_threshold": 0.30,
     "apical_drive_hard": True,
-    "apical_gain_strength": 2.0,
+    "apical_gain_strength": 8.0,
     "apical_gain_k": 5.0,
     "apical_gain_threshold": 0.0,
+    "baseline_drive_sigma": 0.1,
+    "pv_noise_sigma": 0.03,
     "alpha": 1.0,
     "weight_decay": 0.0,
     "seed": 42,
@@ -69,6 +71,19 @@ un_FB.update({'receives_context': (True, True, True),
             #   "W_pv_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
             })
 
+# Unresponsive -> novel NO responsive via sub-drive apical gain.
+# Latent novel FF drive is masked by PV/LAT at baseline; familiar training
+# strengthens the novel FB channel through off-diagonal FB specificity enough
+# for gain amplification, while remaining below the apical-drive threshold.
+un_novel_FF = nonresponder.copy()
+un_novel_FF.update({
+    "w_ff_init": {'mu': [0.01, 0.01, 0.324], 'sigma': 0},
+    "W_pv_init": {'mu': [0.4, 0.4, 0.28], 'sigma': 0},
+    "w_lat_init": {'mu': [0.8,], 'sigma': 0},
+    "apical_gain_strength": 32.0,
+    "receives_context": (False, False, True),
+})
+
 # FF -> unresponsive; ✅ (simple) cells that don't receive context and only adapt
 FF_un = broad.copy()
 FF_un.update({
@@ -81,10 +96,9 @@ FF_un.update({
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
 FF_FB_broad_novel = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
-FF_FB_broad_novel.update({
-    "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
-    "lr_pv": 0.005,
-})
+# FF_FB_broad_novel.update({
+#     "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
+# })
 
 FF_FB_broad = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
 FF_FB_broad.update({
@@ -94,14 +108,13 @@ FF_FB_broad.update({
 narrow_familiar = broad.copy()
 narrow_familiar.update({
     "w_ff_init": {'mu': [0.9, 0.01, 0.01], 'sigma': 0},
-    # "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
+    "w_lat_init": {'mu': [0.5,], 'sigma': 0},
     })
 
 narrow_familiar_novel = narrow_familiar.copy()
 narrow_familiar_novel.update({
     "w_ff_init": {'mu': [0.9, 0.01,0.9], 'sigma': 0},
-    "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
-    "lr_pv": 0.005,
+    # "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
 })
 
 # narrow novel ✅ strengthen FB to familiar context
@@ -109,10 +122,7 @@ narrow_familiar_novel.update({
 narrow_novel = broad.copy()
 narrow_novel.update({
     "w_ff_init": {'mu': [0.01, 0.01, 0.9], 'sigma': 0},
-    "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
-    "lr_pv": 0.005,
-    # a bit of FB initial response to match "averaged" novel neurons
-    # "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0}, 
+    # "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
     })
 
 # Overview
@@ -136,6 +146,7 @@ FB_FB.update({
 minimal_configs = {
     "un_un": nonresponder,
     "un_FB": un_FB,
+    "un_novel_FF": un_novel_FF,
     
     "FF_un": FF_un,
     

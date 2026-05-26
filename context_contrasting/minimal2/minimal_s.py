@@ -176,16 +176,13 @@ class CCNeuron(nn.Module):
             sigma=self.baseline_drive_sigma,
         ) # small random baseline input
         
-        basal = y_ff + baseline_drive - y_lat - a
+        basal = y_ff - y_lat - a
         apical_drive = self.threshold(y_fb) * self.use_FB_connection
-        apical_gain = self.sigmoid(y_fb)
+        apical_gain = self.sigmoid(y_fb * self.use_FB_connection)
         
         y_next = self.pyramidal(self.activation(
-            apical_gain * basal + apical_drive
+            apical_gain * basal + apical_drive + baseline_drive
             ))
-        
-        # TODO:
-        # FF adaptation should play bigger role; shouldn't be just about PV strengthening a lot
         
         return x, y_t, y_next, p, c
 

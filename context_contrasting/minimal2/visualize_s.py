@@ -36,6 +36,7 @@ PLOT_COLORS = {
 TRANSITION_ORDER = [
     "un_un",
     "un_FB",
+    "un_novel_FF",
     "FF_un",
     "FF_FB_broad",
     "FF_FB_broad_novel",
@@ -47,6 +48,7 @@ TRANSITION_ORDER = [
 TRANSITION_LABELS = {
     "un_un": "un -> un",
     "un_FB": "un -> FB",
+    "un_novel_FF": "un -> novel NO",
     "FF_un": "FF -> un",
     "FF_FB_broad": "FF -> FB\n(broad)",
     "FF_FB_broad_novel": "FF_FB_broad_novel",
@@ -61,6 +63,13 @@ TRACE_COLORS = {
     "no_context": "blue",
     "nopvff": "green",
     "no_context_nopvff": "darkorange",
+}
+TRACE_LINESTYLES = {
+    "full": "-",
+    "occlusion": "-",
+    "no_context": ":",
+    "nopvff": "--",
+    "no_context_nopvff": "--",
 }
 TRACE_LABELS = {
     "full": "Nonoccluded",
@@ -665,7 +674,14 @@ def _plot_panel_a_activity(
         include_no_response_ablations=include_novel_no_context,
     )
     legend_handles = [
-        Line2D([0], [0], color=TRACE_COLORS[trace_type], lw=5.0, label=TRACE_LABELS[trace_type])
+        Line2D(
+            [0],
+            [0],
+            color=TRACE_COLORS[trace_type],
+            linestyle=TRACE_LINESTYLES.get(trace_type, "-"),
+            lw=5.0,
+            label=TRACE_LABELS[trace_type],
+        )
         for trace_type in trace_types
         if trace_type in TRACE_COLORS
     ]
@@ -747,6 +763,7 @@ def _plot_panel_a_activity(
                 np.asarray(summary["x_seconds"], dtype=float),
                 np.asarray(summary["y_mean"], dtype=float),
                 color=color,
+                linestyle=TRACE_LINESTYLES.get(image_type, "-"),
                 lw=5.0,
             )
             global_y_bounds.append(
@@ -930,7 +947,14 @@ def visualize_transition_panel(
     fig.subplots_adjust(left=0.18, right=0.99, top=0.89, bottom=0.05, wspace=0.12, hspace=0.18)
 
     legend_handles = [
-        Line2D([0], [0], color=TRACE_COLORS[trace_type], lw=1.6, label=TRACE_LABELS.get(trace_type, trace_type))
+        Line2D(
+            [0],
+            [0],
+            color=TRACE_COLORS[trace_type],
+            linestyle=TRACE_LINESTYLES.get(trace_type, "-"),
+            lw=1.6,
+            label=TRACE_LABELS.get(trace_type, trace_type),
+        )
         for trace_type in resolved_trace_types
         if trace_type in TRACE_COLORS
     ]
@@ -1006,6 +1030,7 @@ def visualize_transition_panel(
                     np.asarray(summary["x_seconds"], dtype=float),
                     np.asarray(summary["y_mean"], dtype=float),
                     color=TRACE_COLORS.get(trace_type, "black"),
+                    linestyle=TRACE_LINESTYLES.get(trace_type, "-"),
                     lw=5,
                 )
                 row_bounds.append(
