@@ -72,16 +72,17 @@ un_FB.update({'receives_context': (True, True, True),
             })
 
 # Unresponsive -> novel NO responsive via sub-drive apical gain.
-# Latent novel FF drive is masked by PV/LAT at baseline; familiar training
-# strengthens the novel FB channel through off-diagonal FB specificity enough
-# for gain amplification, while remaining below the apical-drive threshold.
+# Latent novel FF drive is masked by PV/LAT at baseline. The cell still receives
+# familiar FB, but the apical-drive threshold is high enough that learned
+# familiar and off-diagonal novel FB remain gain-only.
 un_novel_FF = nonresponder.copy()
 un_novel_FF.update({
     "w_ff_init": {'mu': [0.01, 0.01, 0.324], 'sigma': 0},
     "W_pv_init": {'mu': [0.4, 0.4, 0.28], 'sigma': 0},
     "w_lat_init": {'mu': [0.8,], 'sigma': 0},
-    "apical_gain_strength": 32.0,
-    "receives_context": (False, False, True),
+    "receives_context": (True, True, True),
+    "apical_drive_threshold": 1.4,
+    "apical_gain_strength": 20.0,
 })
 
 # FF -> unresponsive; ✅ (simple) cells that don't receive context and only adapt

@@ -5,7 +5,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
-from matplotlib.patches import FancyArrowPatch
+from matplotlib.patches import Circle, FancyArrowPatch, Wedge
+from matplotlib.transforms import Bbox
 import numpy as np
 import pandas as pd
 
@@ -18,25 +19,36 @@ MATLAB_COLORS = (
     "#77AC30",
     "#4DBEEE",
     "#A2142F",
+    "#7E7C7C",
 )
 
-ROTATED_SECTOR_ORDER = ("+NO axis", "+O axis", "-NO axis", "-O axis")
+ROTATED_SECTOR_ORDER = ("+NO axis", "+O axis", "-NO axis", "-O axis", "small ∆")
 ROTATED_SECTOR_PALETTE = {
     "+NO axis": MATLAB_COLORS[0],
     "+O axis": MATLAB_COLORS[1],
     "-NO axis": MATLAB_COLORS[2],
     "-O axis": MATLAB_COLORS[3],
+    "small ∆": MATLAB_COLORS[-1]
 }
 
+ROTATED_SECTOR_PALETTE = {
+    "+NO axis": 'blue',
+    "+O axis": 'red',
+    "-NO axis": 'darkorange',
+    "-O axis": 'green',
+    "small ∆": 'gray'
+}
+
+
 DEFAULT_PLOT_STYLE = {
-    "pre_point_alpha": 0.38,
+    "pre_point_alpha": 0.6,
     "target_point_alpha": 0.22,
     "shift_point_alpha": 0.22,
     "sector_point_alpha": 0.24,
     "point_size": 28,
     "pre_vector_alpha": 0.42,
     "target_vector_alpha": 0.62,
-    "alpha_min": 0.3,
+    "alpha_min": 0.6,
     "alpha_max": 1.0,
     "individual_vector_width": 0.0046,
     "mean_arrow_width": 2.9,
@@ -143,14 +155,17 @@ def _resolve_target_stage(
     return candidates[0]
 
 
-def assign_rotated_sectors(frame: pd.DataFrame) -> pd.DataFrame:
+def assign_rotated_sectors(frame: pd.DataFrame, threshold:float = 0.0) -> pd.DataFrame:
     frame = frame.copy()
     angle = frame["Angle"]
+    norm = frame['dNorm']
 
     sector = np.full(len(frame), "+NO axis", dtype=object)
     sector[(angle >= np.pi / 4.0) & (angle < 3.0 * np.pi / 4.0)] = "+O axis"
     sector[(angle >= 3.0 * np.pi / 4.0) | (angle < -3.0 * np.pi / 4.0)] = "-NO axis"
     sector[(angle >= -3.0 * np.pi / 4.0) & (angle < -np.pi / 4.0)] = "-O axis"
+    sector[norm <= threshold] = "small ∆"
+
 
     frame["RotatedSector"] = pd.Categorical(
         sector,
@@ -166,6 +181,7 @@ def build_mean_summary(
     image_group: str | None = None,
     pre_stage: str = "Pre",
     target_stage: str | None = None,
+    threshold: float = 0.0,
 ) -> pd.DataFrame:
     frame = transition_table.copy()
     if image_group is not None:
@@ -202,7 +218,7 @@ def build_mean_summary(
     summary["dNorm"] = np.hypot(summary["dNO"].to_numpy(dtype=float), summary["dO"].to_numpy(dtype=float))
     summary["log_dNorm"] = np.log(summary["dNorm"] + LOG_NORM_EPS)
     summary = add_direction_columns(summary)
-    summary = assign_rotated_sectors(summary)
+    summary = assign_rotated_sectors(summary, threshold=threshold)
 
     summary.attrs["pre_stage"] = pre_stage
     summary.attrs["target_stage"] = target_stage
@@ -285,13 +301,17 @@ def sector_fraction_table(summary_df: pd.DataFrame) -> pd.DataFrame:
         .fillna(0)
         .astype(int)
     )
-
+    means = summary_df.groupby("RotatedSector", observed=True)["dNorm"].mean().reindex(ROTATED_SECTOR_ORDER)
+    medians = summary_df.groupby("RotatedSector", observed=True)["dNorm"].median().reindex(ROTATED_SECTOR_ORDER)
+    
     fractions = counts / total
     table = pd.DataFrame(
         {
             "RotatedSector": list(ROTATED_SECTOR_ORDER),
             "Count": counts.to_numpy(),
             "Fraction": fractions.to_numpy(dtype=float),
+            "Mean_dNorm": means.to_numpy(dtype=float),
+            "Median_dNorm": medians.to_numpy(dtype=float),
         }
     )
     table["ExpectedFraction"] = 0.25
@@ -315,6 +335,122 @@ def sector_mean_table(summary_df: pd.DataFrame) -> pd.DataFrame:
     )
     sector_means["MeanAngle"] = np.arctan2(sector_means["dO"], sector_means["dNO"])
     return sector_means
+
+
+def _sector_percentages(summary_df: pd.DataFrame) -> dict[str, float]:
+    fractions = sector_fraction_table(summary_df).set_index("RotatedSector")["Fraction"]
+    return {
+        sector: float(fractions.get(sector, 0.0)) * 100.0
+        for sector in ROTATED_SECTOR_ORDER
+    }
+
+
+def plot_rotated_sector_unit_legend(
+    summary_df: pd.DataFrame,
+    *,
+    title: str | None = None,
+    center_radius: float = 0.28,
+    vector_length: float = 0.46,
+) -> plt.Figure:
+    """Draw a standalone transition-sector legend with sector percentages."""
+    percentages = _sector_percentages(summary_df)
+
+    fig, ax = plt.subplots(figsize=(4.2, 4.2))
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(-1.18, 1.18)
+    ax.set_ylim(-1.18, 1.18)
+    ax.axis("off")
+
+    sector_specs = {
+        "+NO axis": (-45.0, 45.0, (vector_length, 0.0), (0.62, 0.0)),
+        "+O axis": (45.0, 135.0, (0.0, vector_length), (0.0, 0.62)),
+        "-NO axis": (135.0, 225.0, (-vector_length, 0.0), (-0.62, 0.0)),
+        "-O axis": (225.0, 315.0, (0.0, -vector_length), (0.0, -0.62)),
+    }
+
+    for sector, (theta1, theta2, vector_xy, text_xy) in sector_specs.items():
+        color = ROTATED_SECTOR_PALETTE[sector]
+        ax.add_patch(
+            Wedge(
+                (0.0, 0.0),
+                1.0,
+                theta1,
+                theta2,
+                facecolor=color,
+                edgecolor="white",
+                linewidth=2.0,
+                alpha=0.28,
+            )
+        )
+        _draw_arrow(
+            ax,
+            (0.0, 0.0),
+            vector_xy,
+            color=color,
+            linewidth=3.0,
+            mutation_scale=16.0,
+            zorder=4,
+            alpha=0.95,
+        )
+        ax.text(
+            text_xy[0],
+            text_xy[1],
+            f"{percentages[sector]:.1f}%",
+            ha="center",
+            va="center",
+            fontsize=13,
+            fontweight="bold",
+            color="0.1",
+        )
+
+    ax.add_patch(
+        Circle(
+            (0.0, 0.0),
+            center_radius,
+            facecolor=ROTATED_SECTOR_PALETTE["small ∆"],
+            edgecolor="white",
+            linewidth=2.0,
+            alpha=0.74,
+            zorder=5,
+        )
+    )
+    ax.text(
+        0.0,
+        0.0,
+        f"{percentages['small ∆']:.1f}%",
+        ha="center",
+        va="center",
+        fontsize=12,
+        fontweight="bold",
+        color="white",
+        zorder=6,
+    )
+    ax.add_patch(Circle((0.0, 0.0), 1.0, facecolor="none", edgecolor="0.15", linewidth=1.5, zorder=6))
+
+    if title:
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
+    fig.tight_layout(pad=0.3)
+    return fig
+
+
+def save_rotated_sector_unit_legend(
+    summary_df: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    title: str | None = None,
+    dpi: int = 300,
+) -> list[Path]:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig = plot_rotated_sector_unit_legend(summary_df, title=title)
+    saved_paths = [output_path]
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+    if output_path.suffix.lower() != ".svg":
+        svg_path = output_path.with_suffix(".svg")
+        fig.savefig(svg_path, bbox_inches="tight")
+        saved_paths.append(svg_path)
+    plt.close(fig)
+    return saved_paths
 
 
 def _stack_pre_colors(summary_df: pd.DataFrame) -> np.ndarray:
@@ -343,6 +479,34 @@ def _map_norms_to_alphas(norms: np.ndarray, *, min_alpha: float = 0.3, max_alpha
         return np.full_like(norms, max_alpha, dtype=float)
     scaled = (norms - mn) / (mx - mn)
     return min_alpha + scaled * (max_alpha - min_alpha)
+
+
+def _darken_color(color: str, factor: float = 0.62) -> tuple[float, float, float]:
+    rgb = np.array(mcolors.to_rgb(color), dtype=float)
+    return tuple(np.clip(rgb * factor, 0.0, 1.0))
+
+
+def _sector_percentage_alphas(
+    summary_df: pd.DataFrame,
+    *,
+    min_alpha: float = 0.5,
+    max_alpha: float = 1.0,
+) -> dict[str, float]:
+    sectors = [sector for sector in ROTATED_SECTOR_ORDER if sector != "small ∆"]
+    fractions = (
+        sector_fraction_table(summary_df)
+        .set_index("RotatedSector")
+        .loc[sectors, "Fraction"]
+        .astype(float)
+    )
+    mn = float(fractions.min())
+    mx = float(fractions.max())
+    if mx <= mn:
+        return {sector: max_alpha for sector in sectors}
+
+    scaled = (fractions - mn) / (mx - mn)
+    alphas = min_alpha + scaled * (max_alpha - min_alpha)
+    return {sector: float(alphas.loc[sector]) for sector in sectors}
 
 
 def _draw_individual_vectors(
@@ -427,6 +591,39 @@ def _legend_handles(labels: dict[str, str], *, linewidth: float) -> list[Line2D]
     return handles
 
 
+def export_figure_panels(
+    fig: plt.Figure,
+    output_dir: str | Path,
+    basename: str,
+    *,
+    formats: tuple[str, ...] = ("png", "svg"),
+    dpi: int = 300,
+    pad_inches: float = 0.04,
+) -> list[Path]:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+
+    saved_paths: list[Path] = []
+    for idx, ax in enumerate(fig.axes, start=1):
+        bbox = ax.get_tightbbox(renderer)
+        if bbox is None:
+            bbox = ax.get_window_extent(renderer)
+        bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
+        bbox = Bbox.from_extents(
+            bbox.x0 - pad_inches,
+            bbox.y0 - pad_inches,
+            bbox.x1 + pad_inches,
+            bbox.y1 + pad_inches,
+        )
+        for fmt in formats:
+            path = output_dir / f"{basename}_panel_{idx:02d}.{fmt}"
+            fig.savefig(path, bbox_inches=bbox, dpi=dpi)
+            saved_paths.append(path)
+    return saved_paths
+
+
 def plot_mean_transition_summary(
     summary_df: pd.DataFrame,
     *,
@@ -444,6 +641,7 @@ def plot_mean_transition_summary(
 
     sector_means = sector_mean_table(summary_df)
     sector_labels = sector_labels_with_counts(summary_df)
+    sector_arrow_alphas = _sector_percentage_alphas(summary_df)
 
     # use pre-computed norm/log from summary if available (preferred)
     if "dNorm" in summary_df.columns and "log_dNorm" in summary_df.columns:
@@ -453,15 +651,14 @@ def plot_mean_transition_summary(
         # fallback: compute locally
         norms = np.hypot(summary_df["dNO"].to_numpy(dtype=float), summary_df["dO"].to_numpy(dtype=float))
         log_norms = np.log(norms + LOG_NORM_EPS)
-    # rows 0 and 1 should use a tighter alpha range for points
-    alphas_row01 = _map_norms_to_alphas(log_norms, min_alpha=0.2, max_alpha=0.8)
-    # third row keeps the style-configured alpha bounds
+    # Use the same opacity range for scatter points across all rows.
+    alphas_row01 = _map_norms_to_alphas(log_norms, min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])
     alphas_row2 = _map_norms_to_alphas(log_norms, min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])
 
     fig, axes = plt.subplots(3, 3, figsize=(16.5, 14.8), sharex=False, sharey=False)
     fig.suptitle(title, fontsize=16, fontweight="bold")
 
-    ax = axes[0, 0]
+    ax = axes[0, 1]
     colors_rgba = _stack_pre_colors_with_alpha(summary_df, alphas=alphas_row01)
     ax.scatter(
         summary_df["NO_Pre"],
@@ -485,7 +682,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("NO")
     ax.set_ylabel("O")
 
-    ax = axes[0, 1]
+    ax = axes[0, 2]
     ax.scatter(
         summary_df["NO_Target"],
         summary_df["O_Target"],
@@ -508,7 +705,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("NO")
     ax.set_ylabel("O")
 
-    ax = axes[0, 2]
+    ax = axes[0, 0]
     ax.scatter(
         summary_df["dNO"],
         summary_df["dO"],
@@ -526,7 +723,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("dNO")
     ax.set_ylabel("dO")
 
-    ax = axes[1, 0]
+    ax = axes[1, 1]
     for sector in ROTATED_SECTOR_ORDER:
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
@@ -554,7 +751,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("NO")
     ax.set_ylabel("O")
 
-    ax = axes[1, 1]
+    ax = axes[1, 2]
     for sector in ROTATED_SECTOR_ORDER:
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
@@ -581,7 +778,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("NO")
     ax.set_ylabel("O")
 
-    ax = axes[1, 2]
+    ax = axes[1, 0]
     for sector in ROTATED_SECTOR_ORDER:
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
@@ -599,18 +796,17 @@ def plot_mean_transition_summary(
             c=rgba,
             edgecolors="none",
         )
+        if sector == "small ∆":
+            continue
         mean_row = sector_means.loc[sector_means["RotatedSector"] == sector].iloc[0]
-        mean_norm = float(np.hypot(mean_row["dNO"], mean_row["dO"]))
-        mean_log = float(np.log(mean_norm + LOG_NORM_EPS))
-        mean_alpha = _map_norms_to_alphas(np.array([mean_log]), min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])[0]
         _draw_arrow(
             ax,
             (0.0, 0.0),
             (float(mean_row["dNO"]), float(mean_row["dO"])),
-            color="black",
+            color=_darken_color(ROTATED_SECTOR_PALETTE[sector]),
             linewidth=max(3.0, style["mean_arrow_width"] * 0.9),
             mutation_scale=style["mean_arrow_mutation_scale"],
-            alpha=max(mean_alpha, 0.95),
+            alpha=sector_arrow_alphas[sector],
             zorder=4,
         )
     _draw_origin_guides(ax)
@@ -628,7 +824,7 @@ def plot_mean_transition_summary(
     )
 
     # --- Third row: color + alpha mapped to displacement norm (coolwarm colormap) ---
-    ax = axes[2, 0]
+    ax = axes[2, 1]
     # normalized scalars for colormap using log norms
     mn = float(np.nanmin(log_norms)) if log_norms.size else 0.0
     mx = float(np.nanmax(log_norms)) if log_norms.size else 0.0
@@ -657,7 +853,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("NO")
     ax.set_ylabel("O")
 
-    ax = axes[2, 1]
+    ax = axes[2, 2]
     ax.scatter(
         summary_df["NO_Target"],
         summary_df["O_Target"],
@@ -674,7 +870,7 @@ def plot_mean_transition_summary(
     ax.set_xlabel("NO")
     ax.set_ylabel("O")
 
-    ax = axes[2, 2]
+    ax = axes[2, 0]
     for sector in ROTATED_SECTOR_ORDER:
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
@@ -687,23 +883,18 @@ def plot_mean_transition_summary(
             c=colors_by_norm[pos_idx],
             edgecolors="none",
         )
+        if sector == "small ∆":
+            continue
         mean_row = sector_means.loc[sector_means["RotatedSector"] == sector].iloc[0]
-        mean_norm = float(np.hypot(mean_row["dNO"], mean_row["dO"]))
-        mean_log = float(np.log(mean_norm + LOG_NORM_EPS))
-        if mx <= mn:
-            mean_scaled = 0.0
-        else:
-            mean_scaled = (mean_log - mn) / (mx - mn)
-        mean_alpha = _map_norms_to_alphas(np.array([mean_log]), min_alpha=style["alpha_min"], max_alpha=style["alpha_max"])[0]
         _draw_arrow(
             ax,
             (0.0, 0.0),
             (float(mean_row["dNO"]), float(mean_row["dO"])),
-            color="black",
+            color=_darken_color(ROTATED_SECTOR_PALETTE[sector]),
             linewidth=max(3.2, style["mean_arrow_width"]),
             mutation_scale=style["mean_arrow_mutation_scale"],
             zorder=4,
-            alpha=max(mean_alpha, 0.95),
+            alpha=sector_arrow_alphas[sector],
         )
     _draw_origin_guides(ax)
     _draw_rotated_guides(ax, shift_lims)

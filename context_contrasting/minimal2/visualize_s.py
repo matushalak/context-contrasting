@@ -22,16 +22,16 @@ PLOT_CONDITION_LABELS = {
     "full": "Nonoccluded",
     "occlusion": "Occluded",
     "no_context": "No feedback",
-    "nopvff": "No pv_ff",
-    "no_context_nopvff": "No fb/no pv_ff",
+    "nolat": "No LAT",
+    "no_context_nolat": "No fb/no LAT",
 }
-PLOT_CONDITION_ORDER = ["full", "occlusion", "no_context", "nopvff", "no_context_nopvff"]
+PLOT_CONDITION_ORDER = ["full", "occlusion", "no_context", "nolat", "no_context_nolat"]
 PLOT_COLORS = {
     "Nonoccluded": "black",
     "Occluded": "red",
     "No feedback": "blue",
-    "No pv_ff": "green",
-    "No fb/no pv_ff": "darkorange",
+    "No LAT": "green",
+    "No fb/no LAT": "darkorange",
 }
 TRANSITION_ORDER = [
     "un_un",
@@ -61,22 +61,22 @@ TRACE_COLORS = {
     "full": "black",
     "occlusion": "red",
     "no_context": "blue",
-    "nopvff": "green",
-    "no_context_nopvff": "darkorange",
+    "nolat": "green",
+    "no_context_nolat": "darkorange",
 }
 TRACE_LINESTYLES = {
     "full": "-",
     "occlusion": "-",
     "no_context": ":",
-    "nopvff": "--",
-    "no_context_nopvff": "--",
+    "nolat": "--",
+    "no_context_nolat": "--",
 }
 TRACE_LABELS = {
     "full": "Nonoccluded",
     "occlusion": "Occluded",
     "no_context": "No feedback",
-    "nopvff": "No pv_ff",
-    "no_context_nopvff": "No fb/no pv_ff",
+    "nolat": "No LAT",
+    "no_context_nolat": "No fb/no LAT",
 }
 IMAGE_LABELS = {"familiar": "Familiar Image", "novel": "Novel Image"}
 AXIS_LABEL_FONTSIZE = 32
@@ -207,8 +207,8 @@ def _to_np_2d(ts: torch.Tensor | np.ndarray) -> np.ndarray:
 def _condition_token_to_image_type(image_type: str, condition_token: str) -> tuple[str, str]:
     if image_type == "nocontext":
         return "no_context", condition_token
-    if image_type == "nocontextnopvff":
-        return "no_context_nopvff", condition_token
+    if image_type == "nocontextnolat":
+        return "no_context_nolat", condition_token
     if condition_token.endswith("_nocontext"):
         base_condition = condition_token.removesuffix("_nocontext")
         return "no_context", base_condition
@@ -521,6 +521,7 @@ def _build_windowed_transition_export(
     trace_types: tuple[str, ...],
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     plot_window: tuple[float, float],
+    zscore_activity: bool,
 ) -> DataFrame:
     export_frames: list[DataFrame] = []
 
@@ -549,7 +550,7 @@ def _build_windowed_transition_export(
                         image_type=trace_type,
                         stim_pair=stim_pair,
                         focus_window=plot_window,
-                        zscore=True,
+                        zscore=zscore_activity,
                         baseline_stats=baseline_stats,
                     )
                     if summary is None:
@@ -843,6 +844,7 @@ def visualize_transition_panel(
     step_window: tuple[int, int] = (1000, 1350),
     save_in_transition_subdir: bool = True,
     save_csv: bool = True,
+    zscore_activity: bool = False,
 ) -> str:
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
@@ -902,7 +904,7 @@ def visualize_transition_panel(
             image_type=resolved_trace_types[0],
             stim_pair=stim_pair,
             focus_window=plot_window,
-            zscore=True,
+            zscore=zscore_activity,
         )
         if summary is not None:
             condition_summaries[condition] = summary
@@ -933,6 +935,7 @@ def visualize_transition_panel(
             trace_types=resolved_trace_types,
             stimuli=STIMULI,
             plot_window=plot_window,
+            zscore_activity=zscore_activity,
         )
 
     fig, axes = plt.subplots(
@@ -1021,7 +1024,7 @@ def visualize_transition_panel(
                     image_type=trace_type,
                     stim_pair=STIMULI[condition],
                     focus_window=plot_window,
-                    zscore=True,
+                    zscore=zscore_activity,
                     baseline_stats=phase_baseline_stats.get(phase),
                 )
                 if summary is None:
@@ -1311,7 +1314,7 @@ def visualize_naive_expert_results(
             activity_layout=activity_layout,
             STIMULI=STIMULI,
             xlim=xlim,
-            zscore_activity=not full_plots,
+            zscore_activity=False,
             include_novel_no_context=include_novel_no_context,
             image_types=image_types,
         )

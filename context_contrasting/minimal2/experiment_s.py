@@ -32,11 +32,11 @@ STIMULUS_SPECS = {
 
 NO_RESPONSE_ABLATION_SPECS = {
     "no_context": {"condition_prefix": "nocontext", "zero_context": True},
-    "nopvff": {"condition_prefix": "nopvff", "model_overrides": {"use_pv_connection": False}},
-    "no_context_nopvff": {
-        "condition_prefix": "nocontextnopvff",
+    "nolat": {"condition_prefix": "nolat", "model_overrides": {"use_lat_connection": False}},
+    "no_context_nolat": {
+        "condition_prefix": "nocontextnolat",
         "zero_context": True,
-        "model_overrides": {"use_pv_connection": False},
+        "model_overrides": {"use_lat_connection": False},
     },
 }
 

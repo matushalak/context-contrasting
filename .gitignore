@@ -8,3 +8,8 @@ __pycache__/
 *param_explore/
 
 *KoenData/
+
+*.png
+*.svg
+*.csv
+*.json
