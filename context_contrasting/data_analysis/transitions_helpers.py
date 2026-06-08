@@ -349,7 +349,7 @@ def plot_rotated_sector_unit_legend(
     summary_df: pd.DataFrame,
     *,
     title: str | None = None,
-    center_radius: float = 0.28,
+    center_radius: float = 0.3,
     vector_length: float = 0.46,
 ) -> plt.Figure:
     """Draw a standalone transition-sector legend with sector percentages."""
@@ -377,9 +377,9 @@ def plot_rotated_sector_unit_legend(
                 theta1,
                 theta2,
                 facecolor=color,
-                edgecolor="white",
-                linewidth=2.0,
-                alpha=0.28,
+                edgecolor="none",
+                linewidth=1.0,
+                alpha=0.6,
             )
         )
         _draw_arrow(
@@ -390,7 +390,7 @@ def plot_rotated_sector_unit_legend(
             linewidth=3.0,
             mutation_scale=16.0,
             zorder=4,
-            alpha=0.95,
+            alpha=1.0,
         )
         ax.text(
             text_xy[0],
@@ -408,9 +408,9 @@ def plot_rotated_sector_unit_legend(
             (0.0, 0.0),
             center_radius,
             facecolor=ROTATED_SECTOR_PALETTE["small ∆"],
-            edgecolor="white",
-            linewidth=2.0,
-            alpha=0.74,
+            edgecolor="none",
+            linewidth=1.0,
+            alpha=1.0,
             zorder=5,
         )
     )
@@ -422,7 +422,7 @@ def plot_rotated_sector_unit_legend(
         va="center",
         fontsize=12,
         fontweight="bold",
-        color="white",
+        color="black",
         zorder=6,
     )
     ax.add_patch(Circle((0.0, 0.0), 1.0, facecolor="none", edgecolor="0.15", linewidth=1.5, zorder=6))
