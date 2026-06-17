@@ -345,15 +345,55 @@ def _sector_percentages(summary_df: pd.DataFrame) -> dict[str, float]:
     }
 
 
+def _sector_plot_order(*, small_delta_first: bool = False) -> tuple[str, ...]:
+    if not small_delta_first:
+        return ROTATED_SECTOR_ORDER
+    return ("small ∆",) + tuple(sector for sector in ROTATED_SECTOR_ORDER if sector != "small ∆")
+
+
+def _sector_scatter_zorder(sector: str) -> int:
+    return 1 if sector == "small ∆" else 2
+
+
+def _legend_label_anchor(
+    vector_xy: tuple[float, float],
+    *,
+    gap: float,
+) -> tuple[tuple[float, float], str, str]:
+    vector = np.asarray(vector_xy, dtype=float)
+    norm = float(np.hypot(vector[0], vector[1]))
+    unit = vector / norm if norm > 0 else np.array([0.0, 0.0])
+    label_xy = vector + unit * gap
+
+    if abs(unit[0]) >= abs(unit[1]):
+        ha = "left" if unit[0] >= 0 else "right"
+        va = "center"
+    else:
+        ha = "center"
+        va = "bottom" if unit[1] >= 0 else "top"
+
+    return (float(label_xy[0]), float(label_xy[1])), ha, va
+
+
+def _format_legend_percent(value: float) -> str:
+    return f"{value:.1f}"
+
+
 def plot_rotated_sector_unit_legend(
     summary_df: pd.DataFrame,
     *,
     title: str | None = None,
     center_radius: float = 0.3,
     vector_length: float = 0.46,
+    label_color: str = "white",
+    label_fontsize: float = 20.0,
+    center_label_fontsize: float | None = None,
+    label_gap: float = 0.0,
+    label_bbox: dict | None = None,
 ) -> plt.Figure:
     """Draw a standalone transition-sector legend with sector percentages."""
     percentages = _sector_percentages(summary_df)
+    center_label_fontsize = label_fontsize if center_label_fontsize is None else center_label_fontsize
 
     fig, ax = plt.subplots(figsize=(4.2, 4.2))
     ax.set_aspect("equal", adjustable="box")
@@ -362,14 +402,18 @@ def plot_rotated_sector_unit_legend(
     ax.axis("off")
 
     sector_specs = {
-        "+NO axis": (-45.0, 45.0, (vector_length, 0.0), (0.62, 0.0)),
-        "+O axis": (45.0, 135.0, (0.0, vector_length), (0.0, 0.62)),
-        "-NO axis": (135.0, 225.0, (-vector_length, 0.0), (-0.62, 0.0)),
-        "-O axis": (225.0, 315.0, (0.0, -vector_length), (0.0, -0.62)),
+        "+NO axis": (-45.0, 45.0, (vector_length, 0.0)),
+        "+O axis": (45.0, 135.0, (0.0, vector_length)),
+        "-NO axis": (135.0, 225.0, (-vector_length, 0.0)),
+        "-O axis": (225.0, 315.0, (0.0, -vector_length)),
     }
 
-    for sector, (theta1, theta2, vector_xy, text_xy) in sector_specs.items():
+    for sector, (theta1, theta2, vector_xy) in sector_specs.items():
         color = ROTATED_SECTOR_PALETTE[sector]
+        text_xy, ha, va = _legend_label_anchor(
+            vector_xy,
+            gap=label_gap,
+        )
         ax.add_patch(
             Wedge(
                 (0.0, 0.0),
@@ -395,12 +439,14 @@ def plot_rotated_sector_unit_legend(
         ax.text(
             text_xy[0],
             text_xy[1],
-            f"{percentages[sector]:.1f}%",
-            ha="center",
-            va="center",
-            fontsize=13,
+            _format_legend_percent(percentages[sector]),
+            ha=ha,
+            va=va,
+            fontsize=label_fontsize,
             fontweight="bold",
-            color="0.1",
+            color=label_color,
+            bbox=label_bbox,
+            zorder=7,
         )
 
     ax.add_patch(
@@ -417,15 +463,16 @@ def plot_rotated_sector_unit_legend(
     ax.text(
         0.0,
         0.0,
-        f"{percentages['small ∆']:.1f}%",
+        _format_legend_percent(percentages["small ∆"]),
         ha="center",
         va="center",
-        fontsize=12,
+        fontsize=center_label_fontsize,
         fontweight="bold",
-        color="black",
+        color=label_color,
+        bbox=label_bbox,
         zorder=6,
     )
-    ax.add_patch(Circle((0.0, 0.0), 1.0, facecolor="none", edgecolor="0.15", linewidth=1.5, zorder=6))
+    # ax.add_patch(Circle((0.0, 0.0), 1.0, facecolor="none", edgecolor="0.15", linewidth=1.5, zorder=6))
 
     if title:
         ax.set_title(title, fontsize=13, fontweight="bold", pad=10)
@@ -439,10 +486,23 @@ def save_rotated_sector_unit_legend(
     *,
     title: str | None = None,
     dpi: int = 300,
+    label_color: str = "white",
+    label_fontsize: float = 20.0,
+    center_label_fontsize: float | None = None,
+    label_gap: float = 0.0,
+    label_bbox: dict | None = None,
 ) -> list[Path]:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig = plot_rotated_sector_unit_legend(summary_df, title=title)
+    fig = plot_rotated_sector_unit_legend(
+        summary_df,
+        title=title,
+        label_color=label_color,
+        label_fontsize=label_fontsize,
+        center_label_fontsize=center_label_fontsize,
+        label_gap=label_gap,
+        label_bbox=label_bbox,
+    )
     saved_paths = [output_path]
     fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
     if output_path.suffix.lower() != ".svg":
@@ -724,7 +784,7 @@ def plot_mean_transition_summary(
     ax.set_ylabel("dO")
 
     ax = axes[1, 1]
-    for sector in ROTATED_SECTOR_ORDER:
+    for sector in _sector_plot_order(small_delta_first=True):
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
             continue
@@ -741,6 +801,7 @@ def plot_mean_transition_summary(
             s=style["point_size"],
             c=rgba,
             edgecolors="none",
+            zorder=_sector_scatter_zorder(sector),
         )
         # mean arrow removed from this subplot to reduce visual clutter
     _draw_diagonal(ax, response_lims)
@@ -752,7 +813,7 @@ def plot_mean_transition_summary(
     ax.set_ylabel("O")
 
     ax = axes[1, 2]
-    for sector in ROTATED_SECTOR_ORDER:
+    for sector in _sector_plot_order(small_delta_first=True):
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
             continue
@@ -768,6 +829,7 @@ def plot_mean_transition_summary(
             s=style["point_size"],
             c=rgba,
             edgecolors="none",
+            zorder=_sector_scatter_zorder(sector),
         )
         # mean arrow removed from this subplot to reduce visual clutter
     _draw_diagonal(ax, response_lims)
@@ -779,7 +841,7 @@ def plot_mean_transition_summary(
     ax.set_ylabel("O")
 
     ax = axes[1, 0]
-    for sector in ROTATED_SECTOR_ORDER:
+    for sector in _sector_plot_order(small_delta_first=True):
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
             continue
@@ -795,6 +857,7 @@ def plot_mean_transition_summary(
             s=style["point_size"],
             c=rgba,
             edgecolors="none",
+            zorder=_sector_scatter_zorder(sector),
         )
         if sector == "small ∆":
             continue
@@ -871,7 +934,7 @@ def plot_mean_transition_summary(
     ax.set_ylabel("O")
 
     ax = axes[2, 0]
-    for sector in ROTATED_SECTOR_ORDER:
+    for sector in _sector_plot_order(small_delta_first=True):
         sector_rows = summary_df.loc[summary_df["RotatedSector"] == sector]
         if sector_rows.empty:
             continue
@@ -882,6 +945,7 @@ def plot_mean_transition_summary(
             s=style["point_size"],
             c=colors_by_norm[pos_idx],
             edgecolors="none",
+            zorder=_sector_scatter_zorder(sector),
         )
         if sector == "small ∆":
             continue

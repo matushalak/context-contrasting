@@ -3,6 +3,7 @@ from pandas import DataFrame, concat as pd_concat
 import torch
 from context_contrasting.minimal2.visualize_s import (
     TRANSITION_LABELS,
+    visualize_transition_response_matrix,
     visualize_transition_panel,
 )
 
@@ -107,13 +108,38 @@ def _save_grouped_transition_panels(
         combined_transitions[transition_name] = combined
 
     if combined_transitions:
+        ordered_combined = [name for name in transition_order if name in combined_transitions]
+        combined_labels = {name: TRANSITION_LABELS.get(name, name) for name in combined_transitions}
         visualize_transition_panel(
             combined_transitions,
             STIMULI=stimuli,
             save_path=save_path,
             name="transition_panel_naive_expert",
             image_mode="both",
-            transition_order=[name for name in transition_order if name in combined_transitions],
-            transition_labels={name: TRANSITION_LABELS.get(name, name) for name in combined_transitions},
+            transition_order=ordered_combined,
+            transition_labels=combined_labels,
+            trace_types=("full", "occlusion"),
             save_in_transition_subdir=save_in_transition_subdir,
+        )
+        visualize_transition_response_matrix(
+            combined_transitions,
+            STIMULI=stimuli,
+            save_path=save_path,
+            name="transitions_FAM",
+            image_mode="familiar",
+            transition_order=ordered_combined,
+            transition_labels=combined_labels,
+            save_in_transition_subdir=save_in_transition_subdir,
+            save_csv=True,
+        )
+        visualize_transition_response_matrix(
+            combined_transitions,
+            STIMULI=stimuli,
+            save_path=save_path,
+            name="transitions_NOV",
+            image_mode="novel",
+            transition_order=ordered_combined,
+            transition_labels=combined_labels,
+            save_in_transition_subdir=save_in_transition_subdir,
+            save_csv=True,
         )

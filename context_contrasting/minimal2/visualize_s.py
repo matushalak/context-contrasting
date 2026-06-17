@@ -37,6 +37,7 @@ TRANSITION_ORDER = [
     "un_un",
     "un_FB",
     "un_novel_FF",
+    "weak_FF_gain",
     "FF_un",
     "FF_FB_broad",
     "FF_FB_broad_novel",
@@ -49,6 +50,7 @@ TRANSITION_LABELS = {
     "un_un": "un -> un",
     "un_FB": "un -> FB",
     "un_novel_FF": "un -> novel NO",
+    "weak_FF_gain": "weak FF -> FF gain",
     "FF_un": "FF -> un",
     "FF_FB_broad": "FF -> FB\n(broad)",
     "FF_FB_broad_novel": "FF_FB_broad_novel",
@@ -75,9 +77,42 @@ TRACE_LABELS = {
     "full": "Nonoccluded",
     "occlusion": "Occluded",
     "no_context": "No feedback",
+    "occlusion_no_context": "Occluded no feedback",
     "nolat": "No LAT",
+    "occlusion_nolat": "Occluded no LAT",
     "no_context_nolat": "No fb/no LAT",
+    "occlusion_no_context_nolat": "Occluded no fb/no LAT",
 }
+TRANSITION_RESPONSE_COLUMN_SPECS = (
+    {
+        "key": "naive",
+        "label": "Naive",
+        "phase": "naive",
+        "no_trace": "full",
+        "o_trace": "occlusion",
+    },
+    {
+        "key": "expert",
+        "label": "Expert",
+        "phase": "expert",
+        "no_trace": "full",
+        "o_trace": "occlusion",
+    },
+    {
+        "key": "expert_no_fb",
+        "label": "Expert no FB",
+        "phase": "expert",
+        "no_trace": "no_context",
+        "o_trace": "occlusion_no_context",
+    },
+    {
+        "key": "expert_no_lat",
+        "label": "Expert no LAT",
+        "phase": "expert",
+        "no_trace": "nolat",
+        "o_trace": "occlusion_nolat",
+    },
+)
 IMAGE_LABELS = {"familiar": "Familiar Image", "novel": "Novel Image"}
 AXIS_LABEL_FONTSIZE = 32
 AXIS_TICK_FONTSIZE = 32
@@ -207,8 +242,23 @@ def _to_np_2d(ts: torch.Tensor | np.ndarray) -> np.ndarray:
 def _condition_token_to_image_type(image_type: str, condition_token: str) -> tuple[str, str]:
     if image_type == "nocontext":
         return "no_context", condition_token
+    if image_type == "nolat":
+        return "nolat", condition_token
     if image_type == "nocontextnolat":
         return "no_context_nolat", condition_token
+    suffix_to_type = {
+        "_nocontextnolat": "no_context_nolat",
+        "_nocontext": "no_context",
+        "_nolat": "nolat",
+    }
+    for suffix, ablation_type in suffix_to_type.items():
+        if condition_token.endswith(suffix):
+            base_condition = condition_token.removesuffix(suffix)
+            if image_type == "full":
+                return ablation_type, base_condition
+            if image_type == "occlusion":
+                return f"occlusion_{ablation_type}", base_condition
+            return f"{image_type}_{ablation_type}", base_condition
     if condition_token.endswith("_nocontext"):
         base_condition = condition_token.removesuffix("_nocontext")
         return "no_context", base_condition
@@ -644,6 +694,401 @@ def _build_windowed_transition_export(
     ]
     optional_columns = [column for column in ("experiment_series", "seed") if column in export_df.columns]
     return export_df.loc[:, ordered_columns + optional_columns]
+
+
+def _build_response_transition_export(
+    long_dfs_by_transition: dict[str, DataFrame],
+    *,
+    ordered_transitions: list[str],
+    labels: dict[str, str],
+    selected_conditions: list[str],
+    column_specs: tuple[dict[str, str], ...],
+    stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    plot_window: tuple[float, float],
+    zscore_activity: bool,
+) -> DataFrame:
+    export_frames: list[DataFrame] = []
+
+    for transition_row, transition_name in enumerate(ordered_transitions):
+        long_df = long_dfs_by_transition[transition_name]
+        for column_index, column_spec in enumerate(column_specs):
+            phase = column_spec["phase"]
+            trace_specs = [
+                ("O", column_spec["o_trace"], "O"),
+                ("NO", column_spec["no_trace"], "NO"),
+            ]
+            baseline_stats = _collect_shared_baseline_stats(
+                long_df,
+                trace_specs=[
+                    (condition, phase, trace_type)
+                    for condition in selected_conditions
+                    for _, trace_type, _ in trace_specs
+                ],
+                stimuli=stimuli,
+                focus_window=plot_window,
+            )
+            for condition_index, condition in enumerate(selected_conditions):
+                stim_pair = stimuli.get(condition)
+                if stim_pair is None:
+                    continue
+                for response_index, (response_type, trace_type, trace_label) in enumerate(trace_specs):
+                    summary = _summarize_windowed_repeated_trace(
+                        long_df,
+                        condition=condition,
+                        phase=phase,
+                        image_type=trace_type,
+                        stim_pair=stim_pair,
+                        focus_window=plot_window,
+                        zscore=zscore_activity,
+                        baseline_stats=baseline_stats,
+                    )
+                    if summary is None:
+                        continue
+                    stim_start, stim_end = summary["stim_seconds"]
+                    export_frames.append(
+                        pd.DataFrame(
+                            {
+                                "time_seconds": np.asarray(summary["x_seconds"], dtype=float),
+                                "y": np.asarray(summary["y_mean"], dtype=float),
+                                "y_sem": np.asarray(summary["y_sem"], dtype=float),
+                            }
+                        ).assign(
+                            transition=transition_name,
+                            transition_label=labels.get(transition_name, transition_name),
+                            transition_row=transition_row,
+                            column_key=column_spec["key"],
+                            column_label=column_spec["label"],
+                            column_index=column_index,
+                            experiment_phase=phase,
+                            condition=condition,
+                            condition_label=_display_condition_label(condition),
+                            condition_index=condition_index,
+                            response_type=response_type,
+                            response_label=trace_label,
+                            response_index=response_index,
+                            image_type=trace_type,
+                            baseline_mean=float(summary["baseline_mean"]),
+                            baseline_std=float(summary["baseline_std"]),
+                            baseline_n=int(summary["baseline_n"]),
+                            n_trials=int(summary["n_trials"]),
+                            stim_start_seconds=float(stim_start),
+                            stim_end_seconds=float(stim_end),
+                        )
+                    )
+
+    if not export_frames:
+        return pd.DataFrame(
+            columns=[
+                "transition",
+                "transition_label",
+                "transition_row",
+                "column_key",
+                "column_label",
+                "column_index",
+                "experiment_phase",
+                "condition",
+                "condition_label",
+                "condition_index",
+                "response_type",
+                "response_label",
+                "response_index",
+                "image_type",
+                "time_seconds",
+                "y",
+                "y_sem",
+                "baseline_mean",
+                "baseline_std",
+                "baseline_n",
+                "n_trials",
+                "stim_start_seconds",
+                "stim_end_seconds",
+            ]
+        )
+
+    ordered_columns = [
+        "transition",
+        "transition_label",
+        "transition_row",
+        "column_key",
+        "column_label",
+        "column_index",
+        "experiment_phase",
+        "condition",
+        "condition_label",
+        "condition_index",
+        "response_type",
+        "response_label",
+        "response_index",
+        "image_type",
+        "time_seconds",
+        "y",
+        "y_sem",
+        "baseline_mean",
+        "baseline_std",
+        "baseline_n",
+        "n_trials",
+        "stim_start_seconds",
+        "stim_end_seconds",
+    ]
+    export_df = pd.concat(export_frames, ignore_index=True)
+    return export_df.loc[:, ordered_columns]
+
+
+def visualize_transition_response_matrix(
+    long_dfs_by_transition: dict[str, DataFrame],
+    STIMULI: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    *,
+    save_path: str = PLOTSDIR,
+    name: str,
+    image_mode: Literal["familiar", "novel"],
+    transition_order: list[str] | None = None,
+    transition_labels: dict[str, str] | None = None,
+    step_window: tuple[int, int] = (1000, 1350),
+    save_in_transition_subdir: bool = True,
+    save_csv: bool = True,
+    zscore_activity: bool = False,
+) -> list[str]:
+    if not long_dfs_by_transition:
+        raise ValueError("long_dfs_by_transition must contain at least one transition result.")
+    if image_mode not in {"familiar", "novel"}:
+        raise ValueError("image_mode must be 'familiar' or 'novel'.")
+
+    ordered_transitions = transition_order or TRANSITION_ORDER
+    ordered_transitions = [transition for transition in ordered_transitions if transition in long_dfs_by_transition]
+    if not ordered_transitions:
+        ordered_transitions = list(long_dfs_by_transition)
+
+    labels = TRANSITION_LABELS.copy()
+    if transition_labels is not None:
+        labels.update(transition_labels)
+
+    sample_df = long_dfs_by_transition[ordered_transitions[0]]
+    phases = set(_resolve_phase_sequence(sample_df))
+    column_specs = tuple(
+        column_spec
+        for column_spec in TRANSITION_RESPONSE_COLUMN_SPECS
+        if column_spec["phase"] in phases
+    )
+    if not column_specs:
+        raise ValueError("Transition response matrix requires naive/expert experiment phases.")
+
+    phase_filtered_df = sample_df.loc[sample_df["experiment_phase"].isin(phases)].copy()
+    available_conditions = _resolve_condition_sequence(
+        phase_filtered_df["condition"].dropna().astype(str).unique().tolist()
+        if "condition" in phase_filtered_df.columns
+        else [],
+        preferred=list(STIMULI),
+    )
+    selected_conditions = _resolve_image_mode(
+        available_conditions=available_conditions or list(STIMULI),
+        image_mode=image_mode,
+        include_novel_image=(image_mode == "novel"),
+    )
+
+    display_windows = [
+        _expand_window_to_event_bounds(STIMULI[condition], focus_window=step_window)
+        for condition in selected_conditions
+        if condition in STIMULI
+    ]
+    if display_windows:
+        plot_window = (
+            min(window[0] for window in display_windows),
+            max(window[1] for window in display_windows),
+        )
+    else:
+        plot_window = step_window
+
+    condition_summaries: dict[str, dict[str, np.ndarray | float | int]] = {}
+    for condition in selected_conditions:
+        stim_pair = STIMULI.get(condition)
+        if stim_pair is None:
+            continue
+        summary = _summarize_windowed_repeated_trace(
+            sample_df,
+            condition=condition,
+            phase=column_specs[0]["phase"],
+            image_type=column_specs[0]["no_trace"],
+            stim_pair=stim_pair,
+            focus_window=plot_window,
+            zscore=zscore_activity,
+        )
+        if summary is not None:
+            condition_summaries[condition] = summary
+
+    if not condition_summaries:
+        raise ValueError("STIMULI must contain at least one of the requested conditions.")
+
+    stim_windows = {
+        condition: tuple(summary["stim_seconds"])
+        for condition, summary in condition_summaries.items()
+    }
+    xlim_transition = (
+        min(float(summary["xlim_seconds"][0]) for summary in condition_summaries.values()),
+        max(float(summary["xlim_seconds"][1]) for summary in condition_summaries.values()),
+    )
+
+    column_condition_specs = [
+        (column_spec, condition)
+        for column_spec in column_specs
+        for condition in selected_conditions
+    ]
+    n_rows = len(ordered_transitions)
+    n_cols = len(column_condition_specs)
+    fig_width = max(10.0, 2.25 * n_cols + 2.8)
+    fig_height = max(6.0, 2.15 * n_rows + 1.9)
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(fig_width, fig_height),
+        squeeze=False,
+        sharex=True,
+        sharey=False,
+        constrained_layout=False,
+    )
+    fig.subplots_adjust(left=0.19, right=0.99, top=0.9, bottom=0.055, wspace=0.12, hspace=0.2)
+
+    legend_handles = [
+        Line2D([0], [0], color="red", lw=4.0, label="O"),
+        Line2D([0], [0], color="black", lw=4.0, label="NO"),
+    ]
+    fig.legend(
+        handles=legend_handles,
+        loc="upper right",
+        bbox_to_anchor=(0.99, 0.988),
+        frameon=False,
+        ncol=2,
+        handlelength=2.0,
+        columnspacing=1.2,
+        fontsize=18,
+    )
+
+    for col_idx, (_, condition) in enumerate(column_condition_specs):
+        axes[0, col_idx].set_title(_display_condition_label(condition), fontsize=20, pad=8)
+
+    for group_idx, column_spec in enumerate(column_specs):
+        start_col = group_idx * len(selected_conditions)
+        end_col = start_col + len(selected_conditions) - 1
+        x_center = 0.5 * (axes[0, start_col].get_position().x0 + axes[0, end_col].get_position().x1)
+        fig.text(
+            x_center,
+            0.955,
+            column_spec["label"],
+            ha="center",
+            va="center",
+            fontsize=24,
+        )
+
+    for row_idx, transition_name in enumerate(ordered_transitions):
+        long_df = long_dfs_by_transition[transition_name]
+        row_bounds: list[tuple[float, float]] = []
+        baseline_by_column = {
+            column_spec["key"]: _collect_shared_baseline_stats(
+                long_df,
+                trace_specs=[
+                    (condition, column_spec["phase"], trace_type)
+                    for condition in selected_conditions
+                    for trace_type in (column_spec["o_trace"], column_spec["no_trace"])
+                ],
+                stimuli=STIMULI,
+                focus_window=plot_window,
+            )
+            for column_spec in column_specs
+        }
+
+        for col_idx, (column_spec, condition) in enumerate(column_condition_specs):
+            ax = axes[row_idx, col_idx]
+            stim_interval = stim_windows.get(condition)
+            if condition not in STIMULI:
+                ax.set_visible(False)
+                continue
+
+            if stim_interval is not None:
+                ax.axvspan(stim_interval[0], stim_interval[1], color="0.92", zorder=0)
+            ax.axhline(0.0, color="0.85", lw=0.6, zorder=0)
+
+            for response_type, trace_type, color in (
+                ("O", column_spec["o_trace"], "red"),
+                ("NO", column_spec["no_trace"], "black"),
+            ):
+                summary = _summarize_windowed_repeated_trace(
+                    long_df,
+                    condition=condition,
+                    phase=column_spec["phase"],
+                    image_type=trace_type,
+                    stim_pair=STIMULI[condition],
+                    focus_window=plot_window,
+                    zscore=zscore_activity,
+                    baseline_stats=baseline_by_column.get(column_spec["key"]),
+                )
+                if summary is None:
+                    continue
+                y_mean = np.asarray(summary["y_mean"], dtype=float)
+                ax.plot(
+                    np.asarray(summary["x_seconds"], dtype=float),
+                    y_mean,
+                    color=color,
+                    lw=4.0,
+                    label=response_type,
+                )
+                row_bounds.append((float(np.min(y_mean)), float(np.max(y_mean))))
+
+            ax.set_xlim(*xlim_transition)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+
+        label_ax = axes[row_idx, 0]
+        label_ax.text(
+            -0.13,
+            0.5,
+            labels.get(transition_name, transition_name),
+            transform=label_ax.transAxes,
+            ha="right",
+            va="center",
+            fontsize=20,
+        )
+        if row_bounds:
+            row_min = min(bound[0] for bound in row_bounds)
+            row_max = max(bound[1] for bound in row_bounds)
+            span = row_max - row_min
+            if span <= 0:
+                span = max(abs(row_min), abs(row_max), 0.1)
+            pad = 0.12 * span
+            for ax in axes[row_idx, :]:
+                if ax.get_visible():
+                    ax.set_ylim(row_min - pad, row_max + pad)
+
+    if save_in_transition_subdir:
+        plot_dirs = _resolve_plot_dirs(save_path)
+        output_dir = plot_dirs["transition_panels"]
+    else:
+        output_dir = save_path
+        os.makedirs(output_dir, exist_ok=True)
+
+    base_path = os.path.join(output_dir, name)
+    saved_paths: list[str] = []
+    for ext in ("png", "svg"):
+        out_path = f"{base_path}.{ext}"
+        fig.savefig(out_path, bbox_inches="tight")
+        saved_paths.append(out_path)
+    plt.close(fig)
+
+    if save_csv:
+        export_df = _build_response_transition_export(
+            long_dfs_by_transition,
+            ordered_transitions=ordered_transitions,
+            labels=labels,
+            selected_conditions=selected_conditions,
+            column_specs=column_specs,
+            stimuli=STIMULI,
+            plot_window=plot_window,
+            zscore_activity=zscore_activity,
+        )
+        export_df.to_csv(f"{base_path}.csv", index=False)
+        saved_paths.append(f"{base_path}.csv")
+
+    return saved_paths
 
 
 def _plot_panel_a_activity(
@@ -1108,14 +1553,39 @@ def save_grouped_transition_panels(
         combined_transitions[transition_name] = combined
 
     if combined_transitions:
+        ordered_combined = [name for name in transition_order if name in combined_transitions]
+        combined_labels = {name: TRANSITION_LABELS.get(name, name) for name in combined_transitions}
         visualize_transition_panel(
             combined_transitions,
             STIMULI=stimuli,
             save_path=save_path,
             name="transition_panel_naive_expert",
             image_mode="both",
-            transition_order=[name for name in transition_order if name in combined_transitions],
-            transition_labels={name: TRANSITION_LABELS.get(name, name) for name in combined_transitions},
+            transition_order=ordered_combined,
+            transition_labels=combined_labels,
+            trace_types=("full", "occlusion"),
+            save_in_transition_subdir=save_in_transition_subdir,
+            save_csv=True,
+        )
+        visualize_transition_response_matrix(
+            combined_transitions,
+            STIMULI=stimuli,
+            save_path=save_path,
+            name="transitions_FAM",
+            image_mode="familiar",
+            transition_order=ordered_combined,
+            transition_labels=combined_labels,
+            save_in_transition_subdir=save_in_transition_subdir,
+            save_csv=True,
+        )
+        visualize_transition_response_matrix(
+            combined_transitions,
+            STIMULI=stimuli,
+            save_path=save_path,
+            name="transitions_NOV",
+            image_mode="novel",
+            transition_order=ordered_combined,
+            transition_labels=combined_labels,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
         )

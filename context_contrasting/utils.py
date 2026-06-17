@@ -88,10 +88,11 @@ class ThresholdReLU(torch.nn.Module):
         self.hard = hard
     
     def forward(self, x:torch.Tensor) -> torch.Tensor:
+        x = (x > self.threshold).float() * x
         if self.hard:
-            return (x > self.threshold).float() * x
+            return x
         else:
-            return torch.clamp(x - self.threshold, min=0.0)
+            return torch.clamp(x, max=1.0)
 
 
 class GainSigmoid(torch.nn.Module):

@@ -11,7 +11,7 @@ conda activate context-contrasting
 python -m context_contrasting.model_scatter.run_model_scatter
 ```
 
-By default this samples 640 noisy configs total, allocated across canonical
+By default this samples 960 noisy configs total, allocated across canonical
 transitions with a data-like bias toward unresponsive initial conditions. It runs
 the minimal2 model with shared test/training stimuli, writes a
 `transition_table.csv` with the same columns as the real transition CSVs, and
@@ -32,6 +32,14 @@ No-LR-variation comparison:
 python -m context_contrasting.model_scatter.run_model_scatter \
   --freeze-learning-rates \
   --output-dir context_contrasting/model_scatter/outputs_zscore_data_like_fixed_lrs
+```
+
+Initial-weights-only comparison:
+
+```bash
+python -m context_contrasting.model_scatter.run_model_scatter \
+  --initial-weights-only \
+  --output-dir context_contrasting/model_scatter/outputs_zscore_data_like_wide_initial_weights_only
 ```
 
 Useful smaller smoke run:
@@ -67,6 +75,8 @@ Sampling notes:
 - Learning rates are sampled by default. Use `--freeze-learning-rates` to keep
   `lr_ff`, `lr_fb`, `lr_lat`, and `lr_pv` fixed at their canonical values while
   still sampling weights and other scalar hyperparameters.
+- Use `--initial-weights-only` to keep every scalar hyperparameter fixed at its
+  canonical prototype value and sample only initial weight means.
 - Noisy runs use `--transition-sampling data-like` by default so the aggregate
   naive cloud is weighted toward unresponsive starts, with fewer O responders
   and more NO than O responders. Use `--transition-sampling equal` for equal
@@ -90,4 +100,10 @@ Saved output folders:
   rates varied.
 - `outputs_zscore_data_like_fixed_lrs`: matched z-scored data-like noisy run with
   learning rates fixed.
+- `outputs_zscore_data_like_wide_vary_lrs`: wider, higher-sample z-scored
+  data-like noisy run with learning rates varied.
+- `outputs_zscore_data_like_wide_fixed_lrs`: matched wider run with learning
+  rates fixed but other scalar hyperparameters varied.
+- `outputs_zscore_data_like_wide_initial_weights_only`: matched wider run with
+  only initial weight means varied.
 - `outputs_canonical_zscore`: exact canonical configs, z-scored.

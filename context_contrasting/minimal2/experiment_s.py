@@ -164,6 +164,15 @@ def _run_test_phase_variants(
                         update=False,
                     )
                 )
+                frames.append(
+                    run_experimental_phase(
+                        model,
+                        occluded_X,
+                        ablated_C,
+                        condition_name=f"occlusion_{condition_name}_{condition_prefix}_{phase_label}",
+                        update=False,
+                    )
+                )
 
     return frames
 

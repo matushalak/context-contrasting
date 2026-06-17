@@ -127,7 +127,7 @@ class CCNeuron(nn.Module):
         self.W_pv_baseline = self.W_pv.detach().clone()
 
         # Feedback specificity (decoding image identity with 60% accuracy)
-        self.fb_specificity = torch.eye(self.n_features)*0.5 + (1 - torch.eye(self.n_features))*0.1
+        self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.2
         self.pv_specificity = torch.eye(self.n_features)
 
         # Ablation parameters
@@ -161,7 +161,7 @@ class CCNeuron(nn.Module):
         pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
         p = self.pv(self.activation(
             pv_ff + pv_lat 
-            + randn_reparam(size=self.pv.ema.shape, mu=0, sigma=self.pv_noise_sigma) # small random baseline input
+            + randn_reparam(size=self.pv.ema.shape, mu=0.0, sigma=self.pv_noise_sigma) # small random baseline input
             )) 
         
         a = self.adapt(self.pyramidal.ema) # update adaptation variable 
@@ -184,8 +184,13 @@ class CCNeuron(nn.Module):
             apical_gain * basal + apical_drive + baseline_drive
             ))
         
+        y_next = torch.min(y_next, torch.tensor(1.0))
+        
         return x, y_t, y_next, p, c
 
+    # NOTE: ADDed SOFT-HEBBIAN boundedness 
+    #   (w_max - w_t) for hebbian
+    #   (w_t - w_min) for anti-hebbian
     @torch.no_grad()
     def update(self, 
                x_t: torch.Tensor, 
@@ -207,9 +212,9 @@ class CCNeuron(nn.Module):
         if self.FF_plasticity and self.use_FF_connection:
             match self.FFrule:
                 case "anti-Hebbian":
-                    dw_ff = - self.lr_ff * (y_next * x_t)
+                    dw_ff = - self.lr_ff * (y_next * x_t) * (self.w_ff - 0.0)
                 case "Hebbian":
-                    dw_ff = self.lr_ff * (y_next * x_t)
+                    dw_ff = self.lr_ff * (y_next * x_t) * (1.0 - self.w_ff)
 
         # 2) Dampened-Hebbian update for w_fb
         damp = self.alpha / (y_next + self.alpha)
@@ -218,20 +223,20 @@ class CCNeuron(nn.Module):
             match self.FBrule:
                 # contextual strengthening general (not only the experienced context, also novel)
                 case "dampened-anti-Hebbian":
-                    dw_fb = self.lr_fb * (damp * self.fb_specificity @ c_t) * self.receives_context
+                    dw_fb = self.lr_fb * (damp * self.fb_specificity @ c_t) * self.receives_context * (1.0 - self.w_fb)
                 case "Hebbian":
-                    dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context
+                    dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context * (1.0 - self.w_fb)
 
         # 3) Hebbian update for w_lat and w_pv_lat
         if self.lat_plasticity and self.use_lat_connection:
-            dw_lat = self.lr_lat * (y_next * pv_t)
+            dw_lat = self.lr_lat * (y_next * pv_t) * (1.0 - self.w_lat)
 
         if self.pv_lat_plasticity and self.use_pv_lat_connection:
-            dw_pv_lat = self.lr_lat * (y_t * pv_t)
+            dw_pv_lat = self.lr_lat * (y_t * pv_t) * (1.0 - self.w_pv_lat)
 
         # 4) Hebbian update for W_pv
         if self.pv_plasticity and self.use_pv_connection:
-            dw_W_pv = self.lr_pv * torch.outer(pv_t.reshape(-1), x_t)
+            dw_W_pv = self.lr_pv * torch.outer(pv_t.reshape(-1), x_t) * (1.0 - self.W_pv)
 
         # Apply updates
         self.w_ff += dw_ff

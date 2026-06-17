@@ -162,6 +162,7 @@ def sample_config_around_canonical(
     weight_noise_floor: float,
     scalar_noise_multiplier: float,
     freeze_learning_rates: bool,
+    initial_weights_only: bool,
     keep_init_sigma: bool,
 ) -> dict[str, Any]:
     sampled = copy.deepcopy(canonical_config)
@@ -177,6 +178,8 @@ def sample_config_around_canonical(
             )
 
     for key, spec in POSITIVE_SCALAR_SPECS.items():
+        if initial_weights_only:
+            continue
         if freeze_learning_rates and key in LEARNING_RATE_KEYS:
             continue
         if key in sampled and _is_number(sampled[key]):
@@ -188,6 +191,8 @@ def sample_config_around_canonical(
             )
 
     for key, spec in ADDITIVE_SCALAR_SPECS.items():
+        if initial_weights_only:
+            continue
         if key in sampled and _is_number(sampled[key]):
             sampled[key] = _sample_scalar(
                 float(sampled[key]),
@@ -212,6 +217,7 @@ def sample_configs(
     weight_noise_floor: float,
     scalar_noise_multiplier: float,
     freeze_learning_rates: bool,
+    initial_weights_only: bool,
     keep_init_sigma: bool,
     transition_sampling: str,
 ) -> list[dict[str, Any]]:
@@ -239,6 +245,7 @@ def sample_configs(
                     weight_noise_floor=weight_noise_floor,
                     scalar_noise_multiplier=scalar_noise_multiplier,
                     freeze_learning_rates=freeze_learning_rates,
+                    initial_weights_only=initial_weights_only,
                     keep_init_sigma=keep_init_sigma,
                 )
             )
@@ -286,6 +293,21 @@ def canonical_configs_as_samples(
         sampled["_sample_global_idx"] = global_idx
         sampled_configs.append(sampled)
     return sampled_configs
+
+
+def _sampling_mode_name(
+    *,
+    canonical_only: bool,
+    initial_weights_only: bool,
+    freeze_learning_rates: bool,
+) -> str:
+    if canonical_only:
+        return "canonical"
+    if initial_weights_only:
+        return "initial_weights_only"
+    if freeze_learning_rates:
+        return "fixed_lrs"
+    return "vary_lrs"
 
 
 def _model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
@@ -772,6 +794,7 @@ def run_model_scatter(
     scalar_noise_multiplier: float,
     keep_init_sigma: bool,
     freeze_learning_rates: bool,
+    initial_weights_only: bool,
     canonical_only: bool,
     transition_sampling: str,
     zscore_responses: bool,
@@ -798,6 +821,7 @@ def run_model_scatter(
             weight_noise_floor=weight_noise_floor,
             scalar_noise_multiplier=scalar_noise_multiplier,
             freeze_learning_rates=freeze_learning_rates,
+            initial_weights_only=initial_weights_only,
             keep_init_sigma=keep_init_sigma,
             transition_sampling=transition_sampling,
         )
@@ -847,7 +871,14 @@ def run_model_scatter(
         "weight_noise_floor": weight_noise_floor,
         "scalar_noise_multiplier": scalar_noise_multiplier,
         "freeze_learning_rates": freeze_learning_rates,
-        "varied_learning_rates": not freeze_learning_rates and not canonical_only,
+        "initial_weights_only": initial_weights_only,
+        "sampling_mode": _sampling_mode_name(
+            canonical_only=canonical_only,
+            initial_weights_only=initial_weights_only,
+            freeze_learning_rates=freeze_learning_rates,
+        ),
+        "varied_learning_rates": not freeze_learning_rates and not initial_weights_only and not canonical_only,
+        "varied_scalar_hyperparameters": not initial_weights_only and not canonical_only,
         "keep_init_sigma": keep_init_sigma,
         "canonical_only": canonical_only,
         "transition_sampling": transition_sampling,
@@ -881,17 +912,22 @@ def _parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--samples-per-transition", type=int, default=64)
+    parser.add_argument("--samples-per-transition", type=int, default=96)
     parser.add_argument("--n-steps-per-phase", type=int, default=100)
     parser.add_argument("--seed", type=int, default=20260604)
     parser.add_argument("--n-jobs", type=int, default=-1)
-    parser.add_argument("--weight-noise-rel", type=float, default=0.35)
-    parser.add_argument("--weight-noise-floor", type=float, default=0.04)
-    parser.add_argument("--scalar-noise-multiplier", type=float, default=1.25)
+    parser.add_argument("--weight-noise-rel", type=float, default=0.55)
+    parser.add_argument("--weight-noise-floor", type=float, default=0.07)
+    parser.add_argument("--scalar-noise-multiplier", type=float, default=1.75)
     parser.add_argument(
         "--freeze-learning-rates",
         action="store_true",
         help="Keep lr_ff, lr_fb, lr_lat, and lr_pv fixed at canonical values while sampling other parameters.",
+    )
+    parser.add_argument(
+        "--initial-weights-only",
+        action="store_true",
+        help="Only sample initial weight means; keep all scalar hyperparameters fixed at canonical values.",
     )
     parser.add_argument("--keep-init-sigma", action="store_true")
     parser.add_argument(
@@ -935,6 +971,7 @@ def main() -> None:
         weight_noise_floor=args.weight_noise_floor,
         scalar_noise_multiplier=args.scalar_noise_multiplier,
         freeze_learning_rates=args.freeze_learning_rates,
+        initial_weights_only=args.initial_weights_only,
         keep_init_sigma=args.keep_init_sigma,
         canonical_only=args.canonical_only,
         transition_sampling=args.transition_sampling,
