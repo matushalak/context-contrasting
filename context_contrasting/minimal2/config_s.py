@@ -37,7 +37,7 @@ broad = {
     "apical_gain_strength": 8.0,
     "apical_gain_k": 5.0,
     "apical_gain_threshold": 0.0,
-    "baseline_drive_sigma": 0.1,
+    "baseline_drive_sigma": 0.03,
     "pv_noise_sigma": 0.03,
     "alpha": 1.0,
     "weight_decay": 0.0,
@@ -50,20 +50,27 @@ broad = {
 # 0) weak FF & FB
 weak_FB = broad.copy()
 weak_FB.update({
-    "w_ff_init": {'mu': [0.2, 0.2, 0.2], 'sigma': 0},
-    "w_fb_init": {'mu': [0.35, 0.35, 0.35], 'sigma': 0},
-    "w_lat_init": {'mu': [0.01,], 'sigma': 0},
-    "w_pv_lat_init": {'mu': [0.1,], 'sigma': 0},
+    "w_ff_init": {'mu': [0.05, 0.05, 0.05], 'sigma': 0},
+    "w_fb_init": {'mu': [0.22, 0.22, 0.22], 'sigma': 0},
+    "W_pv_init": {'mu': [0.12, 0.12, 0.12], 'sigma': 0},
+    "w_lat_init": {'mu': [0.12,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.05,], 'sigma': 0},
+    "apical_drive_threshold": 0.22,
+    "apical_gain_strength": 8.0,
+    "baseline_drive_sigma": 0.03,
 })
 
 weak_FF = broad.copy()
 weak_FF.update({
-    "w_ff_init": {'mu': [0.2, 0.2, 0.2], 'sigma': 0},
-    "w_fb_init": {'mu': [0.35, 0.35, 0.35], 'sigma': 0},
-    "w_lat_init": {'mu': [0.01,], 'sigma': 0},
-    "w_pv_lat_init": {'mu': [0.1,], 'sigma': 0},
-    "FF_plasticity": False,
+    "w_ff_init": {'mu': [0.08, 0.08, 0.08], 'sigma': 0},
+    "w_fb_init": {'mu': [0.02, 0.02, 0.02], 'sigma': 0},
+    "W_pv_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "w_lat_init": {'mu': [0.02,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.02,], 'sigma': 0},
+    "ff_plasticity_scale": 0.003,
     "apical_drive_threshold": 1.2,
+    "apical_gain_strength": 18.0,
+    "baseline_drive_sigma": 0.03,
 })
 
 # 1) unresponsive -> unresponsive; ✅ (subthreshold only PV get stronger because just FF inhibition) 
@@ -74,6 +81,7 @@ nonresponder.update({
     "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
     # "w_lat_init": {'mu': [1.5,], 'sigma': 0},
     'W_pv_init': {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
+    'baseline_drive_sigma': 0.1,
     'receives_context': (False, False, False)
     })
 # [NOTE] Might need spiking models to capture sub-threshold behavior
@@ -88,7 +96,13 @@ nonresponder.update({
 # unresponsive probably because sub-threshold
 un_FB = nonresponder.copy()
 un_FB.update({'receives_context': (True, True, True),
-              "W_pv_init": {'mu': [0.3]*3, 'sigma': 0},
+              "w_fb_init": {'mu': [0.005, 0.005, 0.005], 'sigma': 0},
+              "W_pv_init": {'mu': [0.18]*3, 'sigma': 0},
+              "w_lat_init": {'mu': [0.4,], 'sigma': 0},
+              "w_pv_lat_init": {'mu': [0.1,], 'sigma': 0},
+              "apical_drive_threshold": 0.3,
+              "apical_gain_strength": 12.0,
+              "baseline_drive_sigma": 0.05,
             })
 
 # Unresponsive -> novel NO responsive via sub-drive apical gain.
@@ -97,19 +111,22 @@ un_FB.update({'receives_context': (True, True, True),
 # familiar and off-diagonal novel FB remain gain-only.
 un_novel_FF = nonresponder.copy()
 un_novel_FF.update({
-    "w_ff_init": {'mu': [0.01, 0.01, 0.95], 'sigma': 0},
-    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
-    "W_pv_init": {'mu': [0.65, 0.65, 1.0], 'sigma': 0},
-    "w_lat_init": {'mu': [0.75,], 'sigma': 0},
+    "w_ff_init": {'mu': [0.005, 0.005, 0.16], 'sigma': 0},
+    "w_fb_init": {'mu': [0.02, 0.02, 0.02], 'sigma': 0},
+    "W_pv_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "w_lat_init": {'mu': [0.03,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.03,], 'sigma': 0},
     "receives_context": (True, True, True),
-    "apical_drive_threshold": 0.2,
-    "apical_gain_strength": 28.0,
+    "ff_plasticity_scale": 0.003,
+    "apical_drive_threshold": 1.2,
+    "apical_gain_strength": 22.0,
+    "baseline_drive_sigma": 0.03,
 })
 
 # FF -> unresponsive; ✅ (simple) cells that don't receive context and only adapt
 FF_un = broad.copy()
 FF_un.update({
-    "w_ff_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
+    "w_ff_init": {'mu': [0.5, 0.5, 0.3], 'sigma': 0},
     "w_fb_init": {'mu': [1e-7, 1e-7, 1e-7], 'sigma': 0},
     "w_lat_init": {'mu': [0.1,], 'sigma': 0},
     'receives_context': (False, False, False)
@@ -118,47 +135,78 @@ FF_un.update({
 # FF -> FB ✅
 # broad - Familiar adapt and replaced by FB
 FF_FB_broad_novel = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
-# FF_FB_broad_novel.update({
-#     "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
-# })
+FF_FB_broad_novel.update({
+    "w_fb_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "W_pv_init": {'mu': [0.1, 0.1, 0.05], 'sigma': 0},
+    "w_lat_init": {'mu': [0.1,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.4,], 'sigma': 0},
+    "apical_drive_threshold": 0.3,
+    "apical_gain_strength": 8.0,
+    "baseline_drive_sigma": 0.03,
+})
 
 FF_FB_broad = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
 FF_FB_broad.update({
-    "w_ff_init": {'mu': [0.5, 0.5,0.01], 'sigma': 0},})
+    "w_ff_init": {'mu': [0.5, 0.5,0.01], 'sigma': 0},
+    "w_fb_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "W_pv_init": {'mu': [0.1, 0.1, 0.05], 'sigma': 0},
+    "w_lat_init": {'mu': [0.1,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.4,], 'sigma': 0},
+    "apical_drive_threshold": 0.3,
+    "apical_gain_strength": 8.0,
+    "baseline_drive_sigma": 0.03,
+})
 
 # narrow, familiar ✅
 narrow_familiar = broad.copy()
 narrow_familiar.update({
-    "w_ff_init": {'mu': [0.9, 0.01, 0.01], 'sigma': 0},
-    "w_lat_init": {'mu': [0.5,], 'sigma': 0},
+    "w_ff_init": {'mu': [0.45, 0.01, 0.01], 'sigma': 0},
+    "w_fb_init": {'mu': [0.02, 0.02, 0.02], 'sigma': 0},
+    "W_pv_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "w_lat_init": {'mu': [0.03,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.03,], 'sigma': 0},
+    "ff_plasticity_scale": 0.003,
+    "apical_drive_threshold": 1.15,
+    "apical_gain_strength": 18.0,
+    "baseline_drive_sigma": 0.03,
     })
 
 narrow_familiar_novel = narrow_familiar.copy()
 narrow_familiar_novel.update({
-    "w_ff_init": {'mu': [0.9, 0.01,0.9], 'sigma': 0},
-    # "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
+    "w_ff_init": {'mu': [0.45, 0.01, 0.45], 'sigma': 0},
+    "W_pv_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "w_lat_init": {'mu': [0.03,], 'sigma': 0},
+    "apical_drive_threshold": 1.15,
+    "apical_gain_strength": 18.0,
+    "baseline_drive_sigma": 0.03,
+})
+
+narrow_familiar_2 = narrow_familiar.copy()
+narrow_familiar_2.update({
+    "w_ff_init": {'mu': [0.01, 0.45, 0.01], 'sigma': 0},
+})
+
+narrow_familiar_2_novel = narrow_familiar_novel.copy()
+narrow_familiar_2_novel.update({
+    "w_ff_init": {'mu': [0.01, 0.45, 0.45], 'sigma': 0},
+    "W_pv_init": {'mu': [0.03, 0.08, 0.005], 'sigma': 0},
+    "w_lat_init": {'mu': [0.06,], 'sigma': 0},
 })
 
 # narrow novel ✅ strengthen FB to familiar context
 # also (less) strengthened FB to unfamiliar context + also enhanced novel response (due to no adaptation + FB boost)
 narrow_novel = broad.copy()
 narrow_novel.update({
-    "w_ff_init": {'mu': [0.01, 0.01, 0.9], 'sigma': 0},
-    # "W_pv_init": {'mu': [0.7, 0.7, 0.4], 'sigma': 0},
-    })
-
-# Weak FF -> stronger FF via learned FB gain, not FF anti-Hebbian release.
-# Feedforward weights are fixed; familiar FB remains gain-only, below direct-drive threshold.
-weak_FF_gain = broad.copy()
-weak_FF_gain.update({
-    "w_ff_init": {'mu': [0.12, 0.12, 0.01], 'sigma': 0},
-    "w_fb_init": {'mu': [0.01, 0.01, 0.01], 'sigma': 0},
-    "W_pv_init": {'mu': [0.05, 0.05, 0.4], 'sigma': 0},
-    "w_lat_init": {'mu': [0.01,], 'sigma': 0},
-    "w_pv_lat_init": {'mu': [0.1,], 'sigma': 0},
-    "FF_plasticity": False,
+    "w_ff_init": {'mu': [0.01, 0.01, 0.35], 'sigma': 0},
+    "w_fb_init": {'mu': [0.02, 0.02, 0.02], 'sigma': 0},
+    "W_pv_init": {'mu': [0.03, 0.03, 0.03], 'sigma': 0},
+    "w_lat_init": {'mu': [0.03,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.03,], 'sigma': 0},
+    "ff_plasticity_scale": 0.003,
     "apical_drive_threshold": 1.2,
-})
+    "apical_gain_strength": 20.0,
+    "baseline_drive_sigma": 0.03,
+    })
 
 # Overview
 # unresponsive -> unresponsive (subthreshold only PV get stronger because just FF inhibition)
@@ -174,27 +222,28 @@ weak_FF_gain.update({
 FB_FB = broad.copy()
 FB_FB.update({
     "w_ff_init": {'mu': [1e-7, 1e-7, 1e-7], 'sigma': 0},
-    "w_fb_init": {'mu': [0.5, 0.5, 0.5], 'sigma': 0},
+    "w_fb_init": {'mu': [0.9, 0.9, 0.9], 'sigma': 0},
     "w_lat_init": {'mu': [0.99,], 'sigma': 0},
     })
 
 minimal_configs = {
     'weak_FB': weak_FB,
     'weak_FF': weak_FF,
-    # "un_un": nonresponder,
-    # "un_FB": un_FB,
-    # "un_novel_FF": un_novel_FF,
-    # "weak_FF_gain": weak_FF_gain,
+    "un_un": nonresponder,
+    "un_FB": un_FB,
+    "un_novel_FF": un_novel_FF,
     
-    # "FF_un": FF_un,
+    "FF_un": FF_un,
     
-    # "FF_FB_broad":FF_FB_broad,
-    # "FF_FB_broad_novel": FF_FB_broad_novel,
-    # "FF_FB_narrow_familiar": narrow_familiar,
-    # "FF_FB_narrow_familiar_novel": narrow_familiar_novel,
-    # "FF_FB_narrow_novel": narrow_novel,
+    "FF_FB_broad":FF_FB_broad,
+    "FF_FB_broad_novel": FF_FB_broad_novel,
+    "FF_FB_narrow_familiar": narrow_familiar,
+    "FF_FB_narrow_familiar_2": narrow_familiar_2,
+    "FF_FB_narrow_familiar_novel": narrow_familiar_novel,
+    "FF_FB_narrow_familiar_2_novel": narrow_familiar_2_novel,
+    "FF_FB_narrow_novel": narrow_novel,
     
-    # "FB_FB": FB_FB
+    "FB_FB": FB_FB
 }
 
 minimal_configs3 = {

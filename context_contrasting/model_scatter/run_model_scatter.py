@@ -83,18 +83,24 @@ ADDITIVE_SCALAR_SPECS = {
 
 INIT_KEYS = ("w_ff_init", "w_fb_init", "w_lat_init", "w_pv_lat_init", "W_pv_init")
 LEARNING_RATE_KEYS = frozenset(("lr_ff", "lr_fb", "lr_lat", "lr_pv"))
+TIME_CONSTANT_KEYS = frozenset(("pyc_decay", "pv_decay"))
+ALWAYS_FIXED_SCALAR_KEYS = LEARNING_RATE_KEYS | TIME_CONSTANT_KEYS
 
 DATA_LIKE_TRANSITION_WEIGHTS = {
-    "un_un": 0.30,
-    "un_FB": 0.18,
-    "un_novel_FF": 0.07,
-    "FF_un": 0.14,
-    "FF_FB_broad": 0.06,
-    "FF_FB_broad_novel": 0.04,
-    "FF_FB_narrow_familiar": 0.07,
-    "FF_FB_narrow_familiar_novel": 0.05,
-    "FF_FB_narrow_novel": 0.04,
-    "FB_FB": 0.05,
+    "weak_FB": 0.040,
+    "weak_FF": 0.015,
+    "un_un": 0.407,
+    "un_FB": 0.055,
+    "un_novel_FF": 0.055,
+    "FF_un": 0.155,
+    "FF_FB_broad": 0.075,
+    "FF_FB_broad_novel": 0.085,
+    "FF_FB_narrow_familiar": 0.020,
+    "FF_FB_narrow_familiar_2": 0.020,
+    "FF_FB_narrow_familiar_novel": 0.015,
+    "FF_FB_narrow_familiar_2_novel": 0.015,
+    "FF_FB_narrow_novel": 0.025,
+    "FB_FB": 0.018,
 }
 
 
@@ -150,6 +156,333 @@ def _sample_init_dict(
     return sampled
 
 
+def _sample_cloud_values(
+    rng: np.random.Generator,
+    center: list[float],
+    *,
+    rel: float = 0.45,
+    floor: float = 0.015,
+    lower: float = 0.0,
+    upper: float = 1.0,
+) -> list[float]:
+    center_arr = np.asarray(center, dtype=float)
+    scale = np.maximum(np.abs(center_arr) * rel, floor)
+    sampled = np.clip(center_arr + rng.normal(0.0, scale, size=center_arr.shape), lower, upper)
+    return sampled.tolist()
+
+
+def _set_init(
+    config: dict[str, Any],
+    key: str,
+    mu: list[float],
+) -> None:
+    if key not in config:
+        return
+    config[key] = {"mu": [float(value) for value in mu], "sigma": 0.0}
+
+
+def _apply_naive_cloud_initial_weights(
+    sampled: dict[str, Any],
+    *,
+    canonical_name: str,
+    rng: np.random.Generator,
+) -> None:
+    """Tile naive response space directly instead of sampling around canonical weight centers."""
+    if canonical_name == "FF_un":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.52, 0.52, 0.30], rel=0.35, floor=0.06, upper=0.9),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.001, 0.001, 0.001], floor=0.002, upper=0.02))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.06], rel=0.45, floor=0.02, upper=0.2))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.08], rel=0.45, floor=0.025, upper=0.25))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.01, 0.01, 0.01], floor=0.01, upper=0.06))
+        return
+
+    if canonical_name == "un_novel_FF":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.003, 0.003, 0.12], rel=0.35, floor=0.006, upper=0.18),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.012, 0.012, 0.02], rel=0.45, floor=0.003, upper=0.045))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.03, 0.03, 0.03], rel=0.45, floor=0.012, upper=0.12))
+        return
+
+    if canonical_name == "un_FB":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.012, 0.012, 0.012], rel=0.65, floor=0.012, upper=0.055),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.008, 0.008, 0.008], rel=0.65, floor=0.006, upper=0.05))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.35], rel=0.30, floor=0.04, upper=0.60))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.10], rel=0.45, floor=0.025, upper=0.22))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.34, 0.34, 0.34], rel=0.30, floor=0.05, upper=0.60))
+        return
+
+    if canonical_name == "weak_FB":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.05, 0.05, 0.05], rel=0.45, floor=0.012, upper=0.12),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.22, 0.22, 0.22], rel=0.35, floor=0.02, upper=0.4))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.12], rel=0.35, floor=0.02, upper=0.28))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.05], rel=0.45, floor=0.015, upper=0.16))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.12, 0.12, 0.12], rel=0.45, floor=0.02, upper=0.28))
+        return
+
+    if canonical_name == "weak_FF":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.08, 0.006, 0.006], rel=0.35, floor=0.006, upper=0.14),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.02, 0.02, 0.02], rel=0.5, floor=0.004, upper=0.06))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.02], rel=0.45, floor=0.008, upper=0.08))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.02], rel=0.45, floor=0.008, upper=0.08))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.03, 0.03, 0.03], rel=0.45, floor=0.012, upper=0.12))
+        return
+
+    if canonical_name == "FF_FB_broad":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.54, 0.54, 0.005], rel=0.22, floor=0.02, upper=0.78),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.04, 0.04, 0.025], rel=0.35, floor=0.005, upper=0.09))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.08], rel=0.35, floor=0.015, upper=0.22))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.05], rel=0.45, floor=0.015, upper=0.16))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.08, 0.08, 0.03], rel=0.35, floor=0.015, upper=0.22))
+        return
+
+    if canonical_name == "FF_FB_broad_novel":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.54, 0.54, 0.50], rel=0.22, floor=0.02, upper=0.78),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.04, 0.04, 0.035], rel=0.35, floor=0.005, upper=0.09))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.08], rel=0.35, floor=0.015, upper=0.22))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.05], rel=0.45, floor=0.015, upper=0.16))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.08, 0.08, 0.03], rel=0.35, floor=0.015, upper=0.22))
+        return
+
+    if canonical_name in {"FF_FB_narrow_familiar", "FF_FB_narrow_familiar_2"}:
+        preferred = [0.45, 0.01, 0.01] if canonical_name == "FF_FB_narrow_familiar" else [0.01, 0.45, 0.01]
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, preferred, rel=0.30, floor=0.015, upper=0.7),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.02, 0.02, 0.02], rel=0.5, floor=0.004, upper=0.06))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.03, 0.03, 0.03], rel=0.45, floor=0.012, upper=0.12))
+        return
+
+    if canonical_name in {"FF_FB_narrow_familiar_novel", "FF_FB_narrow_familiar_2_novel"}:
+        preferred = [0.45, 0.01, 0.45] if canonical_name == "FF_FB_narrow_familiar_novel" else [0.01, 0.45, 0.45]
+        pv_center = [0.03, 0.03, 0.03] if canonical_name == "FF_FB_narrow_familiar_novel" else [0.03, 0.08, 0.005]
+        lat_center = [0.03] if canonical_name == "FF_FB_narrow_familiar_novel" else [0.06]
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, preferred, rel=0.30, floor=0.015, upper=0.7),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.02, 0.02, 0.02], rel=0.5, floor=0.004, upper=0.06))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, lat_center, rel=0.45, floor=0.012, upper=0.16))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, pv_center, rel=0.45, floor=0.012, upper=0.16))
+        return
+
+    if canonical_name == "FF_FB_narrow_novel":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.003, 0.003, 0.35], rel=0.24, floor=0.006, upper=0.58),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.012, 0.012, 0.02], rel=0.45, floor=0.003, upper=0.045))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.03], rel=0.45, floor=0.012, upper=0.12))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.03, 0.03, 0.03], rel=0.45, floor=0.012, upper=0.12))
+        return
+
+    if canonical_name == "FB_FB":
+        _set_init(
+            sampled,
+            "w_ff_init",
+            _sample_cloud_values(rng, [0.01, 0.01, 0.01], rel=0.6, floor=0.01, upper=0.05),
+        )
+        _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.22, 0.22, 0.22], rel=0.40, floor=0.03, upper=0.55))
+        _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.55], rel=0.35, floor=0.06, upper=1.2))
+        _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.55], rel=0.35, floor=0.06, upper=1.2))
+        _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.22, 0.22, 0.22], rel=0.35, floor=0.05, upper=0.65))
+        sampled["apical_drive_threshold"] = min(float(sampled.get("apical_drive_threshold", 0.3)), 0.25)
+        return
+
+    _set_init(
+        sampled,
+        "w_ff_init",
+        _sample_cloud_values(rng, [0.01, 0.01, 0.01], rel=0.65, floor=0.012, upper=0.05),
+    )
+    _set_init(sampled, "w_fb_init", _sample_cloud_values(rng, [0.004, 0.004, 0.004], rel=0.65, floor=0.005, upper=0.035))
+    _set_init(sampled, "w_lat_init", _sample_cloud_values(rng, [0.04], rel=0.6, floor=0.02, upper=0.15))
+    _set_init(sampled, "w_pv_lat_init", _sample_cloud_values(rng, [0.08], rel=0.5, floor=0.025, upper=0.2))
+    _set_init(sampled, "W_pv_init", _sample_cloud_values(rng, [0.12, 0.12, 0.12], rel=0.45, floor=0.04, upper=0.35))
+
+
+def _constrain_gain_only_ff_branch(sampled: dict[str, Any]) -> None:
+    """Keep weak-FF branch in the gain-only regime: +NO without +O."""
+    if "w_ff_init" in sampled:
+        w_ff = np.asarray(sampled["w_ff_init"]["mu"], dtype=float)
+        lower = np.asarray([0.02, 0.0, 0.0], dtype=float)
+        upper = np.asarray([0.14, 0.018, 0.018], dtype=float)
+        _set_init(sampled, "w_ff_init", np.clip(w_ff, lower, upper).tolist())
+    if "w_fb_init" in sampled:
+        w_fb = np.asarray(sampled["w_fb_init"]["mu"], dtype=float)
+        _set_init(sampled, "w_fb_init", np.clip(w_fb, 0.0, 0.06).tolist())
+    sampled.pop("FF_plasticity", None)
+    sampled["ff_plasticity_scale"] = min(float(sampled.get("ff_plasticity_scale", 0.003)), 0.01)
+    sampled["apical_drive_threshold"] = max(float(sampled.get("apical_drive_threshold", 1.2)), 1.2)
+    sampled["apical_gain_strength"] = _clip(float(sampled.get("apical_gain_strength", 18.0)), 14.0, 30.0)
+
+
+def _constrain_novel_ff_branch(sampled: dict[str, Any]) -> None:
+    """Keep the novel-specific weak FF branch as a novel +NO mover."""
+    if "w_ff_init" in sampled:
+        w_ff = np.asarray(sampled["w_ff_init"]["mu"], dtype=float)
+        lower = np.asarray([0.0, 0.0, 0.055], dtype=float)
+        upper = np.asarray([0.014, 0.014, 0.18], dtype=float)
+        _set_init(sampled, "w_ff_init", np.clip(w_ff, lower, upper).tolist())
+    if "w_fb_init" in sampled:
+        w_fb = np.asarray(sampled["w_fb_init"]["mu"], dtype=float)
+        lower = np.asarray([0.0, 0.0, 0.0], dtype=float)
+        upper = np.asarray([0.026, 0.026, 0.045], dtype=float)
+        _set_init(sampled, "w_fb_init", np.clip(w_fb, lower, upper).tolist())
+    if "W_pv_init" in sampled:
+        w_pv = np.asarray(sampled["W_pv_init"]["mu"], dtype=float)
+        lower = np.asarray([0.0, 0.0, 0.0], dtype=float)
+        upper = np.asarray([0.12, 0.12, 0.12], dtype=float)
+        _set_init(sampled, "W_pv_init", np.clip(w_pv, lower, upper).tolist())
+    if "w_lat_init" in sampled:
+        w_lat = np.asarray(sampled["w_lat_init"]["mu"], dtype=float)
+        _set_init(sampled, "w_lat_init", np.clip(w_lat, 0.0, 0.12).tolist())
+    sampled["ff_plasticity_scale"] = 0.0
+    sampled["apical_drive_threshold"] = max(float(sampled.get("apical_drive_threshold", 1.2)), 1.2)
+    sampled["apical_gain_strength"] = _clip(float(sampled.get("apical_gain_strength", 22.0)), 16.0, 40.0)
+
+
+FF_TO_FB_TRANSITIONS = frozenset(
+    (
+        "FF_FB_broad",
+        "FF_FB_broad_novel",
+        "FF_FB_narrow_familiar",
+        "FF_FB_narrow_familiar_2",
+        "FF_FB_narrow_familiar_novel",
+        "FF_FB_narrow_familiar_2_novel",
+        "FF_FB_narrow_novel",
+    )
+)
+
+
+def _clip_init_lower(
+    config: dict[str, Any],
+    key: str,
+    lower: list[float],
+) -> None:
+    if key not in config:
+        return
+    mu = np.asarray(config[key]["mu"], dtype=float)
+    lower_arr = np.asarray(lower, dtype=float)
+    if lower_arr.size == 1 and mu.size > 1:
+        lower_arr = np.repeat(lower_arr, mu.size)
+    _set_init(config, key, np.maximum(mu, lower_arr).tolist())
+
+
+def _clip_init_bounds(
+    config: dict[str, Any],
+    key: str,
+    lower: list[float],
+    upper: list[float],
+) -> None:
+    if key not in config:
+        return
+    mu = np.asarray(config[key]["mu"], dtype=float)
+    lower_arr = np.asarray(lower, dtype=float)
+    upper_arr = np.asarray(upper, dtype=float)
+    if lower_arr.size == 1 and mu.size > 1:
+        lower_arr = np.repeat(lower_arr, mu.size)
+    if upper_arr.size == 1 and mu.size > 1:
+        upper_arr = np.repeat(upper_arr, mu.size)
+    _set_init(config, key, np.clip(mu, lower_arr, upper_arr).tolist())
+
+
+def _constrain_ff_to_fb_branch(sampled: dict[str, Any], canonical_name: str) -> None:
+    """Keep FF->FB noisy samples out of the expert NO+O co-responsive quadrant."""
+    if canonical_name == "FF_FB_broad":
+        _clip_init_bounds(sampled, "w_ff_init", [0.38, 0.38, 0.0], [0.78, 0.78, 0.025])
+        _clip_init_bounds(sampled, "w_fb_init", [0.018, 0.018, 0.0], [0.09, 0.09, 0.05])
+        _clip_init_bounds(sampled, "w_lat_init", [0.02], [0.3])
+        _clip_init_bounds(sampled, "W_pv_init", [0.01, 0.01, 0.0], [0.22, 0.22, 0.08])
+        sampled["ff_plasticity_scale"] = max(float(sampled.get("ff_plasticity_scale", 1.0)), 1.35)
+        sampled["apical_drive_threshold"] = 0.26
+        sampled["apical_gain_strength"] = _clip(float(sampled.get("apical_gain_strength", 8.0)), 5.0, 10.5)
+        sampled["baseline_drive_sigma"] = max(float(sampled.get("baseline_drive_sigma", 0.03)), 0.03)
+        return
+
+    if canonical_name == "FF_FB_broad_novel":
+        _clip_init_bounds(sampled, "w_ff_init", [0.36, 0.36, 0.32], [0.78, 0.78, 0.76])
+        _clip_init_bounds(sampled, "w_fb_init", [0.018, 0.018, 0.012], [0.09, 0.09, 0.08])
+        _clip_init_bounds(sampled, "w_lat_init", [0.02], [0.3])
+        _clip_init_bounds(sampled, "W_pv_init", [0.01, 0.01, 0.0], [0.22, 0.22, 0.08])
+        sampled["ff_plasticity_scale"] = max(float(sampled.get("ff_plasticity_scale", 1.0)), 1.25)
+        sampled["apical_drive_threshold"] = _clip(float(sampled.get("apical_drive_threshold", 0.3)), 0.22, 0.34)
+        sampled["apical_gain_strength"] = _clip(float(sampled.get("apical_gain_strength", 8.0)), 5.0, 11.0)
+        sampled["baseline_drive_sigma"] = max(float(sampled.get("baseline_drive_sigma", 0.03)), 0.03)
+        return
+
+    if canonical_name in {"FF_FB_narrow_familiar", "FF_FB_narrow_familiar_2"}:
+        if canonical_name == "FF_FB_narrow_familiar":
+            _clip_init_bounds(sampled, "w_ff_init", [0.24, 0.0, 0.0], [0.68, 0.022, 0.018])
+        else:
+            _clip_init_bounds(sampled, "w_ff_init", [0.0, 0.24, 0.0], [0.022, 0.68, 0.018])
+        _clip_init_bounds(sampled, "w_lat_init", [0.0], [0.12])
+        _clip_init_bounds(sampled, "W_pv_init", [0.0, 0.0, 0.0], [0.12, 0.12, 0.12])
+        sampled["ff_plasticity_scale"] = min(float(sampled.get("ff_plasticity_scale", 0.003)), 0.01)
+        sampled["apical_drive_threshold"] = max(float(sampled.get("apical_drive_threshold", 1.15)), 1.1)
+        sampled["apical_gain_strength"] = max(float(sampled.get("apical_gain_strength", 18.0)), 16.0)
+        sampled["baseline_drive_sigma"] = max(float(sampled.get("baseline_drive_sigma", 0.03)), 0.03)
+        return
+
+    if canonical_name in {"FF_FB_narrow_familiar_novel", "FF_FB_narrow_familiar_2_novel"}:
+        if canonical_name == "FF_FB_narrow_familiar_novel":
+            _clip_init_bounds(sampled, "w_ff_init", [0.24, 0.0, 0.24], [0.68, 0.022, 0.68])
+        else:
+            _clip_init_bounds(sampled, "w_ff_init", [0.0, 0.24, 0.24], [0.022, 0.68, 0.68])
+        _clip_init_bounds(sampled, "w_lat_init", [0.0], [0.16])
+        _clip_init_bounds(sampled, "W_pv_init", [0.0, 0.0, 0.0], [0.16, 0.16, 0.16])
+        sampled["ff_plasticity_scale"] = min(float(sampled.get("ff_plasticity_scale", 0.003)), 0.01)
+        sampled["apical_drive_threshold"] = max(float(sampled.get("apical_drive_threshold", 1.15)), 1.1)
+        sampled["apical_gain_strength"] = max(float(sampled.get("apical_gain_strength", 18.0)), 16.0)
+        sampled["baseline_drive_sigma"] = max(float(sampled.get("baseline_drive_sigma", 0.03)), 0.03)
+        return
+
+    if canonical_name == "FF_FB_narrow_novel":
+        _clip_init_bounds(sampled, "w_ff_init", [0.0, 0.0, 0.20], [0.014, 0.014, 0.58])
+        _clip_init_bounds(sampled, "w_fb_init", [0.0, 0.0, 0.0], [0.026, 0.026, 0.045])
+        _clip_init_bounds(sampled, "w_lat_init", [0.0], [0.12])
+        _clip_init_bounds(sampled, "W_pv_init", [0.0, 0.0, 0.0], [0.12, 0.12, 0.12])
+        sampled["ff_plasticity_scale"] = 0.0
+        sampled["apical_drive_threshold"] = max(float(sampled.get("apical_drive_threshold", 1.2)), 1.2)
+        sampled["apical_gain_strength"] = max(float(sampled.get("apical_gain_strength", 20.0)), 18.0)
+        sampled["baseline_drive_sigma"] = max(float(sampled.get("baseline_drive_sigma", 0.03)), 0.03)
+
+
 def sample_config_around_canonical(
     canonical_name: str,
     canonical_config: dict[str, Any],
@@ -164,21 +497,31 @@ def sample_config_around_canonical(
     freeze_learning_rates: bool,
     initial_weights_only: bool,
     keep_init_sigma: bool,
+    initial_condition_mode: str,
 ) -> dict[str, Any]:
     sampled = copy.deepcopy(canonical_config)
 
-    for key in INIT_KEYS:
-        if key in sampled:
-            sampled[key] = _sample_init_dict(
-                sampled[key],
-                rng=rng,
-                weight_noise_rel=weight_noise_rel,
-                weight_noise_floor=weight_noise_floor,
-                keep_init_sigma=keep_init_sigma,
-            )
+    if initial_condition_mode == "naive-cloud":
+        _apply_naive_cloud_initial_weights(sampled, canonical_name=canonical_name, rng=rng)
+    elif initial_condition_mode == "canonical-neighborhood":
+        for key in INIT_KEYS:
+            if key in sampled:
+                sampled[key] = _sample_init_dict(
+                    sampled[key],
+                    rng=rng,
+                    weight_noise_rel=weight_noise_rel,
+                    weight_noise_floor=weight_noise_floor,
+                    keep_init_sigma=keep_init_sigma,
+                )
+        if canonical_name == "weak_FF":
+            _constrain_gain_only_ff_branch(sampled)
+    else:
+        raise ValueError("initial_condition_mode must be 'naive-cloud' or 'canonical-neighborhood'.")
 
     for key, spec in POSITIVE_SCALAR_SPECS.items():
         if initial_weights_only:
+            continue
+        if key in ALWAYS_FIXED_SCALAR_KEYS:
             continue
         if freeze_learning_rates and key in LEARNING_RATE_KEYS:
             continue
@@ -201,6 +544,13 @@ def sample_config_around_canonical(
                 scalar_noise_multiplier=scalar_noise_multiplier,
             )
 
+    if canonical_name == "weak_FF":
+        _constrain_gain_only_ff_branch(sampled)
+    if canonical_name == "un_novel_FF":
+        _constrain_novel_ff_branch(sampled)
+    if canonical_name in FF_TO_FB_TRANSITIONS:
+        _constrain_ff_to_fb_branch(sampled, canonical_name)
+
     sampled["seed"] = int(seed)
     sampled["_canonical_transition"] = canonical_name
     sampled["_sample_idx"] = int(sample_idx)
@@ -220,6 +570,7 @@ def sample_configs(
     initial_weights_only: bool,
     keep_init_sigma: bool,
     transition_sampling: str,
+    initial_condition_mode: str,
 ) -> list[dict[str, Any]]:
     transition_counts = _transition_sample_counts(
         canonical_configs,
@@ -247,6 +598,7 @@ def sample_configs(
                     freeze_learning_rates=freeze_learning_rates,
                     initial_weights_only=initial_weights_only,
                     keep_init_sigma=keep_init_sigma,
+                    initial_condition_mode=initial_condition_mode,
                 )
             )
             global_idx += 1
@@ -306,8 +658,8 @@ def _sampling_mode_name(
     if initial_weights_only:
         return "initial_weights_only"
     if freeze_learning_rates:
-        return "fixed_lrs"
-    return "vary_lrs"
+        return "sampled_scalars_fixed_dynamics"
+    return "sampled_scalars_fixed_dynamics"
 
 
 def _model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
@@ -651,6 +1003,154 @@ def _summaries_outside_limits(
     return pd.concat(frames, ignore_index=True)
 
 
+def _paper_separation_index(
+    points: DataFrame,
+    *,
+    n_permutations: int,
+    rng: np.random.Generator,
+    std_multiplier: float = 0.75,
+) -> dict[str, float | int]:
+    x = points["NO"].to_numpy(dtype=float)
+    y = points["O"].to_numpy(dtype=float)
+    finite = np.isfinite(x) & np.isfinite(y)
+    x = x[finite]
+    y = y[finite]
+    n = int(x.size)
+
+    if n < 2:
+        return {
+            "n": n,
+            "x_edge": np.nan,
+            "y_edge": np.nan,
+            "real_count": 0,
+            "perm_count_mean": np.nan,
+            "perm_count_std": np.nan,
+            "separation_index_raw": np.nan,
+            "separation_index": np.nan,
+            "p_lower": np.nan,
+            "correlation": np.nan,
+        }
+
+    x_edge = float(np.nanmean(x) + std_multiplier * np.nanstd(x, ddof=1))
+    y_edge = float(np.nanmean(y) + std_multiplier * np.nanstd(y, ddof=1))
+    real_count = int(np.sum((x > x_edge) & (y > y_edge)))
+
+    perm_counts = np.empty(n_permutations, dtype=float)
+    for idx in range(n_permutations):
+        x_perm = rng.permutation(x)
+        y_perm = rng.permutation(y)
+        perm_counts[idx] = np.sum((x_perm > x_edge) & (y_perm > y_edge))
+
+    perm_mean = float(np.nanmean(perm_counts))
+    if perm_mean <= 0.0 or not np.isfinite(perm_mean):
+        separation_index_raw = np.nan
+        separation_index = np.nan
+    else:
+        separation_index_raw = float(1.0 - (real_count / perm_mean))
+        separation_index = float(max(-1.0, separation_index_raw))
+
+    if np.nanstd(x) <= 0.0 or np.nanstd(y) <= 0.0:
+        correlation = np.nan
+    else:
+        correlation = float(np.corrcoef(x, y)[0, 1])
+
+    return {
+        "n": n,
+        "x_edge": x_edge,
+        "y_edge": y_edge,
+        "real_count": real_count,
+        "perm_count_mean": perm_mean,
+        "perm_count_std": float(np.nanstd(perm_counts, ddof=1)) if n_permutations > 1 else np.nan,
+        "separation_index_raw": separation_index_raw,
+        "separation_index": separation_index,
+        "p_lower": float((np.sum(perm_counts <= real_count) + 1) / (n_permutations + 1)),
+        "correlation": correlation,
+    }
+
+
+def _separation_points(
+    wide_table: DataFrame,
+    *,
+    image_group: str | None,
+    transition: str | None,
+) -> DataFrame:
+    frame = wide_table.copy()
+    if image_group is not None:
+        frame = frame.loc[frame["image_group"] == image_group].copy()
+    if transition is not None:
+        frame = frame.loc[frame["transition"] == transition].copy()
+    if frame.empty:
+        return frame
+    return (
+        frame.groupby(["neuron_idx", "stage"], observed=True, as_index=False)[["NO", "O"]]
+        .mean()
+    )
+
+
+def save_separation_index_tables(
+    transition_table: DataFrame,
+    *,
+    output_dir: Path,
+    transition_order: list[str],
+    n_permutations: int,
+    seed: int,
+) -> None:
+    summaries_dir = output_dir / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+
+    wide_table = _to_wide_transition_table(transition_table)
+    stage_order = wide_table["stage"].astype(str).drop_duplicates().tolist()
+    image_group_scopes: tuple[tuple[str, str | None], ...] = (
+        ("all", None),
+        ("familiar", "familiar"),
+        ("novel", "novel"),
+    )
+    transition_scopes: list[tuple[str, str | None]] = [("all", None)] + [
+        (transition, transition) for transition in transition_order
+    ]
+
+    rng = np.random.default_rng(seed)
+    rows: list[dict[str, Any]] = []
+    for transition_label, transition in transition_scopes:
+        for image_group_label, image_group in image_group_scopes:
+            points = _separation_points(
+                wide_table,
+                image_group=image_group,
+                transition=transition,
+            )
+            if points.empty:
+                continue
+            for stage in stage_order:
+                stage_points = points.loc[points["stage"].astype(str) == stage, ["NO", "O"]].copy()
+                result = _paper_separation_index(
+                    stage_points,
+                    n_permutations=n_permutations,
+                    rng=rng,
+                )
+                rows.append(
+                    {
+                        "transition": transition_label,
+                        "image_group": image_group_label,
+                        "stage": stage,
+                        "n_permutations": n_permutations,
+                        **result,
+                    }
+                )
+
+    if not rows:
+        return
+
+    index_df = pd.DataFrame(rows)
+    index_df.loc[index_df["transition"] == "all"].to_csv(
+        summaries_dir / "separation_index.csv",
+        index=False,
+    )
+    index_df.loc[index_df["transition"] != "all"].to_csv(
+        summaries_dir / "separation_index_by_transition.csv",
+        index=False,
+    )
+
+
 def _save_summary_figure(
     summary: DataFrame,
     *,
@@ -787,6 +1287,9 @@ def run_model_scatter(
     output_dir: Path,
     samples_per_transition: int,
     n_steps_per_phase: int,
+    test_trials: int,
+    training_trials: int,
+    test_steps_per_phase: int | None = None,
     seed: int,
     n_jobs: int,
     weight_noise_rel: float,
@@ -797,15 +1300,28 @@ def run_model_scatter(
     initial_weights_only: bool,
     canonical_only: bool,
     transition_sampling: str,
+    initial_condition_mode: str,
     zscore_responses: bool,
     response_tail_fraction: float,
     threshold: float,
     limit_percentile: float,
+    separation_index_permutations: int,
     plot_by_transition: bool,
     export_panels: bool,
 ) -> None:
     if not 0.0 < response_tail_fraction <= 1.0:
         raise ValueError("response_tail_fraction must be in (0, 1].")
+    if separation_index_permutations < 1:
+        raise ValueError("separation_index_permutations must be >= 1.")
+    if n_steps_per_phase < 4:
+        raise ValueError("n_steps_per_phase must be >= 4.")
+    if test_steps_per_phase is not None and test_steps_per_phase != n_steps_per_phase:
+        raise ValueError(
+            "--test-steps-per-phase is no longer supported as a speed knob; "
+            "probe steps must match --n-steps-per-phase. Reduce --test-trials instead."
+        )
+    if test_trials < 1 or training_trials < 1:
+        raise ValueError("test_trials and training_trials must be >= 1.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     transition_order = list(minimal_configs3)
@@ -824,6 +1340,7 @@ def run_model_scatter(
             initial_weights_only=initial_weights_only,
             keep_init_sigma=keep_init_sigma,
             transition_sampling=transition_sampling,
+            initial_condition_mode=initial_condition_mode,
         )
         transition_counts = _transition_sample_counts(
             minimal_configs3,
@@ -832,8 +1349,8 @@ def run_model_scatter(
         )
 
     torch.manual_seed(seed)
-    test_stimuli = _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=10)
-    training_stimuli = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=5)
+    test_stimuli = _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials)
+    training_stimuli = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
 
     response_frames = Parallel(n_jobs=n_jobs, verbose=10 if n_jobs != 1 else 0)(
         delayed(run_sampled_config)(
@@ -866,28 +1383,35 @@ def run_model_scatter(
         "n_invalid_response_rows": int(len(invalid_responses)),
         "n_invalid_sample_ids": int(invalid_responses["neuron_idx"].nunique()) if not invalid_responses.empty else 0,
         "n_steps_per_phase": n_steps_per_phase,
+        "test_steps_per_phase": n_steps_per_phase,
+        "test_trials": test_trials,
+        "training_trials": training_trials,
         "seed": seed,
         "weight_noise_rel": weight_noise_rel,
         "weight_noise_floor": weight_noise_floor,
         "scalar_noise_multiplier": scalar_noise_multiplier,
         "freeze_learning_rates": freeze_learning_rates,
+        "always_fixed_scalar_keys": sorted(ALWAYS_FIXED_SCALAR_KEYS),
         "initial_weights_only": initial_weights_only,
         "sampling_mode": _sampling_mode_name(
             canonical_only=canonical_only,
             initial_weights_only=initial_weights_only,
             freeze_learning_rates=freeze_learning_rates,
         ),
-        "varied_learning_rates": not freeze_learning_rates and not initial_weights_only and not canonical_only,
+        "varied_learning_rates": False,
+        "varied_time_constants": False,
         "varied_scalar_hyperparameters": not initial_weights_only and not canonical_only,
         "keep_init_sigma": keep_init_sigma,
         "canonical_only": canonical_only,
         "transition_sampling": transition_sampling,
+        "initial_condition_mode": initial_condition_mode,
         "transition_sample_counts": transition_counts,
         "response_units": "zscore" if zscore_responses else "raw",
         "zscore_responses": zscore_responses,
         "response_tail_fraction": response_tail_fraction,
         "sector_threshold": threshold,
         "limit_percentile": limit_percentile,
+        "separation_index_permutations": separation_index_permutations,
         "transitions": transition_order,
         "stimulus_specs": STIMULUS_SPECS,
     }
@@ -902,6 +1426,13 @@ def run_model_scatter(
         plot_by_transition=plot_by_transition,
         export_panels=export_panels,
     )
+    save_separation_index_tables(
+        transition_table,
+        output_dir=output_dir,
+        transition_order=transition_order,
+        n_permutations=separation_index_permutations,
+        seed=seed,
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -913,7 +1444,15 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--samples-per-transition", type=int, default=96)
-    parser.add_argument("--n-steps-per-phase", type=int, default=100)
+    parser.add_argument("--n-steps-per-phase", type=int, default=400)
+    parser.add_argument(
+        "--test-steps-per-phase",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--test-trials", type=int, default=5)
+    parser.add_argument("--training-trials", type=int, default=5)
     parser.add_argument("--seed", type=int, default=20260604)
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument("--weight-noise-rel", type=float, default=0.55)
@@ -922,7 +1461,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--freeze-learning-rates",
         action="store_true",
-        help="Keep lr_ff, lr_fb, lr_lat, and lr_pv fixed at canonical values while sampling other parameters.",
+        help="Deprecated compatibility flag. Learning rates are fixed across samples by default.",
     )
     parser.add_argument(
         "--initial-weights-only",
@@ -942,17 +1481,29 @@ def _parse_args() -> argparse.Namespace:
         help="How to allocate noisy samples across canonical transition configs.",
     )
     parser.add_argument(
+        "--initial-condition-mode",
+        choices=("naive-cloud", "canonical-neighborhood"),
+        default="naive-cloud",
+        help="How to sample initial weights around transition mechanisms.",
+    )
+    parser.add_argument(
         "--raw-responses",
         action="store_true",
         help="Use raw model activation responses instead of baseline z-scored responses.",
     )
     parser.add_argument("--response-tail-fraction", type=float, default=1.0)
-    parser.add_argument("--threshold", type=float, default=0.2)
+    parser.add_argument("--threshold", type=float, default=0.3)
     parser.add_argument(
         "--limit-percentile",
         type=float,
         default=99.0,
         help="Percentile used for plot axis limits; set to 100 for full data extents.",
+    )
+    parser.add_argument(
+        "--separation-index-permutations",
+        type=int,
+        default=10000,
+        help="Permutation count for the paper-style NO/O separation index.",
     )
     parser.add_argument("--skip-by-transition", action="store_true")
     parser.add_argument("--export-panels", action="store_true")
@@ -965,6 +1516,9 @@ def main() -> None:
         output_dir=args.output_dir,
         samples_per_transition=args.samples_per_transition,
         n_steps_per_phase=args.n_steps_per_phase,
+        test_trials=args.test_trials,
+        training_trials=args.training_trials,
+        test_steps_per_phase=args.test_steps_per_phase,
         seed=args.seed,
         n_jobs=args.n_jobs,
         weight_noise_rel=args.weight_noise_rel,
@@ -975,10 +1529,12 @@ def main() -> None:
         keep_init_sigma=args.keep_init_sigma,
         canonical_only=args.canonical_only,
         transition_sampling=args.transition_sampling,
+        initial_condition_mode=args.initial_condition_mode,
         zscore_responses=not args.raw_responses,
         response_tail_fraction=args.response_tail_fraction,
         threshold=args.threshold,
         limit_percentile=args.limit_percentile,
+        separation_index_permutations=args.separation_index_permutations,
         plot_by_transition=not args.skip_by_transition,
         export_panels=args.export_panels,
     )

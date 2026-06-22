@@ -34,28 +34,34 @@ PLOT_COLORS = {
     "No fb/no LAT": "darkorange",
 }
 TRANSITION_ORDER = [
+    "weak_FB",
+    "weak_FF",
     "un_un",
     "un_FB",
     "un_novel_FF",
-    "weak_FF_gain",
     "FF_un",
     "FF_FB_broad",
     "FF_FB_broad_novel",
     "FF_FB_narrow_familiar",
+    "FF_FB_narrow_familiar_2",
     "FF_FB_narrow_familiar_novel",
+    "FF_FB_narrow_familiar_2_novel",
     "FF_FB_narrow_novel",
     "FB_FB",
 ]
 TRANSITION_LABELS = {
+    "weak_FB": "weak broad\nFF/FB -> FB",
+    "weak_FF": "weak narrow\nFF gain",
     "un_un": "un -> un",
     "un_FB": "un -> FB",
     "un_novel_FF": "un -> novel NO",
-    "weak_FF_gain": "weak FF -> FF gain",
     "FF_un": "FF -> un",
     "FF_FB_broad": "FF -> FB\n(broad)",
-    "FF_FB_broad_novel": "FF_FB_broad_novel",
+    "FF_FB_broad_novel": "FF -> FB\n(broad+novel)",
     "FF_FB_narrow_familiar": "FF -> FB\n(narrow fam)",
-    "FF_FB_narrow_familiar_novel": "FF_FB_narrow_familiar_novel",
+    "FF_FB_narrow_familiar_2": "FF -> FB\n(narrow fam 2)",
+    "FF_FB_narrow_familiar_novel": "FF gain\n(narrow fam+nov)",
+    "FF_FB_narrow_familiar_2_novel": "FF gain\n(narrow fam2+nov)",
     "FF_FB_narrow_novel": "FF -> FB\n(narrow nov)",
     "FB_FB": "FB -> FB",
 }
@@ -111,6 +117,13 @@ TRANSITION_RESPONSE_COLUMN_SPECS = (
         "phase": "expert",
         "no_trace": "nolat",
         "o_trace": "occlusion_nolat",
+    },
+    {
+        "key": "expert_no_fb_no_lat",
+        "label": "Expert no FB/no LAT",
+        "phase": "expert",
+        "no_trace": "no_context_nolat",
+        "o_trace": "occlusion_no_context_nolat",
     },
 )
 IMAGE_LABELS = {"familiar": "Familiar Image", "novel": "Novel Image"}
@@ -332,6 +345,40 @@ def _extract_repeated_y(
     return cell.sort_values("step")["y"].to_numpy(dtype=float)
 
 
+def _build_trace_series_lookup(long_df: DataFrame) -> dict[tuple[str, str, str], np.ndarray]:
+    required = {"condition", "experiment_phase", "image_type", "step", "y"}
+    if not required.issubset(long_df.columns):
+        return {}
+
+    trace_df = (
+        long_df[["condition", "experiment_phase", "image_type", "step", "y"]]
+        .drop_duplicates()
+        .sort_values(["condition", "experiment_phase", "image_type", "step"])
+    )
+    return {
+        (str(condition), str(phase), str(image_type)): group["y"].to_numpy(dtype=float)
+        for (condition, phase, image_type), group in trace_df.groupby(
+            ["condition", "experiment_phase", "image_type"],
+            sort=False,
+            observed=True,
+        )
+    }
+
+
+def _lookup_repeated_y(
+    long_df: DataFrame,
+    *,
+    condition: str,
+    phase: str,
+    image_type: str,
+    series_lookup: dict[tuple[str, str, str], np.ndarray] | None = None,
+) -> np.ndarray:
+    key = (str(condition), str(phase), str(image_type))
+    if series_lookup is not None:
+        return series_lookup.get(key, np.asarray([], dtype=float))
+    return _extract_repeated_y(long_df, condition=condition, phase=phase, image_type=image_type)
+
+
 def _extract_stimulus_intervals(
     stim_pair: tuple[torch.Tensor, torch.Tensor] | tuple[np.ndarray, np.ndarray],
 ) -> list[tuple[int, int]]:
@@ -492,13 +539,20 @@ def _collect_shared_baseline_stats(
     trace_specs: list[tuple[str, str, str]],
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     focus_window: tuple[float, float],
+    series_lookup: dict[tuple[str, str, str], np.ndarray] | None = None,
 ) -> dict[str, float | int] | None:
     baseline_chunks: list[np.ndarray] = []
     for condition, phase, image_type in trace_specs:
         stim_pair = stimuli.get(condition)
         if stim_pair is None:
             continue
-        series = _extract_repeated_y(long_df, condition=condition, phase=phase, image_type=image_type)
+        series = _lookup_repeated_y(
+            long_df,
+            condition=condition,
+            phase=phase,
+            image_type=image_type,
+            series_lookup=series_lookup,
+        )
         if series.size == 0:
             continue
         windowed = _window_repeated_trace(series, stim_pair=stim_pair, focus_window=focus_window)
@@ -523,8 +577,15 @@ def _summarize_windowed_repeated_trace(
     focus_window: tuple[float, float],
     zscore: bool = True,
     baseline_stats: dict[str, float | int] | None = None,
+    series_lookup: dict[tuple[str, str, str], np.ndarray] | None = None,
 ) -> dict[str, np.ndarray | float | int] | None:
-    series = _extract_repeated_y(long_df, condition=condition, phase=phase, image_type=image_type)
+    series = _lookup_repeated_y(
+        long_df,
+        condition=condition,
+        phase=phase,
+        image_type=image_type,
+        series_lookup=series_lookup,
+    )
     windowed = _window_repeated_trace(series, stim_pair=stim_pair, focus_window=focus_window)
     if windowed is None:
         return None
@@ -577,6 +638,7 @@ def _build_windowed_transition_export(
 
     for transition_row, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
+        series_lookup = _build_trace_series_lookup(long_df)
         for phase_index, phase in enumerate(phases):
             baseline_stats = _collect_shared_baseline_stats(
                 long_df,
@@ -587,6 +649,7 @@ def _build_windowed_transition_export(
                 ],
                 stimuli=stimuli,
                 focus_window=plot_window,
+                series_lookup=series_lookup,
             )
             for condition_index, condition in enumerate(selected_conditions):
                 stim_pair = stimuli.get(condition)
@@ -602,6 +665,7 @@ def _build_windowed_transition_export(
                         focus_window=plot_window,
                         zscore=zscore_activity,
                         baseline_stats=baseline_stats,
+                        series_lookup=series_lookup,
                     )
                     if summary is None:
                         continue
@@ -711,6 +775,7 @@ def _build_response_transition_export(
 
     for transition_row, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
+        series_lookup = _build_trace_series_lookup(long_df)
         for column_index, column_spec in enumerate(column_specs):
             phase = column_spec["phase"]
             trace_specs = [
@@ -726,6 +791,7 @@ def _build_response_transition_export(
                 ],
                 stimuli=stimuli,
                 focus_window=plot_window,
+                series_lookup=series_lookup,
             )
             for condition_index, condition in enumerate(selected_conditions):
                 stim_pair = stimuli.get(condition)
@@ -741,6 +807,7 @@ def _build_response_transition_export(
                         focus_window=plot_window,
                         zscore=zscore_activity,
                         baseline_stats=baseline_stats,
+                        series_lookup=series_lookup,
                     )
                     if summary is None:
                         continue
@@ -899,6 +966,7 @@ def visualize_transition_response_matrix(
         plot_window = step_window
 
     condition_summaries: dict[str, dict[str, np.ndarray | float | int]] = {}
+    sample_lookup = _build_trace_series_lookup(sample_df)
     for condition in selected_conditions:
         stim_pair = STIMULI.get(condition)
         if stim_pair is None:
@@ -911,6 +979,7 @@ def visualize_transition_response_matrix(
             stim_pair=stim_pair,
             focus_window=plot_window,
             zscore=zscore_activity,
+            series_lookup=sample_lookup,
         )
         if summary is not None:
             condition_summaries[condition] = summary
@@ -934,7 +1003,7 @@ def visualize_transition_response_matrix(
     ]
     n_rows = len(ordered_transitions)
     n_cols = len(column_condition_specs)
-    fig_width = max(10.0, 2.25 * n_cols + 2.8)
+    fig_width = max(12.0, 2.8 * n_cols + 3.2)
     fig_height = max(6.0, 2.15 * n_rows + 1.9)
     fig, axes = plt.subplots(
         n_rows,
@@ -975,11 +1044,12 @@ def visualize_transition_response_matrix(
             column_spec["label"],
             ha="center",
             va="center",
-            fontsize=24,
+            fontsize=21,
         )
 
     for row_idx, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
+        series_lookup = _build_trace_series_lookup(long_df)
         row_bounds: list[tuple[float, float]] = []
         baseline_by_column = {
             column_spec["key"]: _collect_shared_baseline_stats(
@@ -991,6 +1061,7 @@ def visualize_transition_response_matrix(
                 ],
                 stimuli=STIMULI,
                 focus_window=plot_window,
+                series_lookup=series_lookup,
             )
             for column_spec in column_specs
         }
@@ -1019,6 +1090,7 @@ def visualize_transition_response_matrix(
                     focus_window=plot_window,
                     zscore=zscore_activity,
                     baseline_stats=baseline_by_column.get(column_spec["key"]),
+                    series_lookup=series_lookup,
                 )
                 if summary is None:
                     continue
@@ -1338,6 +1410,7 @@ def visualize_transition_panel(
         plot_window = step_window
 
     condition_summaries: dict[str, dict[str, np.ndarray | float | int]] = {}
+    sample_lookup = _build_trace_series_lookup(sample_df)
     for condition in selected_conditions:
         stim_pair = STIMULI.get(condition)
         if stim_pair is None:
@@ -1350,6 +1423,7 @@ def visualize_transition_panel(
             stim_pair=stim_pair,
             focus_window=plot_window,
             zscore=zscore_activity,
+            series_lookup=sample_lookup,
         )
         if summary is not None:
             condition_summaries[condition] = summary
@@ -1435,6 +1509,7 @@ def visualize_transition_panel(
 
     for row_idx, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
+        series_lookup = _build_trace_series_lookup(long_df)
         row_bounds: list[tuple[float, float]] = []
         phase_baseline_stats = {
             phase: _collect_shared_baseline_stats(
@@ -1446,6 +1521,7 @@ def visualize_transition_panel(
                 ],
                 stimuli=STIMULI,
                 focus_window=plot_window,
+                series_lookup=series_lookup,
             )
             for phase in phases
         }
@@ -1471,6 +1547,7 @@ def visualize_transition_panel(
                     focus_window=plot_window,
                     zscore=zscore_activity,
                     baseline_stats=phase_baseline_stats.get(phase),
+                    series_lookup=series_lookup,
                 )
                 if summary is None:
                     continue
@@ -1563,7 +1640,6 @@ def save_grouped_transition_panels(
             image_mode="both",
             transition_order=ordered_combined,
             transition_labels=combined_labels,
-            trace_types=("full", "occlusion"),
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
         )

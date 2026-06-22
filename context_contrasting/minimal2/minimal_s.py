@@ -18,7 +18,7 @@ class CCNeuron(nn.Module):
       y = phi(w_ff^T x + w_fb^T c - w_lat^T p)
 
     Local learning rules:
-      dw_ff  ~ -(y * x)                           (anti-Hebbian)
+      dw_ff  ~ -ff_plasticity_scale * (y * x)     (anti-Hebbian)
       dw_fb  ~ (alpha / (y + alpha)) * (c)   (dampened-anti-Hebbian)
             OR y * c (Hebbian)
       dw_lat ~  (y * p)                           (Hebbian)
@@ -61,6 +61,7 @@ class CCNeuron(nn.Module):
         seed:int = 42,
         use_FF_connection:bool = True,
         FF_plasticity:bool = True,
+        ff_plasticity_scale: float | list[float] | tuple[float, ...] = 1.0,
         use_FB_connection:bool = True,
         FB_plasticity:bool = True,
         use_lat_connection:bool = True,
@@ -104,6 +105,13 @@ class CCNeuron(nn.Module):
         self.lr_fb = lr_fb
         self.lr_lat = lr_lat
         self.lr_pv = lr_pv
+        self.ff_plasticity_scale = torch.as_tensor(ff_plasticity_scale, dtype=self.w_ff.dtype)
+        if self.ff_plasticity_scale.ndim == 0:
+            self.ff_plasticity_scale = torch.full_like(self.w_ff, float(self.ff_plasticity_scale))
+        elif self.ff_plasticity_scale.shape != self.w_ff.shape:
+            raise ValueError("ff_plasticity_scale must be scalar or match n_features.")
+        if torch.any(self.ff_plasticity_scale < 0):
+            raise ValueError("ff_plasticity_scale must be nonnegative.")
         self.alpha = alpha
         self.weight_decay = weight_decay
         self.baseline_drive_mu = baseline_drive_mu
@@ -209,12 +217,12 @@ class CCNeuron(nn.Module):
                                                     torch.zeros_like(self.W_pv))
         
         # 1) Anti-Hebbian update for w_ff
-        if self.FF_plasticity and self.use_FF_connection:
+        if self.FF_plasticity and self.use_FF_connection and bool(torch.any(self.ff_plasticity_scale > 0)):
             match self.FFrule:
                 case "anti-Hebbian":
-                    dw_ff = - self.lr_ff * (y_next * x_t) * (self.w_ff - 0.0)
+                    dw_ff = - self.lr_ff * self.ff_plasticity_scale * (y_next * x_t) * (self.w_ff - 0.0)
                 case "Hebbian":
-                    dw_ff = self.lr_ff * (y_next * x_t) * (1.0 - self.w_ff)
+                    dw_ff = self.lr_ff * self.ff_plasticity_scale * (y_next * x_t) * (1.0 - self.w_ff)
 
         # 2) Dampened-Hebbian update for w_fb
         damp = self.alpha / (y_next + self.alpha)
@@ -248,7 +256,7 @@ class CCNeuron(nn.Module):
         # Weight Decay 
         if 0.0 < self.weight_decay < 1.0:
             # towards baseline (initial) weights
-            self.w_ff -= (self.w_ff - self.w_ff_baseline) * self.weight_decay * self.FF_plasticity * self.use_FF_connection
+            self.w_ff -= (self.w_ff - self.w_ff_baseline) * self.weight_decay * self.ff_plasticity_scale * self.FF_plasticity * self.use_FF_connection
             self.w_fb -= (self.w_fb - self.w_fb_baseline) * self.weight_decay * self.FB_plasticity * self.use_FB_connection
             self.w_lat -= (self.w_lat - self.w_lat_baseline) * self.weight_decay * self.lat_plasticity * self.use_lat_connection
             self.w_pv_lat -= (self.w_pv_lat - self.w_pv_lat_baseline) * self.weight_decay * self.pv_lat_plasticity * self.use_pv_lat_connection

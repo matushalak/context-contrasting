@@ -92,7 +92,7 @@ class ThresholdReLU(torch.nn.Module):
         if self.hard:
             return x
         else:
-            return torch.clamp(x, max=1.0)
+            return torch.clamp(x, max=1.0) # max firing rate = 1.0
 
 
 class GainSigmoid(torch.nn.Module):

@@ -218,11 +218,13 @@ def _build_training_stimuli(
 def run_experiment(
     model_config: dict,
     n_steps_per_phase: int = 100,
+    test_trials: int = 10,
+    training_trials: int = 5,
 ) -> tuple[DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
     model = CCNeuron(**{key: value for key, value in model_config.items() if not key.startswith("_")})
 
-    stimuli = _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=10)
-    training_X, training_C = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=5)
+    stimuli = _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials)
+    training_X, training_C = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
 
     naive_frames = _run_test_phase_variants(model, stimuli, phase_label="naive")
 
