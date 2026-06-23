@@ -491,6 +491,7 @@ def save_rotated_sector_unit_legend(
     center_label_fontsize: float | None = None,
     label_gap: float = 0.0,
     label_bbox: dict | None = None,
+    formats: tuple[str, ...] | None = None,
 ) -> list[Path]:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -503,12 +504,13 @@ def save_rotated_sector_unit_legend(
         label_gap=label_gap,
         label_bbox=label_bbox,
     )
-    saved_paths = [output_path]
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
-    if output_path.suffix.lower() != ".svg":
-        svg_path = output_path.with_suffix(".svg")
-        fig.savefig(svg_path, bbox_inches="tight")
-        saved_paths.append(svg_path)
+    if formats is None:
+        formats = (output_path.suffix.lstrip(".") or "png",)
+    saved_paths = []
+    for fmt in formats:
+        path = output_path.with_suffix(f".{fmt}")
+        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+        saved_paths.append(path)
     plt.close(fig)
     return saved_paths
 

@@ -933,6 +933,7 @@ def visualize_transition_response_matrix(
     save_in_transition_subdir: bool = True,
     save_csv: bool = True,
     zscore_activity: bool = False,
+    image_format: str = "png",
 ) -> list[str]:
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
@@ -1153,7 +1154,7 @@ def visualize_transition_response_matrix(
 
     base_path = os.path.join(output_dir, name)
     saved_paths: list[str] = []
-    for ext in ("png", "svg"):
+    for ext in (image_format,):
         out_path = f"{base_path}.{ext}"
         fig.savefig(out_path, bbox_inches="tight")
         saved_paths.append(out_path)
@@ -1375,6 +1376,7 @@ def visualize_transition_panel(
     save_in_transition_subdir: bool = True,
     save_csv: bool = True,
     zscore_activity: bool = False,
+    image_format: str = "png",
 ) -> str:
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
@@ -1601,10 +1603,10 @@ def visualize_transition_panel(
 
     if save_in_transition_subdir:
         plot_dirs = _resolve_plot_dirs(save_path)
-        out_path = os.path.join(plot_dirs["transition_panels"], f"{name}_{'_'.join(selected_conditions)}.svg")
+        out_path = os.path.join(plot_dirs["transition_panels"], f"{name}_{'_'.join(selected_conditions)}.{image_format}")
     else:
         os.makedirs(save_path, exist_ok=True)
-        out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.svg")
+        out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.{image_format}")
 
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -1620,6 +1622,8 @@ def save_grouped_transition_panels(
     transition_order: list[str],
     transition_labels: dict[str, str] | None = None,
     save_in_transition_subdir: bool = True,
+    step_window: tuple[int, int] = (1000, 1350),
+    image_format: str = "png",
 ) -> None:
     sample_df = next(iter(long_dfs_by_transition.values()), None)
     if sample_df is None:
@@ -1648,8 +1652,10 @@ def save_grouped_transition_panels(
             image_mode="both",
             transition_order=ordered_combined,
             transition_labels=combined_labels,
+            step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
+            image_format=image_format,
         )
         visualize_transition_response_matrix(
             combined_transitions,
@@ -1659,8 +1665,10 @@ def save_grouped_transition_panels(
             image_mode="familiar",
             transition_order=ordered_combined,
             transition_labels=combined_labels,
+            step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
+            image_format=image_format,
         )
         visualize_transition_response_matrix(
             combined_transitions,
@@ -1670,8 +1678,10 @@ def save_grouped_transition_panels(
             image_mode="novel",
             transition_order=ordered_combined,
             transition_labels=combined_labels,
+            step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
+            image_format=image_format,
         )
 
 

@@ -23,9 +23,15 @@ from context_contrasting.minimal2.experiment_s import (
     STIMULUS_SPECS,
     _build_test_stimuli,
     _build_training_stimuli,
+    run_experiment,
     run_experimental_phase,
 )
 from context_contrasting.minimal2.minimal_s import CCNeuron
+from context_contrasting.minimal2.visualize_s import (
+    format_transition_label,
+    save_grouped_transition_panels,
+    wide_to_long,
+)
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -54,6 +60,28 @@ SHARED_LEARNING_RATES = {
     "lr_pv": 0.009,
 }
 
+# Feedforward plasticity (anti-Hebbian adaptation) scale is a property of tuning
+# width, not of the individual transition: broadly tuned cells adapt their FF
+# drive strongly (and become FB-driven), narrowly tuned cells adapt FF only
+# weakly (and instead develop enhanced FF responses via increased FB gain). The
+# narrow value is deliberately small but never 0, so that the pure-FF response
+# (noLAT & noFB ablation) of narrowly tuned cells still adapts a little.
+FF_PLASTICITY_BROAD = 8.0
+FF_PLASTICITY_NARROW = 0.05
+NARROW_TRANSITIONS = frozenset({
+    "weak_FF",
+    "un_novel_FF",
+    "FF_FB_narrow_familiar",
+    "FF_FB_narrow_familiar_2",
+    "FF_FB_narrow_familiar_novel",
+    "FF_FB_narrow_familiar_2_novel",
+    "FF_FB_narrow_novel",
+})
+
+
+def _ff_plasticity_scale(transition: str) -> float:
+    return FF_PLASTICITY_NARROW if transition in NARROW_TRANSITIONS else FF_PLASTICITY_BROAD
+
 PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
     "pre_point_alpha": 1.0,
     "target_point_alpha": 1.0,
@@ -78,32 +106,29 @@ def S(weight: float, *, fix: dict | None = None, clip: dict | None = None, **ini
 
 
 BASELINE_MIN = {"baseline_drive_sigma": (0.03, None)}
-WEAK_FF_CLIP = {
-    "ff_plasticity_scale": (None, 0.01),
-    "apical_drive_threshold": (1.2, None),
-    "apical_gain_strength": (3.0, 6.0),
-}
-NOVEL_GAIN_CLIP = {
-    "apical_drive_threshold": (1.2, None),
-    "apical_gain_strength": (8.0, 16.0),
-}
 NARROW_GAIN_CLIP = {
-    "ff_plasticity_scale": (None, 0.01),
     "apical_drive_threshold": (1.05, None),
     "apical_gain_strength": (5.5, 9.0),
     "baseline_drive_sigma": (0.08, 0.22),
 }
 GLOBAL_SCALAR_CLIP = {
-    "baseline_drive_sigma": (0.18, 0.50),
+    "baseline_drive_sigma": (0.18, 0.55),
     "pv_noise_sigma": (0.04, 0.16),
 }
+
+# Higher baseline (spontaneous) activity for the feedback-driven O responders.
+# Because the post responses are z-scored to the naive baseline, a larger baseline
+# raises the subtracted mean and pulls the absolute O/NO positions down out of the
+# extreme (z~3) band into a realistic 0.5-1.5 range -- without changing the
+# expert-naive shift (the baseline cancels in the difference), so sector fractions
+# are preserved while the clouds move into the right place on the scatter.
+O_RESPONDER_BASELINE = {"baseline_drive_sigma": (0.32, 0.48)}
 
 # Main sampling knobs: transition proportions and allowed parameter variation.
 TRANSITIONS = {
     "weak_FB": S(
         0.045,
         fix={
-            "ff_plasticity_scale": 2.0,
             "apical_drive_threshold": 0.24,
         },
         clip={"apical_gain_strength": (5.0, 8.5), "baseline_drive_sigma": (0.10, 0.25)},
@@ -114,9 +139,8 @@ TRANSITIONS = {
         pv=I([0.26, 0.26, 0.22], 0.32, 0.035, [0.10, 0.10, 0.06], [0.52, 0.52, 0.44]),
     ),
     "weak_FF": S(
-        0.070,
+        0.034,
         clip={
-            "ff_plasticity_scale": (None, 0.012),
             "apical_drive_threshold": (1.05, None),
             "apical_gain_strength": (4.5, 8.0),
             "baseline_drive_sigma": (0.10, 0.24),
@@ -129,8 +153,10 @@ TRANSITIONS = {
     ),
     "un_un": S(
         0.130,
-        fix={"FF_plasticity": False, "FB_plasticity": False, "lat_plasticity": False, "pv_lat_plasticity": False, "pv_plasticity": False},
-        clip={"apical_gain_strength": (3.0, 8.0), "apical_drive_threshold": (0.15, 0.50)},
+        # A weakly tuned cell that simply does not receive feedback (context off
+        # via the canonical config); plasticity stays on, it just stays subthreshold.
+        fix={"receives_context": (False, False, False)},
+        clip={"apical_gain_strength": (3.0, 8.0), "apical_drive_threshold": (0.15, 0.50), "baseline_drive_sigma": (0.18, 0.40)},
         ff=I([0.01, 0.01, 0.01], 0.65, 0.012, hi=0.05),
         fb=I([0.004, 0.004, 0.004], 0.65, 0.005, hi=0.035),
         lat=I([0.04], 0.60, 0.020, hi=0.15),
@@ -138,18 +164,21 @@ TRANSITIONS = {
         pv=I([0.12, 0.12, 0.12], 0.45, 0.040, hi=0.35),
     ),
     "un_FB": S(
-        0.070,
-        fix={"ff_plasticity_scale": 1.0, "apical_drive_threshold": 0.32},
-        clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.12, 0.28)},
+        0.030,
+        # Drive threshold must be low enough that the strengthened (and generalized)
+        # feedback actually crosses it, so these cells genuinely become FB-driven O
+        # responders. Strong-but-not-crushing inhibition keeps NO ~0 and lands O in
+        # the 0.5-1.0 contiguous band rising out of the nonresponders.
+        fix={"apical_drive_threshold": 0.13},
+        clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.35, 0.52)},
         ff=I([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.040),
-        fb=I([0.065, 0.065, 0.045], 0.35, 0.012, [0.025, 0.025, 0.010], [0.16, 0.16, 0.10]),
-        lat=I([0.42], 0.28, 0.040, 0.16, 0.95),
-        pvlat=I([0.22], 0.30, 0.040, 0.08, 0.75),
-        pv=I([0.68, 0.68, 0.22], 0.30, 0.040, [0.16, 0.16, 0.04], [0.95, 0.95, 0.48]),
+        fb=I([0.075, 0.075, 0.058], 0.35, 0.012, [0.030, 0.030, 0.018], [0.17, 0.17, 0.13]),
+        lat=I([0.18], 0.30, 0.030, 0.06, 0.42),
+        pvlat=I([0.12], 0.30, 0.030, 0.04, 0.38),
+        pv=I([0.30, 0.30, 0.12], 0.28, 0.030, [0.10, 0.10, 0.02], [0.50, 0.50, 0.26]),
     ),
     "un_novel_FF": S(
-        0.030,
-        fix={"ff_plasticity_scale": 0.0},
+        0.045,
         clip={"apical_drive_threshold": (1.45, None), "apical_gain_strength": (6.0, 8.0), "baseline_drive_sigma": (0.18, 0.40)},
         ff=I([0.003, 0.003, 0.045], 0.30, 0.005, [0.0, 0.0, 0.025], [0.012, 0.012, 0.075]),
         fb=I([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
@@ -158,8 +187,7 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FF_un": S(
-        0.240,
-        fix={"ff_plasticity_scale": 8.0},
+        0.250,
         clip={"apical_drive_threshold": (0.85, None), "apical_gain_strength": (3.5, 8.0), "baseline_drive_sigma": (0.14, 0.30)},
         ff=I([0.115, 0.115, 0.070], 0.36, 0.020, [0.040, 0.040, 0.0], [0.22, 0.22, 0.14]),
         fb=I([0.001, 0.001, 0.001], 0.45, 0.002, hi=0.020),
@@ -168,27 +196,44 @@ TRANSITIONS = {
         pv=I([0.025, 0.025, 0.012], 0.35, 0.008, [0.006, 0.006, 0.0], [0.08, 0.08, 0.06]),
     ),
     "FF_FB_broad": S(
-        0.075,
-        fix={"ff_plasticity_scale": 10.0, "apical_drive_threshold": 0.16},
-        clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.12, 0.28)},
+        0.045,
+        fix={"apical_drive_threshold": 0.16},
+        clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.30, 0.50)},
         ff=I([0.145, 0.145, 0.004], 0.22, 0.012, [0.040, 0.040, 0.0], [0.205, 0.205, 0.016]),
         fb=I([0.080, 0.080, 0.026], 0.30, 0.008, [0.030, 0.030, 0.0], [0.20, 0.20, 0.065]),
-        lat=I([0.20], 0.28, 0.030, 0.06, 0.56),
-        pvlat=I([0.10], 0.35, 0.022, 0.02, 0.32),
-        pv=I([0.32, 0.32, 0.12], 0.25, 0.030, [0.10, 0.10, 0.0], [0.66, 0.66, 0.28]),
+        lat=I([0.14], 0.28, 0.026, 0.05, 0.44),
+        pvlat=I([0.08], 0.35, 0.020, 0.02, 0.28),
+        pv=I([0.24, 0.24, 0.10], 0.25, 0.028, [0.08, 0.08, 0.0], [0.52, 0.52, 0.24]),
+    ),
+    "FF_FB_broad_weak": S(
+        0.055,
+        # Broadly tuned, FF adapts away, only a moderate feedback O survives ->
+        # weak expert O responders (NO~0, O~0.5) that fill the contiguous band
+        # between nonresponders and the strong +O cloud. The FF->PV drive
+        # surround-suppresses the full image at expert.
+        fix={"apical_drive_threshold": 0.12},
+        clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.38, 0.55)},
+        ff=I([0.18, 0.18, 0.010], 0.26, 0.014, [0.08, 0.08, 0.0], [0.30, 0.30, 0.03]),
+        fb=I([0.100, 0.100, 0.020], 0.30, 0.010, [0.045, 0.045, 0.0], [0.165, 0.165, 0.05]),
+        lat=I([0.13], 0.30, 0.022, 0.05, 0.30),
+        pvlat=I([0.28], 0.30, 0.030, 0.10, 0.52),
+        pv=I([0.28, 0.28, 0.09], 0.26, 0.026, [0.12, 0.12, 0.0], [0.52, 0.52, 0.22]),
     ),
     "FF_FB_broad_novel": S(
-        0.070,
-        fix={"ff_plasticity_scale": 9.0, "apical_drive_threshold": 0.18},
-        clip={"apical_gain_strength": (2.8, 4.8), "baseline_drive_sigma": (0.12, 0.28)},
+        0.038,
+        # Lower drive threshold + stronger generalized novel feedback so the novel
+        # context actually drives O too -> an emergent mixed cloud of novel O and NO
+        # responders (not just familiar O).
+        fix={"apical_drive_threshold": 0.13},
+        clip={"apical_gain_strength": (2.8, 4.8), "baseline_drive_sigma": (0.24, 0.44)},
         ff=I([0.050, 0.050, 0.085], 0.30, 0.012, [0.015, 0.015, 0.025], [0.15, 0.15, 0.18]),
-        fb=I([0.160, 0.160, 0.055], 0.24, 0.012, [0.060, 0.060, 0.008], [0.30, 0.30, 0.12]),
+        fb=I([0.160, 0.160, 0.080], 0.24, 0.012, [0.060, 0.060, 0.020], [0.30, 0.30, 0.16]),
         lat=I([0.22], 0.28, 0.028, 0.06, 0.60),
         pvlat=I([0.11], 0.35, 0.020, 0.02, 0.34),
         pv=I([0.38, 0.38, 0.14], 0.25, 0.030, [0.12, 0.12, 0.0], [0.72, 0.72, 0.32]),
     ),
     "FF_FB_narrow_familiar": S(
-        0.018,
+        0.013,
         clip=NARROW_GAIN_CLIP,
         ff=I([0.145, 0.010, 0.010], 0.32, 0.010, [0.060, 0.0, 0.0], [0.25, 0.022, 0.018]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
@@ -197,7 +242,7 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FF_FB_narrow_familiar_2": S(
-        0.016,
+        0.011,
         clip=NARROW_GAIN_CLIP,
         ff=I([0.010, 0.145, 0.010], 0.32, 0.010, [0.0, 0.060, 0.0], [0.022, 0.25, 0.018]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
@@ -207,6 +252,7 @@ TRANSITIONS = {
     ),
     "FF_FB_narrow_familiar_novel": S(
         0.018,
+        fix={"apical_gain_threshold": 0.03},
         clip=NARROW_GAIN_CLIP,
         ff=I([0.145, 0.010, 0.145], 0.32, 0.010, [0.060, 0.0, 0.060], [0.25, 0.022, 0.25]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
@@ -216,6 +262,7 @@ TRANSITIONS = {
     ),
     "FF_FB_narrow_familiar_2_novel": S(
         0.016,
+        fix={"apical_gain_threshold": 0.03},
         clip=NARROW_GAIN_CLIP,
         ff=I([0.010, 0.145, 0.145], 0.32, 0.010, [0.0, 0.060, 0.060], [0.022, 0.25, 0.25]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
@@ -224,8 +271,8 @@ TRANSITIONS = {
         pv=I([0.03, 0.08, 0.005], 0.45, 0.012, hi=0.16),
     ),
     "FF_FB_narrow_novel": S(
-        0.015,
-        fix={"ff_plasticity_scale": 0.0},
+        0.140,
+        fix={"apical_gain_threshold": 0.03},
         clip={"apical_drive_threshold": (1.2, None), "apical_gain_strength": (8.0, 14.0), **BASELINE_MIN},
         ff=I([0.003, 0.003, 0.10], 0.24, 0.006, [0.0, 0.0, 0.05], [0.014, 0.014, 0.20]),
         fb=I([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
@@ -234,26 +281,55 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FB_FB": S(
-        0.002,
+        0.020,
+        # Strong, broadly generalizing feedback with little FF -> O responders with
+        # small NO. The symmetric (familiar+novel) feedback also drives the occluded
+        # novel response, so this is the main source of novel O responders. Surround
+        # kept moderate so the O response is not fully suppressed.
         fix={},
-        clip={"apical_drive_threshold": (None, 0.25), "apical_gain_strength": (4.0, 7.0)},
+        clip={"apical_drive_threshold": (None, 0.22), "apical_gain_strength": (4.0, 7.0), "baseline_drive_sigma": (0.28, 0.46)},
         ff=I([0.01, 0.01, 0.01], 0.60, 0.010, hi=0.05),
-        fb=I([0.16, 0.16, 0.16], 0.40, 0.025, hi=0.38),
-        lat=I([0.55], 0.35, 0.060, hi=1.20),
-        pvlat=I([0.55], 0.35, 0.060, hi=1.20),
-        pv=I([0.22, 0.22, 0.22], 0.35, 0.050, hi=0.65),
+        fb=I([0.18, 0.18, 0.16], 0.36, 0.025, [0.08, 0.08, 0.06], [0.40, 0.40, 0.36]),
+        lat=I([0.16], 0.32, 0.030, 0.05, 0.42),
+        pvlat=I([0.16], 0.32, 0.030, 0.05, 0.42),
+        pv=I([0.18, 0.18, 0.16], 0.35, 0.040, hi=0.55),
     ),
     "fb_fb_weak": S(
-        0.015,
-        fix={},
-        clip={"apical_drive_threshold": (0.30, 0.34), "apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.12, 0.28)},
+        0.022,
+        # Moderate naive feedback-driven O responder. With FF adaptation and a
+        # ramping surround it tends to shed full-image (NO) drive faster than the
+        # occluded (O) response, so it lands mostly in -NO / -O rather than gaining
+        # O. Kept modest so naive O stays in a realistic 0.5-1.5 band.
+        fix={"apical_drive_threshold": 0.13},
+        clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.12, 0.28)},
         ff=I([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.04),
-        fb=I([0.070, 0.070, 0.050], 0.35, 0.012, [0.025, 0.025, 0.010], [0.18, 0.18, 0.12]),
-        lat=I([0.44], 0.28, 0.040, 0.18, 1.00),
-        pvlat=I([0.24], 0.30, 0.040, 0.08, 0.80),
-        pv=I([0.72, 0.72, 0.22], 0.30, 0.040, [0.16, 0.16, 0.04], [1.00, 1.00, 0.48]),
+        fb=I([0.150, 0.150, 0.075], 0.30, 0.012, [0.060, 0.060, 0.020], [0.28, 0.28, 0.14]),
+        lat=I([0.12], 0.32, 0.025, 0.03, 0.26),
+        pvlat=I([0.45], 0.30, 0.040, 0.18, 0.85),
+        pv=I([0.55, 0.55, 0.20], 0.30, 0.040, [0.18, 0.18, 0.04], [0.90, 0.90, 0.46]),
+    ),
+    "O_un": S(
+        0.030,
+        # Moderate naive occluded (FB-driven) responder with little FF -> a low-NO,
+        # moderate-O naive cloud (the elevated baseline keeps O ~1.0 rather than
+        # blowing the z-score up to ~3). At expert the surround ramps and the
+        # response weakens toward the origin. (A clean -O is not reachable here -
+        # the occluded response lacks the FF->PV surround that suppresses the full
+        # image, so feedback-driven changes read out as -NO rather than -O.)
+        fix={"apical_drive_threshold": 0.13},
+        clip={"apical_gain_strength": (4.0, 6.5), **O_RESPONDER_BASELINE},
+        ff=I([0.02, 0.02, 0.01], 0.40, 0.008, hi=0.06),
+        fb=I([0.30, 0.30, 0.12], 0.22, 0.025, [0.16, 0.16, 0.05], [0.50, 0.50, 0.26]),
+        lat=I([0.13], 0.30, 0.025, 0.05, 0.32),
+        pvlat=I([0.40], 0.28, 0.040, 0.18, 0.70),
+        pv=I([0.25, 0.25, 0.12], 0.26, 0.030, [0.10, 0.10, 0.03], [0.50, 0.50, 0.30]),
     ),
 }
+
+# Feedforward plasticity scale is governed solely by tuning width, consistently
+# across every transition (broad vs narrow), never per-transition and never 0.
+for _transition, _spec in TRANSITIONS.items():
+    _spec["fix"]["ff_plasticity_scale"] = _ff_plasticity_scale(_transition)
 
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
@@ -369,6 +445,27 @@ def _perturb_config(
         _sample_idx=int(sample_idx),
         _sample_global_idx=int(global_idx),
     )
+    return config
+
+
+def _center_config(transition: str) -> dict[str, Any]:
+    """Noise-free config at exactly the centers the sampler draws around.
+
+    Same fix/clip/shared-learning-rate pipeline as `_perturb_config`, but the
+    initial weights are the bare `TRANSITIONS` centers (clipped to their bounds)
+    and no scalar perturbation is applied. Used for the center-panel sanity check.
+    """
+    config = copy.deepcopy(minimal_configs3[transition])
+    spec = TRANSITIONS[transition]
+    for key, init_spec in spec["init"].items():
+        center = np.asarray(init_spec[0], dtype=float)
+        _set_init(config, key, _clip_array(center, init_spec[3], init_spec[4]))
+    config.update(spec["fix"])
+    for key, (lo, hi) in (GLOBAL_SCALAR_CLIP | spec["clip"]).items():
+        if key in config and _is_num(config[key]):
+            config[key] = _clip(float(config[key]), lo, hi)
+    _apply_shared_learning_rates(config)
+    config.update(_canonical_transition=transition, _sample_idx=0, _sample_global_idx=0)
     return config
 
 
@@ -620,41 +717,87 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
-def _limits(frames: list[pd.DataFrame], columns: list[str], percentile: float, pad: float) -> list[float]:
-    values = np.concatenate([frame[columns].to_numpy(dtype=float).reshape(-1) for frame in frames])
+# Center panels are rendered with the canonical experiment_s protocol so they
+# look like minimal2/plotsexperiment_s/transition_panels (the per-step EMA time
+# constants need a long enough stimulus window to develop; the scatter's short
+# probe truncates them).
+CENTER_PANEL_N_STEPS = 400
+CENTER_PANEL_TEST_TRIALS = 4
+
+
+def _save_center_panels(
+    transition_order: list[str],
+    *,
+    output_dir: Path,
+    training_trials: int,
+    image_format: str = "png",
+) -> None:
+    """Sanity check: run the experiment_s pipeline at exactly the sampler centers
+    and save the grouped naive->expert transition panel into <output_dir>/center_panels/.
+
+    This makes the center each transition is sampled around inspectable alongside
+    the aggregate scatter, so the centers can be sanity-checked against the model
+    mechanism instead of only being trusted implicitly. Uses the canonical
+    `n_steps_per_phase` (400) so the traces match the reference transition panels.
+    """
+    center_dir = output_dir / "center_panels"
+    center_dir.mkdir(parents=True, exist_ok=True)
+
+    long_dfs_by_transition: dict[str, pd.DataFrame] = {}
+    shared_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
+    for transition in transition_order:
+        config = _center_config(transition)
+        df, stimuli = run_experiment(
+            config,
+            n_steps_per_phase=CENTER_PANEL_N_STEPS,
+            test_trials=CENTER_PANEL_TEST_TRIALS,
+            training_trials=training_trials,
+        )
+        long_dfs_by_transition[transition] = wide_to_long(df)
+        if shared_stimuli is None:
+            shared_stimuli = stimuli
+
+    if shared_stimuli is None:
+        return
+    save_grouped_transition_panels(
+        long_dfs_by_transition,
+        stimuli=shared_stimuli,
+        save_path=str(center_dir),
+        transition_order=transition_order,
+        transition_labels={name: format_transition_label(name) for name in transition_order},
+        save_in_transition_subdir=False,
+        image_format=image_format,
+    )
+
+
+def _robust_response_limits(summaries: list[pd.DataFrame], *, hi_percentile: float, pad: float = 0.4) -> list[float]:
+    """Response axis limits that ignore a few extreme outliers (point 6): scale to
+    the bulk so a handful of very strong responders fall outside rather than
+    blowing up the whole panel. hi_percentile=100 reproduces the real-data min/max."""
+    cols = ["NO_Pre", "O_Pre", "NO_Target", "O_Target"]
+    values = np.concatenate([s[cols].to_numpy(dtype=float).reshape(-1) for s in summaries])
     values = values[np.isfinite(values)]
     if values.size == 0:
         return [-1.0, 1.0]
-    if percentile >= 100:
-        return [float(values.min() - pad), float(values.max() + pad)]
-    lo = float(np.nanpercentile(values, max(0.0, 100.0 - percentile)))
-    hi = float(np.nanpercentile(values, min(100.0, percentile)))
-    return [lo - pad, hi + pad] if np.isfinite(lo) and np.isfinite(hi) and hi > lo else [-1.0, 1.0]
+    lo = float(np.nanpercentile(values, max(0.0, 100.0 - hi_percentile)))
+    hi = float(np.nanpercentile(values, hi_percentile))
+    return [lo - pad, hi + pad]
 
 
-def _points_outside_plot_limits(
-    summaries: dict[str, pd.DataFrame],
-    response_lims: list[float],
-    shift_lims: list[float],
-) -> pd.DataFrame:
-    rows = []
-    response_cols = ["NO_Pre", "O_Pre", "NO_Target", "O_Target"]
-    shift_cols = ["dNO", "dO"]
-    for group, summary in summaries.items():
-        outside_response = summary[response_cols].lt(response_lims[0]).any(axis=1) | summary[response_cols].gt(response_lims[1]).any(axis=1)
-        outside_shift = summary[shift_cols].lt(shift_lims[0]).any(axis=1) | summary[shift_cols].gt(shift_lims[1]).any(axis=1)
-        outside = outside_response | outside_shift
-        if not outside.any():
-            continue
-        clipped = summary.loc[outside, ["neuron_idx", *response_cols, *shift_cols, "RotatedSector"]].copy()
-        clipped.insert(0, "image_group", group)
-        clipped["outside_response_limits"] = outside_response.loc[outside].to_numpy(dtype=bool)
-        clipped["outside_shift_limits"] = outside_shift.loc[outside].to_numpy(dtype=bool)
-        rows.append(clipped)
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+def _robust_shift_limits(summaries: list[pd.DataFrame], *, hi_percentile: float, pad_ratio: float = 0.12, fallback: float = 0.5) -> list[float]:
+    values = np.concatenate([s[["dNO", "dO"]].to_numpy(dtype=float).reshape(-1) for s in summaries])
+    values = np.abs(values[np.isfinite(values)])
+    if values.size == 0:
+        return [-fallback, fallback]
+    extent = float(np.nanpercentile(values, hi_percentile))
+    if not np.isfinite(extent) or extent == 0:
+        extent = fallback
+    else:
+        extent *= 1.0 + pad_ratio
+    return [-extent, extent]
 
 
-def _save_summary(summary: pd.DataFrame, path: Path, title: str, response_lims: list[float], shift_lims: list[float], export_panels: bool) -> None:
+def _save_summary(summary: pd.DataFrame, path: Path, title: str, response_lims: list[float], shift_lims: list[float], export_panels: bool, image_format: str) -> None:
     fig = th.plot_mean_transition_summary(
         summary,
         title=title,
@@ -664,13 +807,13 @@ def _save_summary(summary: pd.DataFrame, path: Path, title: str, response_lims: 
         shift_lims=shift_lims,
         style=PLOT_STYLE,
     )
+    path = path.with_suffix(f".{image_format}")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=300, bbox_inches="tight")
-    fig.savefig(path.with_suffix(".svg"), bbox_inches="tight")
     if export_panels:
-        th.export_figure_panels(fig, path.parent / f"{path.stem}_panels", path.stem)
+        th.export_figure_panels(fig, path.parent / f"{path.stem}_panels", path.stem, formats=(image_format,))
     plt.close(fig)
-    th.save_rotated_sector_unit_legend(summary, path.with_name(f"{path.stem}_sector_legend.png"), title=None)
+    th.save_rotated_sector_unit_legend(summary, path.with_name(f"{path.stem}_sector_legend.{image_format}"), title=None, formats=(image_format,))
 
 
 def _save_plots(
@@ -679,10 +822,10 @@ def _save_plots(
     output_dir: Path,
     transition_order: list[str],
     threshold: float,
-    response_limit_percentile: float,
-    shift_limit_percentile: float,
     plot_by_transition: bool,
     export_panels: bool,
+    image_format: str,
+    axis_clip_percentile: float,
 ) -> None:
     figures_dir = output_dir / "figures"
     summaries_dir = output_dir / "summaries"
@@ -693,26 +836,13 @@ def _save_plots(
         group: th.build_mean_summary(wide, image_group=group, pre_stage="Naive", target_stage="Expert", threshold=threshold)
         for group in ("familiar", "novel")
     }
-    response_cols = ["NO_Pre", "O_Pre", "NO_Target", "O_Target"]
-    shift_cols = ["dNO", "dO"]
-    response_lims = {
-        group: _limits([summary], response_cols, response_limit_percentile, 0.5)
-        for group, summary in aggregate.items()
-    }
-    shift_lims = {
-        group: _limits([summary], shift_cols, shift_limit_percentile, 0.5)
-        for group, summary in aggregate.items()
-    }
-
-    outside_limits = pd.concat(
-        [
-            _points_outside_plot_limits({group: summary}, response_lims[group], shift_lims[group])
-            for group, summary in aggregate.items()
-        ],
-        ignore_index=True,
-    )
-    if not outside_limits.empty:
-        outside_limits.to_csv(summaries_dir / "aggregate_points_outside_plot_limits.csv", index=False)
+    # A single shared response/shift frame across the familiar and novel panels
+    # (like the transitions>threshold notebook), but scaled to the bulk so a few
+    # extreme outliers fall outside the panel instead of compressing it
+    # (axis_clip_percentile=100 reproduces the notebook's exact min/max framing).
+    summaries = list(aggregate.values())
+    response_lims = _robust_response_limits(summaries, hi_percentile=axis_clip_percentile)
+    shift_lims = _robust_shift_limits(summaries, hi_percentile=axis_clip_percentile)
 
     fraction_frames = []
     for group, summary in aggregate.items():
@@ -722,9 +852,10 @@ def _save_plots(
             summary,
             figures_dir / f"aggregate_{group}_summary.png",
             f"Model scatter - all transitions - {group}",
-            response_lims[group],
-            shift_lims[group],
+            response_lims,
+            shift_lims,
             export_panels,
+            image_format,
         )
 
     if plot_by_transition:
@@ -740,9 +871,10 @@ def _save_plots(
                     summary,
                     figures_dir / "by_transition" / f"{transition}_{group}_summary.png",
                     f"Model scatter - {transition} - {group}",
-                    _limits([summary], response_cols, response_limit_percentile, 0.5),
-                    _limits([summary], shift_cols, shift_limit_percentile, 0.5),
+                    response_lims,
+                    shift_lims,
                     export_panels,
+                    image_format,
                 )
 
     pd.concat(fraction_frames, ignore_index=True).to_csv(summaries_dir / "sector_fractions.csv", index=False)
@@ -808,8 +940,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "zscore_std_floor": None if args.raw_responses else args.zscore_std_floor,
         "response_tail_fraction": args.response_tail_fraction,
         "sector_threshold": args.threshold,
-        "response_limit_percentile": args.response_limit_percentile,
-        "shift_limit_percentile": args.shift_limit_percentile,
+        "ff_plasticity_broad": FF_PLASTICITY_BROAD,
+        "ff_plasticity_narrow": FF_PLASTICITY_NARROW,
         "stimulus_specs": STIMULUS_SPECS,
         "n_invalid_response_rows": int(len(invalid)),
     }
@@ -820,11 +952,19 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         output_dir=args.output_dir,
         transition_order=transition_order,
         threshold=args.threshold,
-        response_limit_percentile=args.response_limit_percentile,
-        shift_limit_percentile=args.shift_limit_percentile,
         plot_by_transition=args.plot_by_transition and not args.skip_by_transition,
         export_panels=args.export_panels,
+        image_format=args.image_format,
+        axis_clip_percentile=args.axis_clip_percentile,
     )
+
+    if not args.skip_center_panels and not args.canonical_only:
+        _save_center_panels(
+            transition_order,
+            output_dir=args.output_dir,
+            training_trials=args.training_trials,
+            image_format=args.image_format,
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -849,19 +989,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--response-normalization", choices=("naive", "phase"), default="naive")
     parser.add_argument("--zscore-std-floor", type=float, default=0.04)
     parser.add_argument("--response-tail-fraction", type=float, default=1.0)
-    parser.add_argument("--threshold", type=float, default=0.4)
-    parser.add_argument("--response-limit-percentile", type=float, default=100.0)
-    parser.add_argument("--shift-limit-percentile", type=float, default=100.0)
-    parser.add_argument("--limit-percentile", type=float, default=None, help="Compatibility override: use one percentile for response and shift axes.")
+    # Default matches the transitions>threshold notebook so the model scatter is
+    # sectorized exactly like the real data.
+    parser.add_argument("--threshold", type=float, default=0.3)
+    parser.add_argument("--image-format", choices=("png", "svg", "eps"), default="png", help="Figure output format (default png).")
+    parser.add_argument("--axis-clip-percentile", type=float, default=99.0, help="Scale figure axes to this percentile of responses so a few extreme outliers fall outside the panel (100 = exact min/max like the real-data notebook).")
+    parser.add_argument("--skip-center-panels", action="store_true", help="Skip the experiment_s transition panel for the exact sampler centers.")
     parser.add_argument("--plot-by-transition", action="store_true")
     parser.add_argument("--skip-by-transition", action="store_true", help="Accepted for old commands; aggregate-only plots are the default.")
     parser.add_argument("--export-panels", action="store_true")
+    parser.add_argument("--response-limit-percentile", type=float, default=None, help="Accepted for old commands; axis limits now match the real-data helpers.")
+    parser.add_argument("--shift-limit-percentile", type=float, default=None, help="Accepted for old commands; axis limits now match the real-data helpers.")
+    parser.add_argument("--limit-percentile", type=float, default=None, help="Accepted for old commands; axis limits now match the real-data helpers.")
     parser.add_argument("--freeze-learning-rates", action="store_true", help="Accepted for old commands; learning rates are fixed by default.")
-    args = parser.parse_args()
-    if args.limit_percentile is not None:
-        args.response_limit_percentile = args.limit_percentile
-        args.shift_limit_percentile = args.limit_percentile
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:

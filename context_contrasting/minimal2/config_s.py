@@ -230,7 +230,43 @@ FB_FB.update({
 fb_fb_weak = FB_FB.copy()
 fb_fb_weak.update({
     "w_lat_init": {'mu': [0.3,], 'sigma': 0},
-    "w_pv_lat_init": {'mu': [0.7,], 'sigma': 0},        
+    "w_pv_lat_init": {'mu': [0.7,], 'sigma': 0},
+})
+
+# O -> unresponsive (-O): a strong naive occluded (feedback-driven) responder
+# whose surround inhibition outruns the (near-saturated) feedback during training,
+# so the cell ends up an unresponsive expert. Feedback starts near saturation so
+# the (1 - w_fb) damping prevents further growth; surround starts weak (naive O
+# visible) but PV is strongly driven and ramps w_lat. Moderate FF feeds PV so the
+# full image (NO) is already surround-suppressed below the occluded (O) response
+# at naive -> the collapse is biased toward -O rather than -NO.
+O_un = broad.copy()
+O_un.update({
+    "w_ff_init": {'mu': [0.12, 0.12, 0.02], 'sigma': 0},
+    "w_fb_init": {'mu': [0.55, 0.55, 0.20], 'sigma': 0},
+    "W_pv_init": {'mu': [0.45, 0.45, 0.25], 'sigma': 0},
+    "w_lat_init": {'mu': [0.08,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.6,], 'sigma': 0},
+    "apical_drive_threshold": 0.13,
+    "apical_gain_strength": 4.0,
+    "baseline_drive_sigma": 0.03,
+})
+
+# FF -> weak FB: broadly tuned cell whose feedforward drive adapts away while a
+# moderate feedback response survives, landing as a weak expert O responder
+# (~ NO 0, O 0.5) that rises contiguously out of the nonresponders. The full
+# image (NO) is surround-suppressed at expert via the FF->PV drive, while the
+# occluded (O) response keeps the moderate feedback drive.
+FF_FB_broad_weak = FF_FB_broad.copy()
+FF_FB_broad_weak.update({
+    "w_ff_init": {'mu': [0.40, 0.40, 0.01], 'sigma': 0},
+    "w_fb_init": {'mu': [0.10, 0.10, 0.02], 'sigma': 0},
+    "W_pv_init": {'mu': [0.35, 0.35, 0.10], 'sigma': 0},
+    "w_lat_init": {'mu': [0.15,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.30,], 'sigma': 0},
+    "apical_drive_threshold": 0.12,
+    "apical_gain_strength": 4.0,
+    "baseline_drive_sigma": 0.03,
 })
 
 minimal_configs = {
@@ -243,6 +279,7 @@ minimal_configs = {
     "FF_un": FF_un,
     
     "FF_FB_broad":FF_FB_broad,
+    "FF_FB_broad_weak": FF_FB_broad_weak,
     "FF_FB_broad_novel": FF_FB_broad_novel,
     "FF_FB_narrow_familiar": narrow_familiar,
     "FF_FB_narrow_familiar_2": narrow_familiar_2,
@@ -252,6 +289,7 @@ minimal_configs = {
     
     "FB_FB": FB_FB,
     "fb_fb_weak": fb_fb_weak,
+    "O_un": O_un,
 }
 
 minimal_configs3 = {
