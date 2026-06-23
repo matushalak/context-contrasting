@@ -15,6 +15,8 @@ from context_contrasting.minimal2.utils import (
     _resolve_plots_dir,
 )
 from context_contrasting.minimal2.visualize_s import (
+    build_config_output_name_map,
+    format_transition_label,
     save_grouped_transition_panels,
     visualize_experiment_results,
 )
@@ -39,6 +41,13 @@ NO_RESPONSE_ABLATION_SPECS = {
         "model_overrides": {"use_lat_connection": False},
     },
 }
+
+
+def _config_transition_labels(configs: dict[str, dict]) -> dict[str, str]:
+    return {
+        name: str(config.get("_label", format_transition_label(name)))
+        for name, config in configs.items()
+    }
 
 
 def _run_single_config(
@@ -266,6 +275,8 @@ if __name__ == "__main__":
         next(iter(minimal_configs_s.values())),
         PLOTSDIR=PLOTSDIR,
     ) if minimal_configs_s else PLOTSDIR
+    config_output_names = build_config_output_name_map(list(minimal_configs_s))
+    transition_labels = _config_transition_labels(minimal_configs_s)
 
     for cfg_name, df, stimuli in results:
         cfg = minimal_configs_s[cfg_name]
@@ -273,7 +284,7 @@ if __name__ == "__main__":
             df,
             STIMULI=stimuli,
             save_path=_resolve_plots_dir(cfg, PLOTSDIR=PLOTSDIR),
-            name=cfg_name,
+            name=config_output_names[cfg_name],
             include_novel_no_context=True,
             xlim=(1000, 1400),
         )
@@ -285,4 +296,5 @@ if __name__ == "__main__":
             stimuli=shared_stimuli,
             save_path=shared_plots_dir,
             transition_order=list(minimal_configs_s),
+            transition_labels=transition_labels,
         )

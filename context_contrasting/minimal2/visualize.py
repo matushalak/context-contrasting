@@ -24,28 +24,7 @@ PLOT_CONDITION_LABELS = {
 }
 PLOT_CONDITION_ORDER = ["full", "occlusion", "novel_no_context"]
 PLOT_COLORS = {"Nonoccluded": "black", "Occluded": "red", "No feedback": "blue"}
-TRANSITION_ORDER = [
-    "un_un",
-    "un_FF",
-    "un_FB",
-    "FF_un",
-    "FF_FF",
-    "FF_FB_broad",
-    "FF_FB_narrow_familiar",
-    "FF_FB_narrow_novel",
-    "FB_FB",
-]
-TRANSITION_LABELS = {
-    "un_un": "un -> un",
-    "un_FF": "un -> FF",
-    "un_FB": "un -> FB",
-    "FF_un": "FF -> un",
-    "FF_FF": "FF -> FF",
-    "FF_FB_broad": "FF -> FB\n(broad)",
-    "FF_FB_narrow_familiar": "FF -> FB\n(narrow fam)",
-    "FF_FB_narrow_novel": "FF -> FB\n(narrow nov)",
-    "FB_FB": "FB -> FB",
-}
+TRANSITION_LABELS: dict[str, str] = {}
 TRACE_COLORS = {"full": "black", "occlusion": "red"}
 TRACE_LABELS = {"full": "Nonoccluded", "occlusion": "Occluded"}
 IMAGE_LABELS = {"familiar": "Familiar Image", "novel": "Novel Image"}
@@ -56,6 +35,31 @@ PHASE_DISPLAY_LABELS = {
     "expert": "Expert",
 }
 PHASE_ORDER = ["naive", "expert"]
+
+
+def format_transition_label(name: str) -> str:
+    return str(name).replace("_", " ")
+
+
+def resolve_transition_labels(
+    transition_names: list[str],
+    transition_labels: dict[str, str] | None = None,
+) -> dict[str, str]:
+    labels = {name: format_transition_label(name) for name in transition_names}
+    if transition_labels is not None:
+        labels.update(transition_labels)
+    return labels
+
+
+def resolve_transition_order(
+    long_dfs_by_transition: dict[str, DataFrame],
+    transition_order: list[str] | None = None,
+) -> list[str]:
+    if transition_order is None:
+        return list(long_dfs_by_transition)
+
+    ordered = [transition for transition in transition_order if transition in long_dfs_by_transition]
+    return ordered or list(long_dfs_by_transition)
 
 
 def _resolve_phase_sequence(long_df: DataFrame) -> list[str]:
@@ -533,16 +537,11 @@ def visualize_transition_panel(
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
 
-    ordered_transitions = transition_order or TRANSITION_ORDER
-    ordered_transitions = [name for name in ordered_transitions if name in long_dfs_by_transition]
-    if not ordered_transitions and transition_order is None:
-        ordered_transitions = list(long_dfs_by_transition)
+    ordered_transitions = resolve_transition_order(long_dfs_by_transition, transition_order)
     if not ordered_transitions:
         raise ValueError("No requested transitions were found in long_dfs_by_transition.")
 
-    labels = TRANSITION_LABELS.copy()
-    if transition_labels is not None:
-        labels.update(transition_labels)
+    labels = resolve_transition_labels(ordered_transitions, transition_labels)
 
     display_windows = [
         _expand_window_to_event_bounds(STIMULI[condition], focus_window=step_window)
@@ -853,8 +852,6 @@ def visualize_naive_expert_results(long_df:DataFrame, STIMULI:dict[str, tuple[to
             ax.set_xlabel("Time steps")
             ax.set_ylabel("Neural Activity")
             _style_axis_fonts(ax)
-            if name and 'un_un' in name:
-                ax.set_ylim(0, 0.3)
             legend = ax.get_legend()
             if legend is not None:
                 legend.set_title(None)

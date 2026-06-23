@@ -12,9 +12,10 @@ from context_contrasting.minimal2.config_s import minimal_configs3 as minimal_co
 from context_contrasting.minimal2.experiment_s import PRIMARY_EXPERIMENT_SERIES, run_experiment
 from context_contrasting.minimal2.visualize_s import (
     PHASE_DISPLAY_LABELS,
-    TRANSITION_LABELS,
+    build_config_output_name_map,
     _compute_baseline_stats,
     _expand_window_to_event_bounds,
+    format_transition_label,
     _is_familiar_condition,
     _is_novel_condition,
     _window_repeated_trace,
@@ -97,14 +98,6 @@ SUMMARY_ABLATION_LABELS = {
     "non_pv_adaptation_plasticity": "No non-PV adapt. plast.",
     "all_non_pv": "No all non-PV",
 }
-SUMMARY_TRANSITION_LABELS = {
-    **TRANSITION_LABELS,
-    "un_novel_FF": "un -> expert\nnovel NO/FF",
-    "FF_FB_broad_novel": "FF -> FB\n(broad nov)",
-    "FF_FB_narrow_familiar_novel": "FF -> FB\n(narrow fam+nov)",
-}
-
-
 def _copy_init_dict(init_dict: dict) -> dict:
     return {
         "mu": init_dict["mu"],
@@ -162,7 +155,7 @@ def _summary_ablation_label(label: str) -> str:
 
 
 def _summary_transition_label(name: str) -> str:
-    return SUMMARY_TRANSITION_LABELS.get(name, name.replace("_", " "))
+    return format_transition_label(name)
 
 
 def _primary_series_df(long_df: DataFrame) -> DataFrame:
@@ -709,6 +702,7 @@ def _plot_ablation_results(
     plot_dirs = _plot_dirs_for_root(plots_root)
     long_dfs_by_transition: dict[str, DataFrame] = {}
     shared_stimuli = results[0][2] if results else None
+    config_output_names = build_config_output_name_map([cfg_name for cfg_name, _, _ in results])
 
     for cfg_name, df, stimuli in results:
         long_df = wide_to_long(df)
@@ -725,7 +719,7 @@ def _plot_ablation_results(
                 series_df,
                 STIMULI=stimuli,
                 save_path=plot_dirs["all_panels"],
-                name=f"{cfg_name}_{series_name}",
+                name=f"{config_output_names[cfg_name]}_{series_name}",
                 full_plots=True,
                 include_novel_no_context=include_novel_no_context,
                 xlim=xlim,
@@ -736,7 +730,7 @@ def _plot_ablation_results(
             long_dfs_by_transition,
             stimuli=shared_stimuli,
             save_path=plot_dirs["transition_panels"],
-            transition_order=list(minimal_configs),
+            transition_order=list(long_dfs_by_transition),
             save_in_transition_subdir=False,
         )
 

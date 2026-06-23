@@ -2,7 +2,7 @@ import numpy as np
 from pandas import DataFrame, concat as pd_concat
 import torch
 from context_contrasting.minimal2.visualize_s import (
-    TRANSITION_LABELS,
+    format_transition_label,
     visualize_transition_response_matrix,
     visualize_transition_panel,
 )
@@ -109,7 +109,7 @@ def _save_grouped_transition_panels(
 
     if combined_transitions:
         ordered_combined = [name for name in transition_order if name in combined_transitions]
-        combined_labels = {name: TRANSITION_LABELS.get(name, name) for name in combined_transitions}
+        combined_labels = {name: format_transition_label(name) for name in ordered_combined}
         visualize_transition_panel(
             combined_transitions,
             STIMULI=stimuli,

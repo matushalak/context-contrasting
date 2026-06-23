@@ -8,6 +8,7 @@ from context_contrasting.minimal2.config import minimal_configs
 from context_contrasting.minimal2.experiment import run_experiment
 from context_contrasting.minimal2.utils import _save_grouped_transition_panels
 from context_contrasting.minimal2.visualize import visualize_naive_expert_results, wide_to_long
+from context_contrasting.minimal2.visualize_s import build_config_output_name_map
 
 ABLATION_COMPONENTS = (
     "use_FF_connection",
@@ -129,6 +130,7 @@ def _plot_ablation_results(
     plot_dirs = _plot_dirs_for_root(plots_root)
     long_dfs_by_transition: dict[str, DataFrame] = {}
     shared_stimuli = results[0][2] if results else None
+    config_output_names = build_config_output_name_map([cfg_name for cfg_name, _, _ in results])
 
     for cfg_name, df, stimuli in results:
         long_df = wide_to_long(df)
@@ -145,7 +147,7 @@ def _plot_ablation_results(
                 series_df,
                 STIMULI=stimuli,
                 save_path=plot_dirs["all_panels"],
-                name=f"{cfg_name}_{series_name}",
+                name=f"{config_output_names[cfg_name]}_{series_name}",
                 full_plots=True,
                 include_novel_no_context=include_novel_no_context,
                 xlim=xlim,
@@ -156,7 +158,7 @@ def _plot_ablation_results(
             long_dfs_by_transition,
             stimuli=shared_stimuli,
             save_path=plot_dirs["transition_panels"],
-            transition_order=list(minimal_configs),
+            transition_order=list(long_dfs_by_transition),
             save_in_transition_subdir=False,
         )
 

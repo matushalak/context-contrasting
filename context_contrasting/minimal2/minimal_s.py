@@ -136,7 +136,7 @@ class CCNeuron(nn.Module):
 
         # Feedback specificity (decoding image identity with 60% accuracy)
         self.fb_specificity = torch.eye(self.n_features)*0.6 + (1 - torch.eye(self.n_features))*0.2
-        self.pv_specificity = torch.eye(self.n_features)
+        self.pv_specificity = torch.eye(self.n_features)*0.8 + (1 - torch.eye(self.n_features))*0.1 
 
         # Ablation parameters
         self.use_FF_connection = use_FF_connection
@@ -244,7 +244,7 @@ class CCNeuron(nn.Module):
 
         # 4) Hebbian update for W_pv
         if self.pv_plasticity and self.use_pv_connection:
-            dw_W_pv = self.lr_pv * torch.outer(pv_t.reshape(-1), x_t) * (1.0 - self.W_pv)
+            dw_W_pv = self.lr_pv * (pv_t * self.pv_specificity @ x_t) * (1.0 - self.W_pv)
 
         # Apply updates
         self.w_ff += dw_ff

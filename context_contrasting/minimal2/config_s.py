@@ -222,9 +222,16 @@ narrow_novel.update({
 FB_FB = broad.copy()
 FB_FB.update({
     "w_ff_init": {'mu': [1e-7, 1e-7, 1e-7], 'sigma': 0},
-    "w_fb_init": {'mu': [0.9, 0.9, 0.9], 'sigma': 0},
-    "w_lat_init": {'mu': [0.99,], 'sigma': 0},
+    "w_fb_init": {'mu': [0.6, 0.6, 0.6], 'sigma': 0},
+    "w_lat_init": {'mu': [0.7,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.3,], 'sigma': 0},
     })
+
+fb_fb_weak = FB_FB.copy()
+fb_fb_weak.update({
+    "w_lat_init": {'mu': [0.3,], 'sigma': 0},
+    "w_pv_lat_init": {'mu': [0.7,], 'sigma': 0},        
+})
 
 minimal_configs = {
     'weak_FB': weak_FB,
@@ -243,7 +250,8 @@ minimal_configs = {
     "FF_FB_narrow_familiar_2_novel": narrow_familiar_2_novel,
     "FF_FB_narrow_novel": narrow_novel,
     
-    "FB_FB": FB_FB
+    "FB_FB": FB_FB,
+    "fb_fb_weak": fb_fb_weak,
 }
 
 minimal_configs3 = {

@@ -11,6 +11,7 @@ from context_contrasting.minimal.utils import (build_res, collect_outputs, prepa
                                                _resolve_plots_dir, 
                                                _save_grouped_transition_panels)
 from context_contrasting.minimal.visualize import visualize_experiment_results
+from context_contrasting.minimal2.visualize_s import build_config_output_name_map
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
@@ -153,6 +154,7 @@ if __name__ == "__main__":
     shared_stimuli = results[0][2] if results else None
     shared_plots_dir = _resolve_plots_dir(next(iter(minimal_configs.values())), 
                                           PLOTSDIR=PLOTSDIR) if minimal_configs else PLOTSDIR
+    config_output_names = build_config_output_name_map(list(minimal_configs))
 
     for cfg_name, df, stimuli in results:
         cfg = minimal_configs[cfg_name]
@@ -160,7 +162,7 @@ if __name__ == "__main__":
             df,
             STIMULI=stimuli,
             save_path=_resolve_plots_dir(cfg, PLOTSDIR=PLOTSDIR),
-            name=cfg_name,
+            name=config_output_names[cfg_name],
             include_novel_no_context=True,
             xlim=(1000, 1400),
         )
@@ -171,5 +173,5 @@ if __name__ == "__main__":
             long_dfs_by_transition,
             stimuli=shared_stimuli,
             save_path=shared_plots_dir,
-            transition_order=list(minimal_configs),
+            transition_order=list(long_dfs_by_transition),
         )

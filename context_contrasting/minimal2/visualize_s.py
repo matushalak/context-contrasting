@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 from typing import Literal
@@ -33,38 +34,7 @@ PLOT_COLORS = {
     "No LAT": "green",
     "No fb/no LAT": "darkorange",
 }
-TRANSITION_ORDER = [
-    "weak_FB",
-    "weak_FF",
-    "un_un",
-    "un_FB",
-    "un_novel_FF",
-    "FF_un",
-    "FF_FB_broad",
-    "FF_FB_broad_novel",
-    "FF_FB_narrow_familiar",
-    "FF_FB_narrow_familiar_2",
-    "FF_FB_narrow_familiar_novel",
-    "FF_FB_narrow_familiar_2_novel",
-    "FF_FB_narrow_novel",
-    "FB_FB",
-]
-TRANSITION_LABELS = {
-    "weak_FB": "weak broad\nFF/FB -> FB",
-    "weak_FF": "weak narrow\nFF gain",
-    "un_un": "un -> un",
-    "un_FB": "un -> FB",
-    "un_novel_FF": "un -> novel NO",
-    "FF_un": "FF -> un",
-    "FF_FB_broad": "FF -> FB\n(broad)",
-    "FF_FB_broad_novel": "FF -> FB\n(broad+novel)",
-    "FF_FB_narrow_familiar": "FF -> FB\n(narrow fam)",
-    "FF_FB_narrow_familiar_2": "FF -> FB\n(narrow fam 2)",
-    "FF_FB_narrow_familiar_novel": "FF gain\n(narrow fam+nov)",
-    "FF_FB_narrow_familiar_2_novel": "FF gain\n(narrow fam2+nov)",
-    "FF_FB_narrow_novel": "FF -> FB\n(narrow nov)",
-    "FB_FB": "FB -> FB",
-}
+TRANSITION_LABELS: dict[str, str] = {}
 TRACE_COLORS = {
     "full": "black",
     "occlusion": "red",
@@ -135,6 +105,55 @@ PHASE_DISPLAY_LABELS = {
     "expert": "Expert",
 }
 PHASE_ORDER = ["naive", "expert"]
+
+
+def format_transition_label(name: str) -> str:
+    return str(name).replace("_", " ")
+
+
+def resolve_transition_labels(
+    transition_names: list[str],
+    transition_labels: dict[str, str] | None = None,
+) -> dict[str, str]:
+    labels = {name: format_transition_label(name) for name in transition_names}
+    if transition_labels is not None:
+        labels.update(transition_labels)
+    return labels
+
+
+def resolve_transition_order(
+    long_dfs_by_transition: dict[str, DataFrame],
+    transition_order: list[str] | None = None,
+) -> list[str]:
+    if transition_order is None:
+        return list(long_dfs_by_transition)
+
+    ordered = [transition for transition in transition_order if transition in long_dfs_by_transition]
+    return ordered or list(long_dfs_by_transition)
+
+
+def _safe_filename_stem(name: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name)).strip("._")
+    return stem or "config"
+
+
+def build_config_output_name_map(config_names: list[str]) -> dict[str, str]:
+    base_by_name = {name: _safe_filename_stem(name) for name in config_names}
+    names_by_casefolded_base: dict[str, list[str]] = {}
+    for name, base in base_by_name.items():
+        names_by_casefolded_base.setdefault(base.casefold(), []).append(name)
+
+    output_names: dict[str, str] = {}
+    for casefolded_base, names in names_by_casefolded_base.items():
+        if len(names) == 1:
+            output_names[names[0]] = base_by_name[names[0]]
+            continue
+
+        for name in names:
+            digest = hashlib.blake2s(str(name).encode("utf-8"), digest_size=3).hexdigest()
+            output_names[name] = f"{base_by_name[name]}__{digest}"
+
+    return output_names
 
 
 def _resolve_phase_sequence(long_df: DataFrame) -> list[str]:
@@ -920,14 +939,8 @@ def visualize_transition_response_matrix(
     if image_mode not in {"familiar", "novel"}:
         raise ValueError("image_mode must be 'familiar' or 'novel'.")
 
-    ordered_transitions = transition_order or TRANSITION_ORDER
-    ordered_transitions = [transition for transition in ordered_transitions if transition in long_dfs_by_transition]
-    if not ordered_transitions:
-        ordered_transitions = list(long_dfs_by_transition)
-
-    labels = TRANSITION_LABELS.copy()
-    if transition_labels is not None:
-        labels.update(transition_labels)
+    ordered_transitions = resolve_transition_order(long_dfs_by_transition, transition_order)
+    labels = resolve_transition_labels(ordered_transitions, transition_labels)
 
     sample_df = long_dfs_by_transition[ordered_transitions[0]]
     phases = set(_resolve_phase_sequence(sample_df))
@@ -1366,14 +1379,8 @@ def visualize_transition_panel(
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
 
-    ordered_transitions = transition_order or TRANSITION_ORDER
-    ordered_transitions = [transition for transition in ordered_transitions if transition in long_dfs_by_transition]
-    if not ordered_transitions:
-        ordered_transitions = list(long_dfs_by_transition)
-
-    labels = TRANSITION_LABELS.copy()
-    if transition_labels is not None:
-        labels.update(transition_labels)
+    ordered_transitions = resolve_transition_order(long_dfs_by_transition, transition_order)
+    labels = resolve_transition_labels(ordered_transitions, transition_labels)
 
     sample_df = long_dfs_by_transition[ordered_transitions[0]]
     phases = _resolve_phase_sequence(sample_df)
@@ -1611,6 +1618,7 @@ def save_grouped_transition_panels(
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     save_path: str,
     transition_order: list[str],
+    transition_labels: dict[str, str] | None = None,
     save_in_transition_subdir: bool = True,
 ) -> None:
     sample_df = next(iter(long_dfs_by_transition.values()), None)
@@ -1631,7 +1639,7 @@ def save_grouped_transition_panels(
 
     if combined_transitions:
         ordered_combined = [name for name in transition_order if name in combined_transitions]
-        combined_labels = {name: TRANSITION_LABELS.get(name, name) for name in combined_transitions}
+        combined_labels = resolve_transition_labels(ordered_combined, transition_labels)
         visualize_transition_panel(
             combined_transitions,
             STIMULI=stimuli,
