@@ -124,6 +124,18 @@ GLOBAL_SCALAR_CLIP = {
 # are preserved while the clouds move into the right place on the scatter.
 O_RESPONDER_BASELINE = {"baseline_drive_sigma": (0.32, 0.48)}
 
+# Per-cell z-score denominator. The pyramidal EMA over-smooths the *measured*
+# baseline std (~0.05 for every cell), so a signal-poor response (e.g. an O
+# responder's NO ~ 0) gets divided by the tiny floor and its z-score cloud blows
+# up far past the real data (familiar O-responder NO std is ~0.26 in the data but
+# ~0.50 in the model). Scale the floor with each cell's baseline-drive sigma -- a
+# proxy for the true spontaneous variability the EMA flattens. Then for a noisy
+# (high-baseline) O responder both its NO noise *and* its denominator scale with
+# sigma, so the NO z-noise is bounded; meanwhile a strong NO/-NO responder has low
+# baseline sigma -> small denominator -> it keeps its large z-score and stays
+# sectored. This positions/tightens the O cloud without touching the other cells.
+BASELINE_STD_SCALE = 0.27
+
 # Main sampling knobs: transition proportions and allowed parameter variation.
 TRANSITIONS = {
     "weak_FB": S(
@@ -152,7 +164,7 @@ TRANSITIONS = {
         pv=I([0.025, 0.025, 0.025], 0.45, 0.012, hi=0.10),
     ),
     "un_un": S(
-        0.130,
+        0.115,
         # A weakly tuned cell that simply does not receive feedback (context off
         # via the canonical config); plasticity stays on, it just stays subthreshold.
         fix={"receives_context": (False, False, False)},
@@ -164,7 +176,7 @@ TRANSITIONS = {
         pv=I([0.12, 0.12, 0.12], 0.45, 0.040, hi=0.35),
     ),
     "un_FB": S(
-        0.030,
+        0.038,
         # Drive threshold must be low enough that the strengthened (and generalized)
         # feedback actually crosses it, so these cells genuinely become FB-driven O
         # responders. Strong-but-not-crushing inhibition keeps NO ~0 and lands O in
@@ -187,7 +199,7 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FF_un": S(
-        0.250,
+        0.265,
         clip={"apical_drive_threshold": (0.85, None), "apical_gain_strength": (3.5, 8.0), "baseline_drive_sigma": (0.14, 0.30)},
         ff=I([0.115, 0.115, 0.070], 0.36, 0.020, [0.040, 0.040, 0.0], [0.22, 0.22, 0.14]),
         fb=I([0.001, 0.001, 0.001], 0.45, 0.002, hi=0.020),
@@ -196,7 +208,7 @@ TRANSITIONS = {
         pv=I([0.025, 0.025, 0.012], 0.35, 0.008, [0.006, 0.006, 0.0], [0.08, 0.08, 0.06]),
     ),
     "FF_FB_broad": S(
-        0.045,
+        0.055,
         fix={"apical_drive_threshold": 0.16},
         clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.30, 0.50)},
         ff=I([0.145, 0.145, 0.004], 0.22, 0.012, [0.040, 0.040, 0.0], [0.205, 0.205, 0.016]),
@@ -206,7 +218,7 @@ TRANSITIONS = {
         pv=I([0.18, 0.18, 0.08], 0.25, 0.026, [0.06, 0.06, 0.0], [0.42, 0.42, 0.20]),
     ),
     "FF_FB_broad_weak": S(
-        0.055,
+        0.063,
         # Broadly tuned, FF adapts away, only a moderate feedback O survives ->
         # weak expert O responders (NO~0, O~0.5) that fill the contiguous band
         # between nonresponders and the strong +O cloud. The FF->PV drive
@@ -281,7 +293,7 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FB_FB": S(
-        0.020,
+        0.026,
         # Strong, broadly generalizing feedback with little FF -> O responders with
         # small NO. The symmetric (familiar+novel) feedback also drives the occluded
         # novel response, so this is the main source of novel O responders. Surround
@@ -632,6 +644,8 @@ def _run_sample(
     zscore_std_floor: float,
 ) -> pd.DataFrame:
     model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
+    # Per-cell z-score floor scaled by the cell's spontaneous (baseline) drive.
+    cell_floor = max(zscore_std_floor, BASELINE_STD_SCALE * float(config.get("baseline_drive_sigma", 0.0)))
     rows, naive_baseline = _probe_rows(
         model,
         test_stimuli,
@@ -639,7 +653,7 @@ def _run_sample(
         n_steps_per_phase=n_steps_per_phase,
         response_tail_fraction=response_tail_fraction,
         zscore_responses=zscore_responses,
-        zscore_std_floor=zscore_std_floor,
+        zscore_std_floor=cell_floor,
     )
     run_experimental_phase(model, training_stimuli[0], training_stimuli[1], "full_familiar_training", update=True)
     expert_baseline = naive_baseline if response_normalization == "naive" else None
@@ -651,7 +665,7 @@ def _run_sample(
         response_tail_fraction=response_tail_fraction,
         zscore_responses=zscore_responses,
         baseline=expert_baseline,
-        zscore_std_floor=zscore_std_floor,
+        zscore_std_floor=cell_floor,
     )
     rows.extend(expert_rows)
     return pd.DataFrame(rows).assign(
