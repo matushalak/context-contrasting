@@ -15,6 +15,8 @@ def _normalize_minimal_config(config: dict) -> dict:
     normalized.setdefault("w_pv_lat_init", _copy_init_dict(normalized["w_lat_init"]))
     return normalized
 
+CANONICAL_BASELINE_DRIVE_SIGMA = 0.08
+
 # Broadly tuned: Familiar -> FB responses, Novel -> FF & FB responses
 # X not seen in experimental data
 broad = {
@@ -37,7 +39,7 @@ broad = {
     "apical_gain_strength": 8.0,
     "apical_gain_k": 5.0,
     "apical_gain_threshold": 0.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
     "pv_noise_sigma": 0.03,
     "alpha": 1.0,
     "weight_decay": 0.0,
@@ -57,7 +59,7 @@ weak_FB.update({
     "w_pv_lat_init": {'mu': [0.05,], 'sigma': 0},
     "apical_drive_threshold": 0.22,
     "apical_gain_strength": 8.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 weak_FF = broad.copy()
@@ -70,7 +72,7 @@ weak_FF.update({
     "ff_plasticity_scale": 0.003,
     "apical_drive_threshold": 1.2,
     "apical_gain_strength": 18.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 # 1) unresponsive -> unresponsive; ✅ (subthreshold only PV get stronger because just FF inhibition) 
@@ -102,7 +104,7 @@ un_FB.update({'receives_context': (True, True, True),
               "w_pv_lat_init": {'mu': [0.1,], 'sigma': 0},
               "apical_drive_threshold": 0.3,
               "apical_gain_strength": 12.0,
-              "baseline_drive_sigma": 0.05,
+              "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
             })
 
 # Unresponsive -> novel NO responsive via sub-drive apical gain.
@@ -120,7 +122,7 @@ un_novel_FF.update({
     "ff_plasticity_scale": 0.003,
     "apical_drive_threshold": 1.2,
     "apical_gain_strength": 22.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 # FF -> unresponsive; ✅ (simple) cells that don't receive context and only adapt
@@ -142,7 +144,7 @@ FF_FB_broad_novel.update({
     "w_pv_lat_init": {'mu': [0.4,], 'sigma': 0},
     "apical_drive_threshold": 0.3,
     "apical_gain_strength": 8.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 FF_FB_broad = broad.copy() # no reason why novel response should be adapted (boosted novel FF & FB responses)
@@ -154,7 +156,7 @@ FF_FB_broad.update({
     "w_pv_lat_init": {'mu': [0.4,], 'sigma': 0},
     "apical_drive_threshold": 0.3,
     "apical_gain_strength": 8.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 # narrow, familiar ✅
@@ -168,7 +170,7 @@ narrow_familiar.update({
     "ff_plasticity_scale": 0.003,
     "apical_drive_threshold": 1.15,
     "apical_gain_strength": 18.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
     })
 
 narrow_familiar_novel = narrow_familiar.copy()
@@ -178,7 +180,7 @@ narrow_familiar_novel.update({
     "w_lat_init": {'mu': [0.03,], 'sigma': 0},
     "apical_drive_threshold": 1.15,
     "apical_gain_strength": 18.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 narrow_familiar_2 = narrow_familiar.copy()
@@ -205,7 +207,7 @@ narrow_novel.update({
     "ff_plasticity_scale": 0.003,
     "apical_drive_threshold": 1.2,
     "apical_gain_strength": 20.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
     })
 
 # Overview
@@ -225,6 +227,7 @@ FB_FB.update({
     "w_fb_init": {'mu': [0.6, 0.6, 0.6], 'sigma': 0},
     "w_lat_init": {'mu': [0.7,], 'sigma': 0},
     "w_pv_lat_init": {'mu': [0.3,], 'sigma': 0},
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
     })
 
 fb_fb_weak = FB_FB.copy()
@@ -249,7 +252,7 @@ O_un.update({
     "w_pv_lat_init": {'mu': [0.6,], 'sigma': 0},
     "apical_drive_threshold": 0.13,
     "apical_gain_strength": 4.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 # FF -> weak FB: broadly tuned cell whose feedforward drive adapts away while a
@@ -266,7 +269,7 @@ FF_FB_broad_weak.update({
     "w_pv_lat_init": {'mu': [0.30,], 'sigma': 0},
     "apical_drive_threshold": 0.12,
     "apical_gain_strength": 4.0,
-    "baseline_drive_sigma": 0.03,
+    "baseline_drive_sigma": CANONICAL_BASELINE_DRIVE_SIGMA,
 })
 
 minimal_configs = {

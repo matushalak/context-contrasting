@@ -20,7 +20,18 @@ python -m context_contrasting.model_scatter.run_model_scatter \
   --training-trials 1 \
   --n-jobs 1 \
   --skip-by-transition \
+  --skip-center-panels \
   --output-dir context_contrasting/model_scatter/outputs_smoke
+```
+
+Fast tuning run:
+
+```bash
+python -m context_contrasting.model_scatter.run_model_scatter \
+  --n-samples 250 \
+  --n-jobs 10 \
+  --skip-center-panels \
+  --output-dir context_contrasting/model_scatter/outputs
 ```
 
 Canonical-only run:
@@ -79,10 +90,10 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   from what their names imply). Rendered with the canonical `n_steps_per_phase`
   (400) so the traces match `minimal2/plotsexperiment_s/transition_panels`. These
   runs are parallelised across transitions (use `--n-jobs`).
-- `--no-overlay-examples`: by default the aggregate scatter highlights one point
-  per transition for the `config_s` canonical examples (black stars, labelled)
-  and the sampler centers (gray diamonds), each run through the full scatter
-  pipeline; their positions are also written to `example_points.csv`.
+- `--overlay-examples`: optionally highlight one point per transition for the
+  `config_s` canonical examples (black stars, labelled) and the sampler centers
+  (gray diamonds), each run through the full scatter pipeline; their positions
+  are also written to `example_points.csv`. By default these overlays are off.
 - `--initial-condition-mode spec|canonical-neighborhood`: sample from the
   compact transition range table, or sample around the raw canonical config
   while still clipping to the transition bounds.
