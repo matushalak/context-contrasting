@@ -29,7 +29,7 @@ from context_contrasting.minimal2.experiment_s import (
 from context_contrasting.minimal2.minimal_s import CCNeuron
 from context_contrasting.minimal2.visualize_s import (
     format_transition_label,
-    save_grouped_transition_panels,
+    visualize_transition_panel,
     wide_to_long,
 )
 
@@ -164,7 +164,7 @@ TRANSITIONS = {
         pv=I([0.025, 0.025, 0.025], 0.45, 0.012, hi=0.10),
     ),
     "un_un": S(
-        0.115,
+        0.112,
         # A weakly tuned cell that simply does not receive feedback (context off
         # via the canonical config); plasticity stays on, it just stays subthreshold.
         fix={"receives_context": (False, False, False)},
@@ -176,7 +176,7 @@ TRANSITIONS = {
         pv=I([0.12, 0.12, 0.12], 0.45, 0.040, hi=0.35),
     ),
     "un_FB": S(
-        0.038,
+        0.060,
         # Drive threshold must be low enough that the strengthened (and generalized)
         # feedback actually crosses it, so these cells genuinely become FB-driven O
         # responders. Strong-but-not-crushing inhibition keeps NO ~0 and lands O in
@@ -184,7 +184,7 @@ TRANSITIONS = {
         fix={"apical_drive_threshold": 0.13},
         clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.35, 0.52)},
         ff=I([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.040),
-        fb=I([0.075, 0.075, 0.058], 0.35, 0.012, [0.030, 0.030, 0.018], [0.17, 0.17, 0.13]),
+        fb=I([0.075, 0.075, 0.070], 0.35, 0.012, [0.030, 0.030, 0.028], [0.17, 0.17, 0.16]),
         lat=I([0.12], 0.30, 0.025, 0.04, 0.32),
         pvlat=I([0.10], 0.30, 0.025, 0.03, 0.30),
         pv=I([0.20, 0.20, 0.08], 0.26, 0.025, [0.07, 0.07, 0.0], [0.38, 0.38, 0.20]),
@@ -199,50 +199,58 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FF_un": S(
-        0.265,
+        0.175,
         clip={"apical_drive_threshold": (0.85, None), "apical_gain_strength": (3.5, 8.0), "baseline_drive_sigma": (0.14, 0.30)},
-        ff=I([0.115, 0.115, 0.070], 0.36, 0.020, [0.040, 0.040, 0.0], [0.22, 0.22, 0.14]),
+        ff=I([0.115, 0.115, 0.115], 0.36, 0.020, [0.040, 0.040, 0.040], [0.22, 0.22, 0.22]),
         fb=I([0.001, 0.001, 0.001], 0.45, 0.002, hi=0.020),
         lat=I([0.075], 0.40, 0.018, 0.020, 0.22),
         pvlat=I([0.08], 0.45, 0.025, hi=0.25),
         pv=I([0.025, 0.025, 0.012], 0.35, 0.008, [0.006, 0.006, 0.0], [0.08, 0.08, 0.06]),
     ),
     "FF_FB_broad": S(
-        0.055,
+        0.080,
+        # Strong broadly-tuned naive NO responder whose FF fully adapts away while
+        # the (now strengthened) feedback takes over -> a clear expert O responder
+        # (NO ~ 0, O in the 1.0-1.5 band) -- the canonical "FF replaced by FB"
+        # transition the data shows. Strong FF -> high naive NO; strong FB -> high
+        # expert O; the FF->PV surround cancels the full-image feedback at expert
+        # so the full (NO) response stays adapted while the occluded (O) rises.
         fix={"apical_drive_threshold": 0.16},
-        clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.30, 0.50)},
-        ff=I([0.145, 0.145, 0.004], 0.22, 0.012, [0.040, 0.040, 0.0], [0.205, 0.205, 0.016]),
-        fb=I([0.080, 0.080, 0.026], 0.30, 0.008, [0.030, 0.030, 0.0], [0.20, 0.20, 0.065]),
-        lat=I([0.10], 0.28, 0.022, 0.04, 0.36),
-        pvlat=I([0.07], 0.35, 0.018, 0.02, 0.24),
-        pv=I([0.18, 0.18, 0.08], 0.25, 0.026, [0.06, 0.06, 0.0], [0.42, 0.42, 0.20]),
+        clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.20, 0.34)},
+        ff=I([0.22, 0.22, 0.150], 0.24, 0.014, [0.080, 0.080, 0.040], [0.34, 0.34, 0.26]),
+        fb=I([0.185, 0.185, 0.026], 0.28, 0.010, [0.090, 0.090, 0.0], [0.36, 0.36, 0.065]),
+        lat=I([0.14], 0.28, 0.022, 0.05, 0.40),
+        pvlat=I([0.08], 0.35, 0.018, 0.02, 0.26),
+        pv=I([0.26, 0.26, 0.10], 0.25, 0.026, [0.10, 0.10, 0.0], [0.50, 0.50, 0.24]),
     ),
     "FF_FB_broad_weak": S(
-        0.063,
+        0.082,
         # Broadly tuned, FF adapts away, only a moderate feedback O survives ->
         # weak expert O responders (NO~0, O~0.5) that fill the contiguous band
         # between nonresponders and the strong +O cloud. The FF->PV drive
         # surround-suppresses the full image at expert.
         fix={"apical_drive_threshold": 0.12},
         clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.38, 0.55)},
-        ff=I([0.18, 0.18, 0.010], 0.26, 0.014, [0.08, 0.08, 0.0], [0.30, 0.30, 0.03]),
+        ff=I([0.18, 0.18, 0.130], 0.26, 0.014, [0.08, 0.08, 0.04], [0.30, 0.30, 0.24]),
         fb=I([0.100, 0.100, 0.020], 0.30, 0.010, [0.045, 0.045, 0.0], [0.165, 0.165, 0.05]),
         lat=I([0.13], 0.30, 0.022, 0.05, 0.30),
         pvlat=I([0.28], 0.30, 0.030, 0.10, 0.52),
         pv=I([0.28, 0.28, 0.09], 0.26, 0.026, [0.12, 0.12, 0.0], [0.52, 0.52, 0.22]),
     ),
     "FF_FB_broad_novel": S(
-        0.038,
-        # Lower drive threshold + stronger generalized novel feedback so the novel
-        # context actually drives O too -> an emergent mixed cloud of novel O and NO
-        # responders (not just familiar O).
-        fix={"apical_drive_threshold": 0.13},
-        clip={"apical_gain_strength": (2.8, 4.8), "baseline_drive_sigma": (0.24, 0.44)},
-        ff=I([0.050, 0.050, 0.085], 0.30, 0.012, [0.015, 0.015, 0.025], [0.15, 0.15, 0.18]),
-        fb=I([0.160, 0.160, 0.080], 0.24, 0.012, [0.060, 0.060, 0.020], [0.30, 0.30, 0.16]),
-        lat=I([0.14], 0.28, 0.024, 0.04, 0.46),
+        0.055,
+        # Strong novel feedforward (gain-amplified -> strong novel NO) AND strong
+        # generalized novel feedback crossing a low drive threshold (-> strong novel
+        # O): the model's prediction of novel expert neurons with BOTH strong novel
+        # O and NO. The low novel FF->PV surround leaves the full image unsuppressed
+        # so the novel NO survives alongside the occluded O.
+        fix={"apical_drive_threshold": 0.11},
+        clip={"apical_gain_strength": (3.5, 6.0), "baseline_drive_sigma": (0.20, 0.36)},
+        ff=I([0.050, 0.050, 0.120], 0.30, 0.012, [0.015, 0.015, 0.045], [0.15, 0.15, 0.22]),
+        fb=I([0.160, 0.160, 0.150], 0.24, 0.012, [0.060, 0.060, 0.060], [0.30, 0.30, 0.28]),
+        lat=I([0.12], 0.28, 0.024, 0.04, 0.40),
         pvlat=I([0.09], 0.35, 0.018, 0.02, 0.28),
-        pv=I([0.24, 0.24, 0.10], 0.25, 0.026, [0.08, 0.08, 0.0], [0.50, 0.50, 0.24]),
+        pv=I([0.22, 0.22, 0.07], 0.25, 0.026, [0.08, 0.08, 0.0], [0.46, 0.46, 0.18]),
     ),
     "FF_FB_narrow_familiar": S(
         0.013,
@@ -293,7 +301,7 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FB_FB": S(
-        0.026,
+        0.048,
         # Strong, broadly generalizing feedback with little FF -> O responders with
         # small NO. The symmetric (familiar+novel) feedback also drives the occluded
         # novel response, so this is the main source of novel O responders. Surround
@@ -313,9 +321,9 @@ TRANSITIONS = {
         # occluded (O) response, so it lands mostly in -NO / -O rather than gaining
         # O. Kept modest so naive O stays in a realistic 0.5-1.5 band.
         fix={"apical_drive_threshold": 0.13},
-        clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.12, 0.28)},
+        clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.18, 0.32)},
         ff=I([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.04),
-        fb=I([0.150, 0.150, 0.075], 0.30, 0.012, [0.060, 0.060, 0.020], [0.28, 0.28, 0.14]),
+        fb=I([0.150, 0.150, 0.130], 0.30, 0.012, [0.060, 0.060, 0.050], [0.28, 0.28, 0.26]),
         lat=I([0.12], 0.32, 0.025, 0.03, 0.26),
         pvlat=I([0.45], 0.30, 0.040, 0.18, 0.85),
         pv=I([0.55, 0.55, 0.20], 0.30, 0.040, [0.18, 0.18, 0.04], [0.90, 0.90, 0.46]),
@@ -331,7 +339,7 @@ TRANSITIONS = {
         fix={"apical_drive_threshold": 0.13},
         clip={"apical_gain_strength": (4.0, 6.5), **O_RESPONDER_BASELINE},
         ff=I([0.02, 0.02, 0.01], 0.40, 0.008, hi=0.06),
-        fb=I([0.30, 0.30, 0.12], 0.22, 0.025, [0.16, 0.16, 0.05], [0.50, 0.50, 0.26]),
+        fb=I([0.30, 0.30, 0.26], 0.22, 0.025, [0.16, 0.16, 0.13], [0.50, 0.50, 0.46]),
         lat=I([0.13], 0.30, 0.025, 0.05, 0.32),
         pvlat=I([0.40], 0.28, 0.040, 0.18, 0.70),
         pv=I([0.25, 0.25, 0.12], 0.26, 0.030, [0.10, 0.10, 0.03], [0.50, 0.50, 0.30]),
@@ -472,6 +480,23 @@ def _center_config(transition: str) -> dict[str, Any]:
     for key, init_spec in spec["init"].items():
         center = np.asarray(init_spec[0], dtype=float)
         _set_init(config, key, _clip_array(center, init_spec[3], init_spec[4]))
+    config.update(spec["fix"])
+    for key, (lo, hi) in (GLOBAL_SCALAR_CLIP | spec["clip"]).items():
+        if key in config and _is_num(config[key]):
+            config[key] = _clip(float(config[key]), lo, hi)
+    _apply_shared_learning_rates(config)
+    config.update(_canonical_transition=transition, _sample_idx=0, _sample_global_idx=0)
+    return config
+
+
+def _canonical_config(transition: str) -> dict[str, Any]:
+    """The raw config_s canonical example, processed like the sampled cells (the
+    per-transition `fix`/`clip`/shared-learning-rate pipeline) but KEEPING the
+    config_s initial weights -- so the canonical examples are comparable to (and
+    can be highlighted on) the sampler scatter, and can be contrasted with the
+    drifted `_center_config` centers."""
+    config = copy.deepcopy(minimal_configs3[transition])
+    spec = TRANSITIONS[transition]
     config.update(spec["fix"])
     for key, (lo, hi) in (GLOBAL_SCALAR_CLIP | spec["clip"]).items():
         if key in config and _is_num(config[key]):
@@ -731,12 +756,78 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
-# Center panels are rendered with the canonical experiment_s protocol so they
-# look like minimal2/plotsexperiment_s/transition_panels (the per-step EMA time
-# constants need a long enough stimulus window to develop; the scatter's short
-# probe truncates them).
+# Center/canonical panels are rendered with the canonical experiment_s protocol
+# (long stimulus window) so the per-step EMA dynamics develop and the traces look
+# like minimal2/plotsexperiment_s/transition_panels.
 CENTER_PANEL_N_STEPS = 400
 CENTER_PANEL_TEST_TRIALS = 4
+
+
+def _run_panel_config(
+    transition: str,
+    config: dict[str, Any],
+    *,
+    training_trials: int,
+) -> tuple[str, pd.DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+    """Lightweight naive->train->expert run for ONE config, full + occlusion traces
+    only (no ablation variants), for the transition-panel plot. Module-level so it
+    can be parallelised."""
+    model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
+    stimuli = _build_test_stimuli(n_steps_per_phase=CENTER_PANEL_N_STEPS, n_trials=CENTER_PANEL_TEST_TRIALS)
+    training = _build_training_stimuli(n_steps_per_phase=CENTER_PANEL_N_STEPS, n_trials=training_trials)
+
+    frames: list[pd.DataFrame] = []
+
+    def probe(phase: str) -> None:
+        for condition, (x_full, c_full) in stimuli.items():
+            frames.append(run_experimental_phase(model, x_full, c_full, f"full_{condition}_{phase}", update=False))
+            frames.append(run_experimental_phase(model, torch.zeros_like(x_full), c_full, f"occlusion_{condition}_{phase}", update=False))
+
+    probe("naive")
+    run_experimental_phase(model, training[0], training[1], "full_familiar_training", update=True)
+    probe("expert")
+
+    df = pd.concat([frame.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES) for frame in frames], ignore_index=True)
+    df["seed"] = config.get("seed", 42)
+    long_df = wide_to_long(df)
+    long_df = long_df.loc[long_df["experiment_phase"].isin(["naive", "expert"])].copy()
+    return transition, long_df, stimuli
+
+
+def _save_panels(
+    configs_by_transition: dict[str, dict[str, Any]],
+    *,
+    out_dir: Path,
+    name: str,
+    training_trials: int,
+    image_format: str,
+    n_jobs: int,
+) -> None:
+    """Render a transition panel (full+occlusion traces) for the given configs,
+    parallelised across configs. No per-config CSV (it is huge and not needed for
+    the figure)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    order = list(configs_by_transition)
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(_run_panel_config)(t, configs_by_transition[t], training_trials=training_trials) for t in order
+    )
+    long_dfs = {t: long_df for t, long_df, _ in results}
+    stimuli = results[0][2] if results else None
+    if stimuli is None:
+        return
+    visualize_transition_panel(
+        long_dfs,
+        STIMULI=stimuli,
+        save_path=str(out_dir),
+        name=name,
+        image_mode="both",
+        transition_order=order,
+        transition_labels={t: format_transition_label(t) for t in order},
+        trace_types=("full", "occlusion"),
+        save_in_transition_subdir=False,
+        save_csv=False,
+        image_format=image_format,
+    )
 
 
 def _save_center_panels(
@@ -745,42 +836,26 @@ def _save_center_panels(
     output_dir: Path,
     training_trials: int,
     image_format: str = "png",
+    n_jobs: int = -1,
 ) -> None:
-    """Sanity check: run the experiment_s pipeline at exactly the sampler centers
-    and save the grouped naive->expert transition panel into <output_dir>/center_panels/.
-
-    This makes the center each transition is sampled around inspectable alongside
-    the aggregate scatter, so the centers can be sanity-checked against the model
-    mechanism instead of only being trusted implicitly. Uses the canonical
-    `n_steps_per_phase` (400) so the traces match the reference transition panels.
-    """
-    center_dir = output_dir / "center_panels"
-    center_dir.mkdir(parents=True, exist_ok=True)
-
-    long_dfs_by_transition: dict[str, pd.DataFrame] = {}
-    shared_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
-    for transition in transition_order:
-        config = _center_config(transition)
-        df, stimuli = run_experiment(
-            config,
-            n_steps_per_phase=CENTER_PANEL_N_STEPS,
-            test_trials=CENTER_PANEL_TEST_TRIALS,
-            training_trials=training_trials,
-        )
-        long_dfs_by_transition[transition] = wide_to_long(df)
-        if shared_stimuli is None:
-            shared_stimuli = stimuli
-
-    if shared_stimuli is None:
-        return
-    save_grouped_transition_panels(
-        long_dfs_by_transition,
-        stimuli=shared_stimuli,
-        save_path=str(center_dir),
-        transition_order=transition_order,
-        transition_labels={name: format_transition_label(name) for name in transition_order},
-        save_in_transition_subdir=False,
+    """Sanity check: transition panels for the exact (noise-free) sampler centers
+    AND the raw config_s canonical examples, so both can be checked against the
+    model mechanism (the centers can drift from what their names imply)."""
+    _save_panels(
+        {t: _center_config(t) for t in transition_order},
+        out_dir=output_dir / "center_panels",
+        name="center_transition_panel_naive_expert",
+        training_trials=training_trials,
         image_format=image_format,
+        n_jobs=n_jobs,
+    )
+    _save_panels(
+        {t: _canonical_config(t) for t in transition_order},
+        out_dir=output_dir / "canonical_panels",
+        name="canonical_transition_panel_naive_expert",
+        training_trials=training_trials,
+        image_format=image_format,
+        n_jobs=n_jobs,
     )
 
 
@@ -811,7 +886,84 @@ def _robust_shift_limits(summaries: list[pd.DataFrame], *, hi_percentile: float,
     return [-extent, extent]
 
 
-def _save_summary(summary: pd.DataFrame, path: Path, title: str, response_lims: list[float], shift_lims: list[float], export_panels: bool, image_format: str) -> None:
+def _panel_point_summaries(
+    configs_by_transition: dict[str, dict[str, Any]],
+    *,
+    args: argparse.Namespace,
+    test_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    training_stimuli: tuple[torch.Tensor, torch.Tensor],
+) -> dict[str, pd.DataFrame]:
+    """One (NO, O) naive/expert position per transition, run through exactly the
+    scatter pipeline (per-cell denominator and all), for overlaying the canonical
+    examples / sampler centers on the aggregate scatter."""
+    frames = []
+    for idx, (name, config) in enumerate(configs_by_transition.items(), start=1):
+        cfg = copy.deepcopy(config)
+        cfg.update(_canonical_transition=name, _sample_idx=1, _sample_global_idx=idx)
+        cfg.setdefault("seed", 42)
+        frames.append(
+            _run_sample(
+                cfg,
+                n_steps_per_phase=args.n_steps_per_phase,
+                response_tail_fraction=args.response_tail_fraction,
+                zscore_responses=not args.raw_responses,
+                test_stimuli=test_stimuli,
+                training_stimuli=training_stimuli,
+                response_normalization=args.response_normalization,
+                zscore_std_floor=args.zscore_std_floor,
+            )
+        )
+    wide = _wide_table(_transition_table(pd.concat(frames, ignore_index=True)))
+    out: dict[str, pd.DataFrame] = {}
+    for group in ("familiar", "novel"):
+        piv = wide.loc[wide["image_group"] == group].pivot_table(
+            index="transition", columns="stage", values=["NO", "O"], aggfunc="mean"
+        )
+        df = pd.DataFrame({
+            "transition": piv.index.to_numpy(),
+            "NO_Pre": piv[("NO", "Naive")].to_numpy(),
+            "O_Pre": piv[("O", "Naive")].to_numpy(),
+            "NO_Target": piv[("NO", "Expert")].to_numpy(),
+            "O_Target": piv[("O", "Expert")].to_numpy(),
+        })
+        df["dNO"] = df["NO_Target"] - df["NO_Pre"]
+        df["dO"] = df["O_Target"] - df["O_Pre"]
+        out[group] = df
+    return out
+
+
+def _overlay_examples(fig: plt.Figure, points: pd.DataFrame, *, marker: str, color: str, label: str, annotate: bool) -> None:
+    """Overlay highlighted example points (one per transition) on the three
+    'by rotated sector' panels (naive / expert / shift)."""
+    # 3x3 grid -> fig.axes = [(0,0),(0,1),(0,2),(1,0),(1,1),(1,2),...]; the sector
+    # panels are (1,0)=shift, (1,1)=naive, (1,2)=expert.
+    ax_shift, ax_naive, ax_expert = fig.axes[3], fig.axes[4], fig.axes[5]
+    for ax, (xc, yc) in ((ax_naive, ("NO_Pre", "O_Pre")), (ax_expert, ("NO_Target", "O_Target")), (ax_shift, ("dNO", "dO"))):
+        ax.scatter(points[xc], points[yc], s=95, marker=marker, facecolors="none", edgecolors=color, linewidths=1.7, zorder=6, label=label)
+    if annotate:
+        for _, row in points.iterrows():
+            ax_expert.annotate(
+                format_transition_label(str(row["transition"])),
+                (row["NO_Target"], row["O_Target"]),
+                fontsize=5.5, color=color, zorder=7, xytext=(3, 2), textcoords="offset points",
+            )
+    handles, labels = ax_expert.get_legend_handles_labels()
+    seen: dict[str, Any] = {}
+    for h, lb in zip(handles, labels):
+        seen.setdefault(lb, h)
+    ax_expert.legend(seen.values(), seen.keys(), loc="upper right", fontsize=7, frameon=True)
+
+
+def _save_summary(
+    summary: pd.DataFrame,
+    path: Path,
+    title: str,
+    response_lims: list[float],
+    shift_lims: list[float],
+    export_panels: bool,
+    image_format: str,
+    overlays: list[tuple[pd.DataFrame, dict]] | None = None,
+) -> None:
     fig = th.plot_mean_transition_summary(
         summary,
         title=title,
@@ -821,6 +973,8 @@ def _save_summary(summary: pd.DataFrame, path: Path, title: str, response_lims: 
         shift_lims=shift_lims,
         style=PLOT_STYLE,
     )
+    for points, style in overlays or []:
+        _overlay_examples(fig, points, **style)
     path = path.with_suffix(f".{image_format}")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=300, bbox_inches="tight")
@@ -840,10 +994,12 @@ def _save_plots(
     export_panels: bool,
     image_format: str,
     axis_clip_percentile: float,
+    overlays_by_group: dict[str, list[tuple[pd.DataFrame, dict]]] | None = None,
 ) -> None:
     figures_dir = output_dir / "figures"
     summaries_dir = output_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
+    overlays_by_group = overlays_by_group or {}
 
     wide = _wide_table(transition_table)
     aggregate = {
@@ -870,6 +1026,7 @@ def _save_plots(
             shift_lims,
             export_panels,
             image_format,
+            overlays=overlays_by_group.get(group),
         )
 
     if plot_by_transition:
@@ -961,6 +1118,25 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     }
     (args.output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, default=repr))
 
+    overlays_by_group: dict[str, list[tuple[pd.DataFrame, dict]]] = {}
+    if not args.no_overlay_examples and not args.canonical_only:
+        canonical = _panel_point_summaries(
+            {t: _canonical_config(t) for t in transition_order},
+            args=args, test_stimuli=test_stimuli, training_stimuli=training_stimuli,
+        )
+        centers = _panel_point_summaries(
+            {t: _center_config(t) for t in transition_order},
+            args=args, test_stimuli=test_stimuli, training_stimuli=training_stimuli,
+        )
+        for group in ("familiar", "novel"):
+            overlays_by_group[group] = [
+                (centers[group], {"marker": "D", "color": "0.35", "label": "sampler center", "annotate": False}),
+                (canonical[group], {"marker": "*", "color": "black", "label": "config_s canonical", "annotate": True}),
+            ]
+        canonical_csv = pd.concat([df.assign(image_group=g, kind="canonical") for g, df in canonical.items()], ignore_index=True)
+        center_csv = pd.concat([df.assign(image_group=g, kind="center") for g, df in centers.items()], ignore_index=True)
+        pd.concat([canonical_csv, center_csv], ignore_index=True).to_csv(args.output_dir / "example_points.csv", index=False)
+
     _save_plots(
         transition_table,
         output_dir=args.output_dir,
@@ -970,6 +1146,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         export_panels=args.export_panels,
         image_format=args.image_format,
         axis_clip_percentile=args.axis_clip_percentile,
+        overlays_by_group=overlays_by_group,
     )
 
     if not args.skip_center_panels and not args.canonical_only:
@@ -978,6 +1155,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
             output_dir=args.output_dir,
             training_trials=args.training_trials,
             image_format=args.image_format,
+            n_jobs=args.n_jobs,
         )
 
 
@@ -1009,6 +1187,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-format", choices=("png", "svg", "eps"), default="png", help="Figure output format (default png).")
     parser.add_argument("--axis-clip-percentile", type=float, default=99.0, help="Scale figure axes to this percentile of responses so a few extreme outliers fall outside the panel (100 = exact min/max like the real-data notebook).")
     parser.add_argument("--skip-center-panels", action="store_true", help="Skip the experiment_s transition panel for the exact sampler centers.")
+    parser.add_argument("--no-overlay-examples", action="store_true", help="Do not overlay the config_s canonical examples and sampler centers on the aggregate scatter.")
     parser.add_argument("--plot-by-transition", action="store_true")
     parser.add_argument("--skip-by-transition", action="store_true", help="Accepted for old commands; aggregate-only plots are the default.")
     parser.add_argument("--export-panels", action="store_true")

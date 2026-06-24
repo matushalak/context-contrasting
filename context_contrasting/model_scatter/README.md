@@ -71,12 +71,18 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   distribution (`99` by default) so a few extreme outliers fall outside the panel
   instead of compressing it; `100` reproduces the real-data notebook's exact
   min/max framing.
-- `--skip-center-panels`: by default every run also writes `center_panels/`: the
-  `experiment_s` naive->expert transition panel (and FAM/NOV response matrices)
-  for configs built from exactly the (noise-free) sampler centers, so the centers
-  each transition is sampled around can be sanity-checked against the model
-  mechanism. These are rendered with the canonical `n_steps_per_phase` (400) so
-  the traces match `minimal2/plotsexperiment_s/transition_panels`.
+- `--skip-center-panels`: by default every run also writes `center_panels/` and
+  `canonical_panels/`: the naive->expert transition panel (full + occlusion
+  traces) for configs built from the noise-free sampler centers (`center_panels`)
+  and for the raw `config_s` canonical examples (`canonical_panels`), so both can
+  be sanity-checked against the model mechanism (the sampler centers can drift
+  from what their names imply). Rendered with the canonical `n_steps_per_phase`
+  (400) so the traces match `minimal2/plotsexperiment_s/transition_panels`. These
+  runs are parallelised across transitions (use `--n-jobs`).
+- `--no-overlay-examples`: by default the aggregate scatter highlights one point
+  per transition for the `config_s` canonical examples (black stars, labelled)
+  and the sampler centers (gray diamonds), each run through the full scatter
+  pipeline; their positions are also written to `example_points.csv`.
 - `--initial-condition-mode spec|canonical-neighborhood`: sample from the
   compact transition range table, or sample around the raw canonical config
   while still clipping to the transition bounds.
