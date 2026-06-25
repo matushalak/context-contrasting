@@ -54,10 +54,10 @@ INIT_ALIASES = {
 }
 FIXED_SCALARS = ("lr_ff", "lr_fb", "lr_lat", "lr_pv", "pyc_decay", "pv_decay")
 SHARED_LEARNING_RATES = {
-    "lr_ff": 0.045,
-    "lr_fb": 0.0015,
-    "lr_lat": 0.0045,
-    "lr_pv": 0.009,
+    "lr_ff": 0.015,
+    "lr_fb": 0.0005,
+    "lr_lat": 0.0015,
+    "lr_pv": 0.003,
 }
 
 # Feedforward plasticity (anti-Hebbian adaptation) scale is a property of tuning
@@ -231,7 +231,7 @@ TRANSITIONS = {
         # surround-suppresses the full image at expert.
         fix={"apical_drive_threshold": 0.12},
         clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.30, 0.46)},
-        ff=I([0.155, 0.155, 0.115], 0.26, 0.014, [0.06, 0.06, 0.035], [0.27, 0.27, 0.21]),
+        ff=I([0.095, 0.095, 0.075], 0.26, 0.014, [0.035, 0.035, 0.025], [0.20, 0.20, 0.16]),
         fb=I([0.190, 0.190, 0.028], 0.30, 0.012, [0.080, 0.080, 0.0], [0.32, 0.32, 0.065]),
         lat=I([0.13], 0.30, 0.022, 0.05, 0.30),
         pvlat=I([0.18], 0.30, 0.030, 0.06, 0.42),
@@ -310,9 +310,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (4.0, 7.0), "baseline_drive_sigma": (0.24, 0.40)},
         ff=I([0.001, 0.001, 0.001], 0.60, 0.003, hi=0.010),
         fb=I([0.32, 0.32, 0.32], 0.26, 0.025, [0.16, 0.16, 0.16], [0.58, 0.58, 0.58]),
-        lat=I([0.20], 0.30, 0.026, 0.08, 0.42),
+        lat=I([0.14], 0.30, 0.026, 0.05, 0.34),
         pvlat=I([0.12], 0.32, 0.022, 0.04, 0.32),
-        pv=I([0.36, 0.36, 0.36], 0.28, 0.034, [0.14, 0.14, 0.14], [0.62, 0.62, 0.62]),
+        pv=I([0.28, 0.28, 0.28], 0.28, 0.034, [0.09, 0.09, 0.09], [0.52, 0.52, 0.52]),
     ),
     "fb_fb_weak": S(
         0.030,
@@ -340,9 +340,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (4.0, 6.5), **O_RESPONDER_BASELINE},
         ff=I([0.004, 0.004, 0.004], 0.40, 0.004, hi=0.018),
         fb=I([0.32, 0.32, 0.32], 0.22, 0.025, [0.17, 0.17, 0.17], [0.56, 0.56, 0.56]),
-        lat=I([0.24], 0.28, 0.026, 0.10, 0.48),
-        pvlat=I([0.40], 0.28, 0.040, 0.18, 0.70),
-        pv=I([0.48, 0.48, 0.42], 0.24, 0.034, [0.22, 0.22, 0.18], [0.78, 0.78, 0.72]),
+        lat=I([0.18], 0.28, 0.026, 0.07, 0.38),
+        pvlat=I([0.32], 0.28, 0.040, 0.12, 0.62),
+        pv=I([0.38, 0.38, 0.34], 0.24, 0.034, [0.16, 0.16, 0.12], [0.68, 0.68, 0.62]),
     ),
 }
 
@@ -1105,6 +1105,9 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "transition_weights": {name: TRANSITIONS[name]["weight"] for name in transition_order},
         "initial_condition_mode": args.initial_condition_mode,
         "seed": args.seed,
+        "n_steps_per_phase": args.n_steps_per_phase,
+        "test_trials": args.test_trials,
+        "training_trials": args.training_trials,
         "fixed_scalars": list(FIXED_SCALARS),
         "response_units": "raw" if args.raw_responses else "zscore",
         "response_normalization": "none" if args.raw_responses else args.response_normalization,
@@ -1167,9 +1170,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--n-samples", type=int, default=1200)
     parser.add_argument("--samples-per-transition", type=int, default=None, help="Compatibility override: draw len(transitions) * this many samples.")
-    parser.add_argument("--n-steps-per-phase", type=int, default=100)
+    parser.add_argument("--n-steps-per-phase", type=int, default=400)
     parser.add_argument("--test-trials", type=int, default=2)
-    parser.add_argument("--training-trials", type=int, default=6)
+    parser.add_argument("--training-trials", type=int, default=5)
     parser.add_argument("--seed", type=int, default=20260604)
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument("--weight-noise-rel", type=float, default=0.55)

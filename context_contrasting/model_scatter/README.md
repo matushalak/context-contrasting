@@ -61,8 +61,12 @@ The main tuning levers are at the top of `run_model_scatter.py`:
 - `--n-samples`: total cells to draw from the weighted transition mixture
   (`1200` by default, so the model distribution is smoother than the empirical
   sample).
-- `--training-trials`: familiar-training repeats (`6` by default for the
-  expert/task scatter regime).
+- `--n-steps-per-phase`: simulation steps per trial (`400` by default, matching
+  the canonical trace experiment).
+- `--test-trials`: test repeats per stimulus (`2` by default; this keeps the
+  scatter runs much faster than the canonical trace exports).
+- `--training-trials`: familiar-training repeats (`5` by default, matching the
+  canonical trace experiment).
 - `--samples-per-transition`: compatibility override for old commands; draws
   `len(transitions) * value` samples.
 - `--transition-sampling data-like|equal`: random weighted transition draws or
