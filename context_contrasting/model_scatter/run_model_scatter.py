@@ -164,7 +164,7 @@ TRANSITIONS = {
         pv=I([0.025, 0.025, 0.025], 0.45, 0.012, hi=0.10),
     ),
     "un_un": S(
-        0.112,
+        0.098,
         # A weakly tuned cell that simply does not receive feedback (context off
         # via the canonical config); plasticity stays on, it just stays subthreshold.
         fix={"receives_context": (False, False, False)},
@@ -224,30 +224,30 @@ TRANSITIONS = {
         pv=I([0.26, 0.26, 0.10], 0.25, 0.026, [0.10, 0.10, 0.0], [0.50, 0.50, 0.24]),
     ),
     "FF_FB_broad_weak": S(
-        0.082,
+        0.112,
         # Broadly tuned, FF adapts away, only a moderate feedback O survives ->
         # weak expert O responders (NO~0, O~0.5) that fill the contiguous band
         # between nonresponders and the strong +O cloud. The FF->PV drive
         # surround-suppresses the full image at expert.
         fix={"apical_drive_threshold": 0.12},
-        clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.38, 0.55)},
-        ff=I([0.18, 0.18, 0.130], 0.26, 0.014, [0.08, 0.08, 0.04], [0.30, 0.30, 0.24]),
-        fb=I([0.115, 0.115, 0.022], 0.30, 0.010, [0.045, 0.045, 0.0], [0.20, 0.20, 0.055]),
+        clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.30, 0.46)},
+        ff=I([0.155, 0.155, 0.115], 0.26, 0.014, [0.06, 0.06, 0.035], [0.27, 0.27, 0.21]),
+        fb=I([0.190, 0.190, 0.028], 0.30, 0.012, [0.080, 0.080, 0.0], [0.32, 0.32, 0.065]),
         lat=I([0.13], 0.30, 0.022, 0.05, 0.30),
-        pvlat=I([0.28], 0.30, 0.030, 0.10, 0.52),
+        pvlat=I([0.18], 0.30, 0.030, 0.06, 0.42),
         pv=I([0.28, 0.28, 0.09], 0.26, 0.026, [0.12, 0.12, 0.0], [0.52, 0.52, 0.22]),
     ),
     "FF_FB_broad_novel": S(
-        0.064,
+        0.082,
         # Strong novel feedforward (gain-amplified -> strong novel NO) AND strong
         # generalized novel feedback crossing a low drive threshold (-> strong novel
         # O): the model's prediction of novel expert neurons with BOTH strong novel
         # O and NO. The low novel FF->PV surround leaves the full image unsuppressed
         # so the novel NO survives alongside the occluded O.
         fix={"apical_drive_threshold": 0.14},
-        clip={"apical_gain_strength": (3.5, 6.0), "baseline_drive_sigma": (0.20, 0.36)},
-        ff=I([0.050, 0.050, 0.055], 0.28, 0.010, [0.015, 0.015, 0.025], [0.15, 0.15, 0.12]),
-        fb=I([0.125, 0.125, 0.145], 0.24, 0.012, [0.040, 0.040, 0.060], [0.27, 0.27, 0.30]),
+        clip={"apical_gain_strength": (3.5, 6.0), "baseline_drive_sigma": (0.24, 0.42)},
+        ff=I([0.048, 0.048, 0.050], 0.28, 0.010, [0.015, 0.015, 0.022], [0.14, 0.14, 0.11]),
+        fb=I([0.118, 0.118, 0.130], 0.24, 0.012, [0.038, 0.038, 0.055], [0.25, 0.25, 0.27]),
         lat=I([0.12], 0.28, 0.024, 0.04, 0.40),
         pvlat=I([0.09], 0.35, 0.018, 0.02, 0.28),
         pv=I([0.22, 0.22, 0.18], 0.25, 0.026, [0.08, 0.08, 0.06], [0.46, 0.46, 0.34]),
@@ -301,7 +301,7 @@ TRANSITIONS = {
         pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
     "FB_FB": S(
-        0.048,
+        0.060,
         # Strong, broadly generalizing feedback with little FF -> O responders with
         # small NO. The symmetric (familiar+novel) feedback also drives the occluded
         # novel response, so this is the main source of novel O responders. Surround
@@ -315,7 +315,7 @@ TRANSITIONS = {
         pv=I([0.36, 0.36, 0.36], 0.28, 0.034, [0.14, 0.14, 0.14], [0.62, 0.62, 0.62]),
     ),
     "fb_fb_weak": S(
-        0.022,
+        0.030,
         # Moderate naive feedback-driven O responder. With FF adaptation and a
         # ramping surround it tends to shed full-image (NO) drive faster than the
         # occluded (O) response, so it lands mostly in -NO / -O rather than gaining
@@ -329,7 +329,7 @@ TRANSITIONS = {
         pv=I([0.55, 0.55, 0.42], 0.30, 0.040, [0.18, 0.18, 0.12], [0.90, 0.90, 0.75]),
     ),
     "O_un": S(
-        0.030,
+        0.040,
         # Moderate naive occluded (FB-driven) responder with little FF -> a low-NO,
         # moderate-O naive cloud (the elevated baseline keeps O ~1.0 rather than
         # blowing the z-score up to ~3). At expert the surround ramps and the
