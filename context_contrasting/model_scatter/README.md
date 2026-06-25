@@ -36,6 +36,25 @@ python -m context_contrasting.model_scatter.run_model_scatter \
   --training-trials 5
 ```
 
+Fixed-PV mini variant:
+
+```bash
+python -m context_contrasting.model_scatter.run_model_scatter_mini \
+  --n-samples 250 \
+  --n-jobs 10 \
+  --skip-center-panels \
+  --output-dir context_contrasting/model_scatter/outputs_mini_final200 \
+  --n-steps-per-phase 200 \
+  --test-trials 2 \
+  --training-trials 5
+```
+
+`run_model_scatter_mini.py` disables plasticity of `W_pv` and `w_pv_lat`, so
+only `w_ff`, `w_fb`, and `w_lat` learn during familiar training. Its tuned
+defaults pre-strengthen fixed PV feedforward tuning (`--pv-init-scale 1.5`) and
+increase lateral learning (`--lat-lr-scale 2.0`); both remain command-line
+controls for follow-up sweeps.
+
 Canonical-only run:
 
 ```bash
