@@ -1,3 +1,29 @@
+"""Generate the model rotated-sector scatterplots that approximate the real
+chronic-imaging transitions (Seignette et al.) with the minimal two-compartment
+PyC + PV circuit (``minimal2``).
+
+Pipeline
+--------
+1. Draw a population of model cells. Each cell is a noisy variant of one of the
+   canonical ``minimal2/config_s`` transition templates (see ``TRANSITIONS``):
+   its initial synaptic weights and a few scalar parameters are jittered
+   (``_perturb_config``). The mixture proportions in ``TRANSITIONS`` set how many
+   cells of each type are drawn, so the simulated population mirrors the measured
+   one.
+2. Run every cell through the experimental protocol (``_run_sample``): a naive
+   probe of all stimuli, a block of familiar-image training (the only phase with
+   plasticity on), then an expert probe.
+3. Read out, for each stimulus, the full ("NO", non-occluded) and occluded ("O")
+   responses, z-scored to the cell's naive-probe baseline, and take the
+   naive->expert shift (dNO, dO).
+4. Classify each cell into a rotated sector (+NO / +O / -NO / -O / small) from the
+   angle of its shift, and plot/aggregate exactly like the real-data notebook
+   (``data_analysis/transitions_helpers``) at the same threshold (0.3).
+
+The two output panels are the model analogues of the real **familiar** (post,
+-NO dominant) and **novel** (post, +NO dominant) populations.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -23,7 +49,6 @@ from context_contrasting.minimal2.experiment_s import (
     STIMULUS_SPECS,
     _build_test_stimuli,
     _build_training_stimuli,
-    run_experiment,
     run_experimental_phase,
 )
 from context_contrasting.minimal2.minimal_s import CCNeuron
@@ -80,6 +105,8 @@ NARROW_TRANSITIONS = frozenset({
 
 
 def _ff_plasticity_scale(transition: str) -> float:
+    """FF (anti-Hebbian) plasticity scale for a transition, set purely by tuning
+    width: narrow cells adapt weakly, broad cells strongly (see above)."""
     return FF_PLASTICITY_NARROW if transition in NARROW_TRANSITIONS else FF_PLASTICITY_BROAD
 
 PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
@@ -92,20 +119,46 @@ PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
 }
 
 
-def I(center: list[float], rel: float, floor: float, lo: Any = 0.0, hi: Any = 1.0) -> tuple:
-    return (center, rel, floor, lo, hi)
+def weight_init(
+    center: list[float],
+    rel_noise: float,
+    noise_floor: float,
+    lo: Any = 0.0,
+    hi: Any = 1.0,
+) -> tuple:
+    """Sampling spec for one synaptic-weight vector (one entry per stimulus).
+
+    Each cell draws its initial weights from a Gaussian centred on ``center``
+    with per-element sd ``max(|center| * rel_noise, noise_floor)``, clipped to
+    ``[lo, hi]`` (``lo``/``hi`` may be scalars or per-element lists).
+    """
+    return (center, rel_noise, noise_floor, lo, hi)
 
 
-def S(weight: float, *, fix: dict | None = None, clip: dict | None = None, **inits: tuple) -> dict:
+def transition(
+    sampling_weight: float,
+    *,
+    fixed: dict | None = None,
+    clip: dict | None = None,
+    **weight_inits: tuple,
+) -> dict:
+    """Spec for one transition template (a cell type in the population).
+
+    ``sampling_weight``  -- this type's share of the sampled population.
+    ``fixed``            -- scalar model parameters pinned to a constant value.
+    ``clip``             -- (lo, hi) bounds applied to scalar parameters after
+                            their random perturbation.
+    ``weight_inits``     -- per-synapse ``weight_init`` specs, keyed by the short
+                            aliases in ``INIT_ALIASES`` (ff, fb, lat, pvlat, pv).
+    """
     return {
-        "weight": weight,
-        "init": {INIT_ALIASES[key]: spec for key, spec in inits.items()},
-        "fix": fix or {},
+        "weight": sampling_weight,
+        "init": {INIT_ALIASES[key]: spec for key, spec in weight_inits.items()},
+        "fix": fixed or {},
         "clip": clip or {},
     }
 
 
-BASELINE_MIN = {"baseline_drive_sigma": (0.08, None)}
 NARROW_GAIN_CLIP = {
     "apical_drive_threshold": (1.05, None),
     "apical_gain_strength": (5.5, 9.0),
@@ -136,78 +189,85 @@ O_RESPONDER_BASELINE = {"baseline_drive_sigma": (0.26, 0.42)}
 # sectored. This positions/tightens the O cloud without touching the other cells.
 BASELINE_STD_SCALE = 0.27
 
-# Main sampling knobs: transition proportions and allowed parameter variation.
+# The population mixture. Each entry is one cell type, built with `transition(
+# sampling_weight, fixed=..., clip=..., ff=..., fb=..., lat=..., pvlat=..., pv=...)`.
+# `sampling_weight` is its share of the population; the `ff/fb/lat/pvlat/pv`
+# `weight_init(...)` specs give the (center, rel_noise, noise_floor, lo, hi) of its
+# initial synaptic weights. Broad vs narrow tuning (see NARROW_TRANSITIONS) then
+# sets the FF-plasticity scale and the feedback drive-vs-gain regime. Names encode
+# the mechanism, e.g. FF_FB_narrow_novel = a narrowly tuned cell whose novel-image
+# feedforward drive is gain-amplified by feedback into a +NO response.
 TRANSITIONS = {
-    "weak_FB": S(
+    "weak_FB": transition(
         0.035,
-        fix={
+        fixed={
             "apical_drive_threshold": 0.24,
         },
         clip={"apical_gain_strength": (5.0, 8.5), "baseline_drive_sigma": (0.10, 0.25)},
-        ff=I([0.032, 0.032, 0.014], 0.45, 0.010, [0.006, 0.006, 0.0], [0.075, 0.075, 0.040]),
-        fb=I([0.050, 0.050, 0.040], 0.42, 0.008, [0.012, 0.012, 0.008], [0.105, 0.105, 0.085]),
-        lat=I([0.22], 0.32, 0.030, 0.08, 0.45),
-        pvlat=I([0.12], 0.40, 0.020, 0.03, 0.28),
-        pv=I([0.26, 0.26, 0.22], 0.32, 0.035, [0.10, 0.10, 0.06], [0.52, 0.52, 0.44]),
+        ff=weight_init([0.032, 0.032, 0.014], 0.45, 0.010, [0.006, 0.006, 0.0], [0.075, 0.075, 0.040]),
+        fb=weight_init([0.050, 0.050, 0.040], 0.42, 0.008, [0.012, 0.012, 0.008], [0.105, 0.105, 0.085]),
+        lat=weight_init([0.22], 0.32, 0.030, 0.08, 0.45),
+        pvlat=weight_init([0.12], 0.40, 0.020, 0.03, 0.28),
+        pv=weight_init([0.26, 0.26, 0.22], 0.32, 0.035, [0.10, 0.10, 0.06], [0.52, 0.52, 0.44]),
     ),
-    "weak_FF": S(
+    "weak_FF": transition(
         0.045,
         clip={
             "apical_drive_threshold": (1.05, None),
             "apical_gain_strength": (4.5, 8.0),
             "baseline_drive_sigma": (0.085, 0.17),
         },
-        ff=I([0.080, 0.006, 0.006], 0.42, 0.008, [0.035, 0.0, 0.0], [0.145, 0.020, 0.020]),
-        fb=I([0.045, 0.045, 0.035], 0.40, 0.006, hi=0.100),
-        lat=I([0.02], 0.45, 0.008, hi=0.08),
-        pvlat=I([0.02], 0.45, 0.008, hi=0.08),
-        pv=I([0.025, 0.025, 0.025], 0.45, 0.012, hi=0.10),
+        ff=weight_init([0.080, 0.006, 0.006], 0.42, 0.008, [0.035, 0.0, 0.0], [0.145, 0.020, 0.020]),
+        fb=weight_init([0.045, 0.045, 0.035], 0.40, 0.006, hi=0.100),
+        lat=weight_init([0.02], 0.45, 0.008, hi=0.08),
+        pvlat=weight_init([0.02], 0.45, 0.008, hi=0.08),
+        pv=weight_init([0.025, 0.025, 0.025], 0.45, 0.012, hi=0.10),
     ),
-    "un_un": S(
+    "un_un": transition(
         0.155,
         # A weakly tuned cell that simply does not receive feedback (context off
         # via the canonical config); plasticity stays on, it just stays subthreshold.
-        fix={"receives_context": (False, False, False)},
+        fixed={"receives_context": (False, False, False)},
         clip={"apical_gain_strength": (3.0, 8.0), "apical_drive_threshold": (0.15, 0.50), "baseline_drive_sigma": (0.18, 0.40)},
-        ff=I([0.01, 0.01, 0.01], 0.65, 0.012, hi=0.05),
-        fb=I([0.004, 0.004, 0.004], 0.65, 0.005, hi=0.035),
-        lat=I([0.04], 0.60, 0.020, hi=0.15),
-        pvlat=I([0.08], 0.50, 0.025, hi=0.20),
-        pv=I([0.12, 0.12, 0.12], 0.45, 0.040, hi=0.35),
+        ff=weight_init([0.01, 0.01, 0.01], 0.65, 0.012, hi=0.05),
+        fb=weight_init([0.004, 0.004, 0.004], 0.65, 0.005, hi=0.035),
+        lat=weight_init([0.04], 0.60, 0.020, hi=0.15),
+        pvlat=weight_init([0.08], 0.50, 0.025, hi=0.20),
+        pv=weight_init([0.12, 0.12, 0.12], 0.45, 0.040, hi=0.35),
     ),
-    "un_FB": S(
+    "un_FB": transition(
         0.040,
         # Drive threshold must be low enough that the strengthened (and generalized)
         # feedback actually crosses it, so these cells genuinely become FB-driven O
         # responders. Strong-but-not-crushing inhibition keeps NO ~0 and lands O in
         # the 0.5-1.0 contiguous band rising out of the nonresponders.
-        fix={"apical_drive_threshold": 0.13},
+        fixed={"apical_drive_threshold": 0.13},
         clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.35, 0.52)},
-        ff=I([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.040),
-        fb=I([0.075, 0.075, 0.070], 0.35, 0.012, [0.030, 0.030, 0.028], [0.17, 0.17, 0.16]),
-        lat=I([0.12], 0.30, 0.025, 0.04, 0.32),
-        pvlat=I([0.10], 0.30, 0.025, 0.03, 0.30),
-        pv=I([0.20, 0.20, 0.08], 0.26, 0.025, [0.07, 0.07, 0.0], [0.38, 0.38, 0.20]),
+        ff=weight_init([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.040),
+        fb=weight_init([0.075, 0.075, 0.070], 0.35, 0.012, [0.030, 0.030, 0.028], [0.17, 0.17, 0.16]),
+        lat=weight_init([0.12], 0.30, 0.025, 0.04, 0.32),
+        pvlat=weight_init([0.10], 0.30, 0.025, 0.03, 0.30),
+        pv=weight_init([0.20, 0.20, 0.08], 0.26, 0.025, [0.07, 0.07, 0.0], [0.38, 0.38, 0.20]),
     ),
-    "un_novel_FF": S(
+    "un_novel_FF": transition(
         0.055,
         clip={"apical_drive_threshold": (1.10, None), "apical_gain_strength": (6.0, 11.0), "baseline_drive_sigma": (0.10, 0.21)},
-        ff=I([0.003, 0.003, 0.09], 0.42, 0.005, [0.0, 0.0, 0.03], [0.012, 0.012, 0.20]),
-        fb=I([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
-        lat=I([0.02], 0.45, 0.010, hi=0.10),
-        pvlat=I([0.02], 0.45, 0.010, hi=0.10),
-        pv=I([0.03, 0.03, 0.015], 0.45, 0.010, hi=0.10),
+        ff=weight_init([0.003, 0.003, 0.09], 0.42, 0.005, [0.0, 0.0, 0.03], [0.012, 0.012, 0.20]),
+        fb=weight_init([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
+        lat=weight_init([0.02], 0.45, 0.010, hi=0.10),
+        pvlat=weight_init([0.02], 0.45, 0.010, hi=0.10),
+        pv=weight_init([0.03, 0.03, 0.015], 0.45, 0.010, hi=0.10),
     ),
-    "FF_un": S(
+    "FF_un": transition(
         0.125,
         clip={"apical_drive_threshold": (0.85, None), "apical_gain_strength": (3.5, 8.0), "baseline_drive_sigma": (0.14, 0.30)},
-        ff=I([0.115, 0.115, 0.115], 0.36, 0.020, [0.040, 0.040, 0.040], [0.22, 0.22, 0.22]),
-        fb=I([0.001, 0.001, 0.001], 0.45, 0.002, hi=0.020),
-        lat=I([0.075], 0.40, 0.018, 0.020, 0.22),
-        pvlat=I([0.08], 0.45, 0.025, hi=0.25),
-        pv=I([0.025, 0.025, 0.012], 0.35, 0.008, [0.006, 0.006, 0.0], [0.08, 0.08, 0.06]),
+        ff=weight_init([0.115, 0.115, 0.115], 0.36, 0.020, [0.040, 0.040, 0.040], [0.22, 0.22, 0.22]),
+        fb=weight_init([0.001, 0.001, 0.001], 0.45, 0.002, hi=0.020),
+        lat=weight_init([0.075], 0.40, 0.018, 0.020, 0.22),
+        pvlat=weight_init([0.08], 0.45, 0.025, hi=0.25),
+        pv=weight_init([0.025, 0.025, 0.012], 0.35, 0.008, [0.006, 0.006, 0.0], [0.08, 0.08, 0.06]),
     ),
-    "FF_FB_broad": S(
+    "FF_FB_broad": transition(
         0.080,
         # Strong broadly-tuned naive NO responder whose FF fully adapts away while
         # the (now strengthened) feedback takes over -> a clear expert O responder
@@ -215,120 +275,120 @@ TRANSITIONS = {
         # transition the data shows. Strong FF -> high naive NO; strong FB -> high
         # expert O; the FF->PV surround cancels the full-image feedback at expert
         # so the full (NO) response stays adapted while the occluded (O) rises.
-        fix={"apical_drive_threshold": 0.18},
+        fixed={"apical_drive_threshold": 0.18},
         clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.20, 0.34)},
-        ff=I([0.22, 0.22, 0.150], 0.24, 0.014, [0.080, 0.080, 0.040], [0.34, 0.34, 0.26]),
-        fb=I([0.145, 0.145, 0.025], 0.28, 0.010, [0.055, 0.055, 0.0], [0.30, 0.30, 0.065]),
-        lat=I([0.14], 0.28, 0.022, 0.05, 0.40),
-        pvlat=I([0.08], 0.35, 0.018, 0.02, 0.26),
-        pv=I([0.26, 0.26, 0.10], 0.25, 0.026, [0.10, 0.10, 0.0], [0.50, 0.50, 0.24]),
+        ff=weight_init([0.22, 0.22, 0.150], 0.24, 0.014, [0.080, 0.080, 0.040], [0.34, 0.34, 0.26]),
+        fb=weight_init([0.145, 0.145, 0.025], 0.28, 0.010, [0.055, 0.055, 0.0], [0.30, 0.30, 0.065]),
+        lat=weight_init([0.14], 0.28, 0.022, 0.05, 0.40),
+        pvlat=weight_init([0.08], 0.35, 0.018, 0.02, 0.26),
+        pv=weight_init([0.26, 0.26, 0.10], 0.25, 0.026, [0.10, 0.10, 0.0], [0.50, 0.50, 0.24]),
     ),
-    "FF_FB_broad_weak": S(
+    "FF_FB_broad_weak": transition(
         0.080,
         # Broadly tuned, FF adapts away, only a moderate feedback O survives ->
         # weak expert O responders (NO~0, O~0.5) that fill the contiguous band
         # between nonresponders and the strong +O cloud. The FF->PV drive
         # surround-suppresses the full image at expert.
-        fix={"apical_drive_threshold": 0.12},
+        fixed={"apical_drive_threshold": 0.12},
         clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.30, 0.46)},
-        ff=I([0.095, 0.095, 0.075], 0.26, 0.014, [0.035, 0.035, 0.025], [0.20, 0.20, 0.16]),
-        fb=I([0.190, 0.190, 0.028], 0.30, 0.012, [0.080, 0.080, 0.0], [0.32, 0.32, 0.065]),
-        lat=I([0.13], 0.30, 0.022, 0.05, 0.30),
-        pvlat=I([0.18], 0.30, 0.030, 0.06, 0.42),
-        pv=I([0.28, 0.28, 0.09], 0.26, 0.026, [0.12, 0.12, 0.0], [0.52, 0.52, 0.22]),
+        ff=weight_init([0.095, 0.095, 0.075], 0.26, 0.014, [0.035, 0.035, 0.025], [0.20, 0.20, 0.16]),
+        fb=weight_init([0.190, 0.190, 0.028], 0.30, 0.012, [0.080, 0.080, 0.0], [0.32, 0.32, 0.065]),
+        lat=weight_init([0.13], 0.30, 0.022, 0.05, 0.30),
+        pvlat=weight_init([0.18], 0.30, 0.030, 0.06, 0.42),
+        pv=weight_init([0.28, 0.28, 0.09], 0.26, 0.026, [0.12, 0.12, 0.0], [0.52, 0.52, 0.22]),
     ),
-    "FF_FB_broad_novel": S(
+    "FF_FB_broad_novel": transition(
         0.050,
         # Strong novel feedforward (gain-amplified -> strong novel NO) AND strong
         # generalized novel feedback crossing a low drive threshold (-> strong novel
         # O): the model's prediction of novel expert neurons with BOTH strong novel
         # O and NO. The low novel FF->PV surround leaves the full image unsuppressed
         # so the novel NO survives alongside the occluded O.
-        fix={"apical_drive_threshold": 0.14},
+        fixed={"apical_drive_threshold": 0.14},
         clip={"apical_gain_strength": (3.5, 6.0), "baseline_drive_sigma": (0.24, 0.42)},
-        ff=I([0.048, 0.048, 0.050], 0.28, 0.010, [0.015, 0.015, 0.022], [0.14, 0.14, 0.11]),
-        fb=I([0.118, 0.118, 0.130], 0.24, 0.012, [0.038, 0.038, 0.055], [0.25, 0.25, 0.27]),
-        lat=I([0.12], 0.28, 0.024, 0.04, 0.40),
-        pvlat=I([0.09], 0.35, 0.018, 0.02, 0.28),
-        pv=I([0.22, 0.22, 0.18], 0.25, 0.026, [0.08, 0.08, 0.06], [0.46, 0.46, 0.34]),
+        ff=weight_init([0.048, 0.048, 0.050], 0.28, 0.010, [0.015, 0.015, 0.022], [0.14, 0.14, 0.11]),
+        fb=weight_init([0.118, 0.118, 0.130], 0.24, 0.012, [0.038, 0.038, 0.055], [0.25, 0.25, 0.27]),
+        lat=weight_init([0.12], 0.28, 0.024, 0.04, 0.40),
+        pvlat=weight_init([0.09], 0.35, 0.018, 0.02, 0.28),
+        pv=weight_init([0.22, 0.22, 0.18], 0.25, 0.026, [0.08, 0.08, 0.06], [0.46, 0.46, 0.34]),
     ),
-    "FF_FB_narrow_familiar": S(
+    "FF_FB_narrow_familiar": transition(
         0.017,
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
-        ff=I([0.112, 0.010, 0.010], 0.42, 0.010, [0.060, 0.0, 0.0], [0.205, 0.022, 0.018]),
-        fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=I([0.035], 0.45, 0.012, hi=0.14),
-        pvlat=I([0.03], 0.45, 0.012, hi=0.12),
-        pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
+        ff=weight_init([0.112, 0.010, 0.010], 0.42, 0.010, [0.060, 0.0, 0.0], [0.205, 0.022, 0.018]),
+        fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
+        lat=weight_init([0.035], 0.45, 0.012, hi=0.14),
+        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
+        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
-    "FF_FB_narrow_familiar_2": S(
+    "FF_FB_narrow_familiar_2": transition(
         0.015,
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
-        ff=I([0.010, 0.112, 0.010], 0.32, 0.010, [0.0, 0.060, 0.0], [0.022, 0.205, 0.018]),
-        fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=I([0.035], 0.45, 0.012, hi=0.14),
-        pvlat=I([0.03], 0.45, 0.012, hi=0.12),
-        pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
+        ff=weight_init([0.010, 0.112, 0.010], 0.32, 0.010, [0.0, 0.060, 0.0], [0.022, 0.205, 0.018]),
+        fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
+        lat=weight_init([0.035], 0.45, 0.012, hi=0.14),
+        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
+        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
-    "FF_FB_narrow_familiar_novel": S(
+    "FF_FB_narrow_familiar_novel": transition(
         0.024,
-        fix={"apical_gain_threshold": 0.03},
+        fixed={"apical_gain_threshold": 0.03},
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
-        ff=I([0.112, 0.010, 0.112], 0.32, 0.010, [0.060, 0.0, 0.060], [0.205, 0.022, 0.205]),
-        fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=I([0.035], 0.45, 0.012, hi=0.16),
-        pvlat=I([0.03], 0.45, 0.012, hi=0.12),
-        pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.16),
+        ff=weight_init([0.112, 0.010, 0.112], 0.32, 0.010, [0.060, 0.0, 0.060], [0.205, 0.022, 0.205]),
+        fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
+        lat=weight_init([0.035], 0.45, 0.012, hi=0.16),
+        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
+        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.16),
     ),
-    "FF_FB_narrow_familiar_2_novel": S(
+    "FF_FB_narrow_familiar_2_novel": transition(
         0.022,
-        fix={"apical_gain_threshold": 0.03},
+        fixed={"apical_gain_threshold": 0.03},
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
-        ff=I([0.010, 0.112, 0.112], 0.32, 0.010, [0.0, 0.060, 0.060], [0.022, 0.205, 0.205]),
-        fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=I([0.055], 0.45, 0.012, hi=0.16),
-        pvlat=I([0.03], 0.45, 0.012, hi=0.12),
-        pv=I([0.03, 0.08, 0.005], 0.45, 0.012, hi=0.16),
+        ff=weight_init([0.010, 0.112, 0.112], 0.32, 0.010, [0.0, 0.060, 0.060], [0.022, 0.205, 0.205]),
+        fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
+        lat=weight_init([0.055], 0.45, 0.012, hi=0.16),
+        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
+        pv=weight_init([0.03, 0.08, 0.005], 0.45, 0.012, hi=0.16),
     ),
-    "FF_FB_narrow_novel": S(
+    "FF_FB_narrow_novel": transition(
         0.165,
-        fix={"apical_gain_threshold": 0.03},
+        fixed={"apical_gain_threshold": 0.03},
         clip={"apical_drive_threshold": (1.2, None), "apical_gain_strength": (5.0, 9.5), "baseline_drive_sigma": (0.085, 0.17)},
-        ff=I([0.003, 0.003, 0.080], 0.42, 0.006, [0.0, 0.0, 0.03], [0.014, 0.014, 0.160]),
-        fb=I([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
-        lat=I([0.03], 0.45, 0.012, hi=0.12),
-        pvlat=I([0.03], 0.45, 0.012, hi=0.12),
-        pv=I([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
+        ff=weight_init([0.003, 0.003, 0.080], 0.42, 0.006, [0.0, 0.0, 0.03], [0.014, 0.014, 0.160]),
+        fb=weight_init([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
+        lat=weight_init([0.03], 0.45, 0.012, hi=0.12),
+        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
+        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
     ),
-    "FB_FB": S(
+    "FB_FB": transition(
         0.045,
         # Strong, broadly generalizing feedback with little FF -> O responders with
         # small NO. The symmetric (familiar+novel) feedback also drives the occluded
         # novel response, so this is the main source of novel O responders. Surround
         # kept moderate so the O response is not fully suppressed.
-        fix={"apical_drive_threshold": 0.13},
+        fixed={"apical_drive_threshold": 0.13},
         clip={"apical_gain_strength": (4.0, 7.0), "baseline_drive_sigma": (0.24, 0.40)},
-        ff=I([0.001, 0.001, 0.001], 0.60, 0.003, hi=0.010),
-        fb=I([0.32, 0.32, 0.32], 0.26, 0.025, [0.16, 0.16, 0.16], [0.58, 0.58, 0.58]),
-        lat=I([0.14], 0.30, 0.026, 0.05, 0.34),
-        pvlat=I([0.12], 0.32, 0.022, 0.04, 0.32),
-        pv=I([0.28, 0.28, 0.28], 0.28, 0.034, [0.09, 0.09, 0.09], [0.52, 0.52, 0.52]),
+        ff=weight_init([0.001, 0.001, 0.001], 0.60, 0.003, hi=0.010),
+        fb=weight_init([0.32, 0.32, 0.32], 0.26, 0.025, [0.16, 0.16, 0.16], [0.58, 0.58, 0.58]),
+        lat=weight_init([0.14], 0.30, 0.026, 0.05, 0.34),
+        pvlat=weight_init([0.12], 0.32, 0.022, 0.04, 0.32),
+        pv=weight_init([0.28, 0.28, 0.28], 0.28, 0.034, [0.09, 0.09, 0.09], [0.52, 0.52, 0.52]),
     ),
-    "fb_fb_weak": S(
+    "fb_fb_weak": transition(
         0.024,
         # Moderate naive feedback-driven O responder. With FF adaptation and a
         # ramping surround it tends to shed full-image (NO) drive faster than the
         # occluded (O) response, so it lands mostly in -NO / -O rather than gaining
         # O. Kept modest so naive O stays in a realistic 0.5-1.5 band.
-        fix={"apical_drive_threshold": 0.13},
+        fixed={"apical_drive_threshold": 0.13},
         clip={"apical_gain_strength": (2.8, 5.2), "baseline_drive_sigma": (0.16, 0.30)},
-        ff=I([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.04),
-        fb=I([0.165, 0.165, 0.165], 0.28, 0.012, [0.070, 0.070, 0.070], [0.32, 0.32, 0.32]),
-        lat=I([0.12], 0.32, 0.025, 0.03, 0.26),
-        pvlat=I([0.45], 0.30, 0.040, 0.18, 0.85),
-        pv=I([0.55, 0.55, 0.42], 0.30, 0.040, [0.18, 0.18, 0.12], [0.90, 0.90, 0.75]),
+        ff=weight_init([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.04),
+        fb=weight_init([0.165, 0.165, 0.165], 0.28, 0.012, [0.070, 0.070, 0.070], [0.32, 0.32, 0.32]),
+        lat=weight_init([0.12], 0.32, 0.025, 0.03, 0.26),
+        pvlat=weight_init([0.45], 0.30, 0.040, 0.18, 0.85),
+        pv=weight_init([0.55, 0.55, 0.42], 0.30, 0.040, [0.18, 0.18, 0.12], [0.90, 0.90, 0.75]),
     ),
-    "O_un": S(
+    "O_un": transition(
         0.042,
         # Moderate naive occluded (FB-driven) responder with little FF -> a low-NO,
         # moderate-O naive cloud (the elevated baseline keeps O ~1.0 rather than
@@ -336,13 +396,13 @@ TRANSITIONS = {
         # response weakens toward the origin. (A clean -O is not reachable here -
         # the occluded response lacks the FF->PV surround that suppresses the full
         # image, so feedback-driven changes read out as -NO rather than -O.)
-        fix={"apical_drive_threshold": 0.13},
+        fixed={"apical_drive_threshold": 0.13},
         clip={"apical_gain_strength": (4.0, 6.5), **O_RESPONDER_BASELINE},
-        ff=I([0.004, 0.004, 0.004], 0.40, 0.004, hi=0.018),
-        fb=I([0.32, 0.32, 0.32], 0.22, 0.025, [0.17, 0.17, 0.17], [0.56, 0.56, 0.56]),
-        lat=I([0.18], 0.28, 0.026, 0.07, 0.38),
-        pvlat=I([0.32], 0.28, 0.040, 0.12, 0.62),
-        pv=I([0.38, 0.38, 0.34], 0.24, 0.034, [0.16, 0.16, 0.12], [0.68, 0.68, 0.62]),
+        ff=weight_init([0.004, 0.004, 0.004], 0.40, 0.004, hi=0.018),
+        fb=weight_init([0.32, 0.32, 0.32], 0.22, 0.025, [0.17, 0.17, 0.17], [0.56, 0.56, 0.56]),
+        lat=weight_init([0.18], 0.28, 0.026, 0.07, 0.38),
+        pvlat=weight_init([0.32], 0.28, 0.040, 0.12, 0.62),
+        pv=weight_init([0.38, 0.38, 0.34], 0.24, 0.034, [0.16, 0.16, 0.12], [0.68, 0.68, 0.62]),
     ),
 }
 
@@ -351,6 +411,11 @@ TRANSITIONS = {
 for _transition, _spec in TRANSITIONS.items():
     _spec["fix"]["ff_plasticity_scale"] = _ff_plasticity_scale(_transition)
 
+# Cell-to-cell jitter on the scalar model parameters, as (mode, scale, lo, hi,
+# floor). "log": multiply by exp(N(0, scale)) -> log-normal spread of a positive
+# parameter; "add": add N(0, max(|value|*scale, floor)). The result is clipped to
+# [lo, hi]. Together with the per-synapse weight noise this turns each transition
+# template into a cloud of cells rather than a single point.
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
     "apical_gain_k": ("log", 0.18, 0.1, 30.0, 0.0),
@@ -395,13 +460,16 @@ def _set_init(config: dict[str, Any], key: str, values: np.ndarray, sigma: Any =
 
 
 def _draw_init(init_spec: tuple, rng: np.random.Generator) -> np.ndarray:
-    center, rel, floor, lo, hi = init_spec
+    """Sample one initial-weight vector from a `weight_init` spec (Gaussian about
+    `center`, sd `max(|center|*rel_noise, noise_floor)`, clipped to [lo, hi])."""
+    center, rel_noise, noise_floor, lo, hi = init_spec
     center = np.asarray(center, dtype=float)
-    scale = np.maximum(np.abs(center) * rel, floor)
+    scale = np.maximum(np.abs(center) * rel_noise, noise_floor)
     return _clip_array(center + rng.normal(0.0, scale, size=center.shape), lo, hi)
 
 
 def _draw_scalar(value: float, spec: tuple, rng: np.random.Generator, multiplier: float) -> float:
+    """Sample one scalar parameter from a `SCALAR_NOISE` spec (see that table)."""
     mode, scale, lo, hi, floor = spec
     if mode == "log" and value > 0.0:
         sampled = value * float(np.exp(rng.normal(0.0, scale * multiplier)))
@@ -422,36 +490,25 @@ def _perturb_config(
     global_idx: int,
     seed: int,
     rng: np.random.Generator,
-    initial_condition_mode: str,
-    weight_noise_rel: float,
-    weight_noise_floor: float,
     scalar_noise_multiplier: float,
-    keep_init_sigma: bool,
-    initial_weights_only: bool,
 ) -> dict[str, Any]:
+    """Draw one noisy cell of the given transition type.
+
+    Starts from the canonical `minimal2` config, replaces its initial weights with
+    a fresh draw from each `weight_init` spec, jitters the scalar parameters
+    (`SCALAR_NOISE`), then applies the transition's fixed values and clip bounds
+    and the shared learning rates. The trailing `_`-prefixed keys are bookkeeping
+    (which template, which sample) that `CCNeuron` ignores.
+    """
     config = copy.deepcopy(base_config)
     spec = TRANSITIONS[transition]
 
-    if initial_condition_mode == "canonical-neighborhood":
-        for key in INIT_KEYS:
-            if key not in config:
-                continue
-            center = np.asarray(config[key].get("mu", []), dtype=float)
-            scale = np.maximum(np.abs(center) * weight_noise_rel, weight_noise_floor)
-            sigma = config[key].get("sigma", 0.0) if keep_init_sigma else 0.0
-            _set_init(config, key, np.clip(center + rng.normal(0.0, scale, size=center.shape), 0.0, None), sigma)
-        for key, init_spec in spec["init"].items():
-            if key in config:
-                values = np.asarray(config[key]["mu"], dtype=float)
-                _set_init(config, key, _clip_array(values, init_spec[3], init_spec[4]), config[key].get("sigma", 0.0))
-    else:
-        for key, init_spec in spec["init"].items():
-            _set_init(config, key, _draw_init(init_spec, rng))
+    for key, init_spec in spec["init"].items():
+        _set_init(config, key, _draw_init(init_spec, rng))
 
-    if not initial_weights_only:
-        for key, scalar_spec in SCALAR_NOISE.items():
-            if key in config and _is_num(config[key]):
-                config[key] = _draw_scalar(float(config[key]), scalar_spec, rng, scalar_noise_multiplier)
+    for key, scalar_spec in SCALAR_NOISE.items():
+        if key in config and _is_num(config[key]):
+            config[key] = _draw_scalar(float(config[key]), scalar_spec, rng, scalar_noise_multiplier)
 
     config.update(spec["fix"])
     for key, (lo, hi) in (GLOBAL_SCALAR_CLIP | spec["clip"]).items():
@@ -513,20 +570,28 @@ def _draw_transition_names(
     transition_sampling: str,
     rng: np.random.Generator,
 ) -> list[str]:
+    """Pick which transition template each of the `n_samples` cells belongs to.
+
+    "data-like" (default) draws each cell at random in proportion to the
+    `sampling_weight`s, so the population matches the measured class proportions;
+    "equal" gives every template the same count (useful for inspecting a type).
+    """
     if transition_sampling == "equal":
         repeats = int(np.ceil(n_samples / len(transition_order)))
         return [name for name in transition_order for _ in range(repeats)][:n_samples]
     if transition_sampling != "data-like":
         raise ValueError("transition_sampling must be 'data-like' or 'equal'.")
     weights = np.asarray([TRANSITIONS[name]["weight"] for name in transition_order], dtype=float)
-    return rng.choice(
-        transition_order,
-        size=n_samples,
-        p=weights / weights.sum(),
-    ).tolist()
+    return rng.choice(transition_order, size=n_samples, p=weights / weights.sum()).tolist()
 
 
 def _sample_configs(args: argparse.Namespace, transition_order: list[str]) -> list[dict[str, Any]]:
+    """Build the full list of per-cell configs to simulate.
+
+    `--canonical-only` runs the raw `config_s` templates once each (a debug mode);
+    otherwise draw `n_samples` cells from the weighted mixture and perturb each.
+    Per-cell child RNGs (spawned from one seed) keep the population reproducible.
+    """
     if args.canonical_only:
         samples = []
         for global_idx, (name, config) in enumerate(minimal_configs3.items(), start=1):
@@ -555,12 +620,7 @@ def _sample_configs(args: argparse.Namespace, transition_order: list[str]) -> li
                 global_idx=global_idx,
                 seed=args.seed + global_idx,
                 rng=np.random.default_rng(child_rngs[global_idx - 1]),
-                initial_condition_mode=args.initial_condition_mode,
-                weight_noise_rel=args.weight_noise_rel,
-                weight_noise_floor=args.weight_noise_floor,
                 scalar_noise_multiplier=args.scalar_noise_multiplier,
-                keep_init_sigma=args.keep_init_sigma,
-                initial_weights_only=args.initial_weights_only,
             )
         )
     return samples
@@ -571,33 +631,39 @@ def _response_from_frame(
     *,
     n_steps_per_phase: int,
     response_tail_fraction: float,
-    baseline: tuple[float, float] | None = None,
-    zscore_std_floor: float = 0.0,
+    baseline: tuple[float, float],
+    zscore_std_floor: float,
 ) -> float:
+    """Mean z-scored response over the stimulus window of a probe trace.
+
+    Averages the firing rate `y` over the last `response_tail_fraction` of each
+    trial's stimulus window (the stimulus occupies the final quarter of a trial),
+    then z-scores by the `(mean, std)` baseline using `max(std, zscore_std_floor)`.
+    """
     stim_start = 3 * n_steps_per_phase // 4
     stim_len = n_steps_per_phase - stim_start
     tail_start = stim_start + int(round((1.0 - response_tail_fraction) * stim_len))
     mask = frame["step"].to_numpy(dtype=int) % n_steps_per_phase >= tail_start
     values = frame.loc[mask, "y"].to_numpy(dtype=float)
-    if baseline is None:
-        return float(np.nanmean(values))
     mean, std = baseline
     scale = max(std, zscore_std_floor) if np.isfinite(std) and std > 1e-12 else max(1.0, zscore_std_floor)
     return float(np.nanmean((values - mean) / scale))
 
 
-def _baseline(frames: list[pd.DataFrame], n_steps_per_phase: int) -> tuple[float, float, int]:
-    stim_start = 3 * n_steps_per_phase // 4
+def _baseline(frames: list[pd.DataFrame], n_steps_per_phase: int) -> tuple[float, float]:
+    """Spontaneous `(mean, std)` of `y` over the inter-trial windows (the first
+    three quarters of every trial, when no stimulus is present)."""
     chunks = []
+    stim_start = 3 * n_steps_per_phase // 4
     for frame in frames:
         trial_step = frame["step"].to_numpy(dtype=int) % n_steps_per_phase
         chunks.append(frame.loc[trial_step < stim_start, "y"].to_numpy(dtype=float))
     values = np.concatenate([chunk for chunk in chunks if chunk.size])
     values = values[np.isfinite(values)]
     if values.size == 0:
-        return np.nan, np.nan, 0
+        return np.nan, np.nan
     std = float(np.nanstd(values, ddof=1)) if values.size > 1 else 1.0
-    return float(np.nanmean(values)), std if std > 1e-12 else 1.0, int(values.size)
+    return float(np.nanmean(values)), std if std > 1e-12 else 1.0
 
 
 def _probe_rows(
@@ -607,10 +673,13 @@ def _probe_rows(
     phase: str,
     n_steps_per_phase: int,
     response_tail_fraction: float,
-    zscore_responses: bool,
-    baseline: tuple[float, float, int] | None = None,
-    zscore_std_floor: float = 0.0,
-) -> list[dict[str, Any]]:
+    baseline: tuple[float, float] | None,
+    zscore_std_floor: float,
+) -> tuple[list[dict[str, Any]], tuple[float, float]]:
+    """Probe every stimulus full (non-occluded, "NO") and occluded ("O") without
+    plasticity, returning one response row per (stimulus, trace) plus this phase's
+    own spontaneous baseline. Responses are z-scored to `baseline` if given, else
+    to this phase's baseline (used so the naive probe normalises itself)."""
     traces = []
     for condition, (x_full, c_full) in stimuli.items():
         for trace, x_phase in (("full", x_full), ("occlusion", torch.zeros_like(x_full))):
@@ -618,40 +687,24 @@ def _probe_rows(
             traces.append((condition, trace, frame))
 
     local_baseline = _baseline([frame for _, _, frame in traces], n_steps_per_phase)
-    baseline_mean, baseline_std, baseline_n = baseline or local_baseline
-    rows = []
-    for condition, trace, frame in traces:
-        raw = _response_from_frame(
-            frame,
-            n_steps_per_phase=n_steps_per_phase,
-            response_tail_fraction=response_tail_fraction,
-        )
-        response = raw
-        if zscore_responses:
-            response = _response_from_frame(
+    ref_baseline = baseline or local_baseline
+    rows = [
+        dict(
+            condition=condition,
+            phase=phase,
+            stage=STAGES[phase],
+            trace=trace,
+            image_type=TRACE_TYPES[trace],
+            response=_response_from_frame(
                 frame,
                 n_steps_per_phase=n_steps_per_phase,
                 response_tail_fraction=response_tail_fraction,
-                baseline=(baseline_mean, baseline_std),
+                baseline=ref_baseline,
                 zscore_std_floor=zscore_std_floor,
-            )
-        rows.append(
-            dict(
-                condition=condition,
-                phase=phase,
-                stage=STAGES[phase],
-                trace=trace,
-                image_type=TRACE_TYPES[trace],
-                response=response,
-                raw_response=raw,
-                baseline_mean=baseline_mean,
-                baseline_std=baseline_std,
-                baseline_n=baseline_n,
-                local_baseline_mean=local_baseline[0],
-                local_baseline_std=local_baseline[1],
-                local_baseline_n=local_baseline[2],
-            )
+            ),
         )
+        for condition, trace, frame in traces
+    ]
     return rows, local_baseline
 
 
@@ -660,12 +713,14 @@ def _run_sample(
     *,
     n_steps_per_phase: int,
     response_tail_fraction: float,
-    zscore_responses: bool,
     test_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     training_stimuli: tuple[torch.Tensor, torch.Tensor],
-    response_normalization: str,
     zscore_std_floor: float,
 ) -> pd.DataFrame:
+    """Run one cell through naive probe -> familiar training -> expert probe and
+    return its response rows. Both probes are z-scored to the *naive* baseline, so
+    the naive->expert shift reflects only the change in evoked response (the
+    baseline cancels) rather than any drift in spontaneous activity."""
     model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
     # Per-cell z-score floor scaled by the cell's spontaneous (baseline) drive.
     cell_floor = max(zscore_std_floor, BASELINE_STD_SCALE * float(config.get("baseline_drive_sigma", 0.0)))
@@ -675,19 +730,17 @@ def _run_sample(
         phase="naive",
         n_steps_per_phase=n_steps_per_phase,
         response_tail_fraction=response_tail_fraction,
-        zscore_responses=zscore_responses,
+        baseline=None,
         zscore_std_floor=cell_floor,
     )
     run_experimental_phase(model, training_stimuli[0], training_stimuli[1], "full_familiar_training", update=True)
-    expert_baseline = naive_baseline if response_normalization == "naive" else None
     expert_rows, _ = _probe_rows(
         model,
         test_stimuli,
         phase="expert",
         n_steps_per_phase=n_steps_per_phase,
         response_tail_fraction=response_tail_fraction,
-        zscore_responses=zscore_responses,
-        baseline=expert_baseline,
+        baseline=naive_baseline,
         zscore_std_floor=cell_floor,
     )
     rows.extend(expert_rows)
@@ -701,6 +754,9 @@ def _run_sample(
 
 
 def _transition_table(response_df: pd.DataFrame) -> pd.DataFrame:
+    """Reshape the raw response rows into the long table schema the real-data
+    plotting helpers expect (one row per cell x stimulus x trace x stage, tagged
+    with image group/index), mapping each probe condition via `IMAGE_INFO`."""
     rows = []
     for row in response_df.itertuples(index=False):
         image_group, image_idx_original, image_idx_within_group = IMAGE_INFO[row.condition]
@@ -720,6 +776,8 @@ def _transition_table(response_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _wide_table(transition_table: pd.DataFrame) -> pd.DataFrame:
+    """Pivot the long table so the full and occluded responses sit side by side as
+    `NO` and `O` columns (one row per cell x stimulus x stage)."""
     stage_order = transition_table["stage"].drop_duplicates().tolist()
     wide = transition_table.pivot_table(
         index=["transition", "image_group", "image_idx_original", "image_idx_within_group", "neuron_idx", "stage"],
@@ -732,12 +790,14 @@ def _wide_table(transition_table: pd.DataFrame) -> pd.DataFrame:
 
 
 def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
-    flat = {key: config[key] for key in ("_canonical_transition", "_sample_idx", "_sample_global_idx", "seed")}
+    """Flatten one sampled config into a single CSV row: weight vectors become
+    `key.mu_i` columns, boolean tuples become `key_i`, scalars pass through (for
+    the per-cell `sampled_config_parameters.csv` reproducibility table)."""
     flat = {
-        "transition": flat["_canonical_transition"],
-        "sample_idx": flat["_sample_idx"],
-        "sample_global_idx": flat["_sample_global_idx"],
-        "seed": flat["seed"],
+        "transition": config["_canonical_transition"],
+        "sample_idx": config["_sample_idx"],
+        "sample_global_idx": config["_sample_global_idx"],
+        "seed": config["seed"],
     }
     for key, value in config.items():
         if key.startswith("_") or key == "seed":
@@ -884,74 +944,6 @@ def _robust_shift_limits(summaries: list[pd.DataFrame], *, hi_percentile: float,
     return [-extent, extent]
 
 
-def _panel_point_summaries(
-    configs_by_transition: dict[str, dict[str, Any]],
-    *,
-    args: argparse.Namespace,
-    test_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
-    training_stimuli: tuple[torch.Tensor, torch.Tensor],
-) -> dict[str, pd.DataFrame]:
-    """One (NO, O) naive/expert position per transition, run through exactly the
-    scatter pipeline (per-cell denominator and all), for overlaying the canonical
-    examples / sampler centers on the aggregate scatter."""
-    frames = []
-    for idx, (name, config) in enumerate(configs_by_transition.items(), start=1):
-        cfg = copy.deepcopy(config)
-        cfg.update(_canonical_transition=name, _sample_idx=1, _sample_global_idx=idx)
-        cfg.setdefault("seed", 42)
-        frames.append(
-            _run_sample(
-                cfg,
-                n_steps_per_phase=args.n_steps_per_phase,
-                response_tail_fraction=args.response_tail_fraction,
-                zscore_responses=not args.raw_responses,
-                test_stimuli=test_stimuli,
-                training_stimuli=training_stimuli,
-                response_normalization=args.response_normalization,
-                zscore_std_floor=args.zscore_std_floor,
-            )
-        )
-    wide = _wide_table(_transition_table(pd.concat(frames, ignore_index=True)))
-    out: dict[str, pd.DataFrame] = {}
-    for group in ("familiar", "novel"):
-        piv = wide.loc[wide["image_group"] == group].pivot_table(
-            index="transition", columns="stage", values=["NO", "O"], aggfunc="mean"
-        )
-        df = pd.DataFrame({
-            "transition": piv.index.to_numpy(),
-            "NO_Pre": piv[("NO", "Naive")].to_numpy(),
-            "O_Pre": piv[("O", "Naive")].to_numpy(),
-            "NO_Target": piv[("NO", "Expert")].to_numpy(),
-            "O_Target": piv[("O", "Expert")].to_numpy(),
-        })
-        df["dNO"] = df["NO_Target"] - df["NO_Pre"]
-        df["dO"] = df["O_Target"] - df["O_Pre"]
-        out[group] = df
-    return out
-
-
-def _overlay_examples(fig: plt.Figure, points: pd.DataFrame, *, marker: str, color: str, label: str, annotate: bool) -> None:
-    """Overlay highlighted example points (one per transition) on the three
-    'by rotated sector' panels (naive / expert / shift)."""
-    # 3x3 grid -> fig.axes = [(0,0),(0,1),(0,2),(1,0),(1,1),(1,2),...]; the sector
-    # panels are (1,0)=shift, (1,1)=naive, (1,2)=expert.
-    ax_shift, ax_naive, ax_expert = fig.axes[3], fig.axes[4], fig.axes[5]
-    for ax, (xc, yc) in ((ax_naive, ("NO_Pre", "O_Pre")), (ax_expert, ("NO_Target", "O_Target")), (ax_shift, ("dNO", "dO"))):
-        ax.scatter(points[xc], points[yc], s=95, marker=marker, facecolors="none", edgecolors=color, linewidths=1.7, zorder=6, label=label)
-    if annotate:
-        for _, row in points.iterrows():
-            ax_expert.annotate(
-                format_transition_label(str(row["transition"])),
-                (row["NO_Target"], row["O_Target"]),
-                fontsize=5.5, color=color, zorder=7, xytext=(3, 2), textcoords="offset points",
-            )
-    handles, labels = ax_expert.get_legend_handles_labels()
-    seen: dict[str, Any] = {}
-    for h, lb in zip(handles, labels):
-        seen.setdefault(lb, h)
-    ax_expert.legend(seen.values(), seen.keys(), loc="upper right", fontsize=7, frameon=True)
-
-
 def _save_summary(
     summary: pd.DataFrame,
     path: Path,
@@ -960,8 +952,9 @@ def _save_summary(
     shift_lims: list[float],
     export_panels: bool,
     image_format: str,
-    overlays: list[tuple[pd.DataFrame, dict]] | None = None,
 ) -> None:
+    """Render and save one rotated-sector scatter figure (plus its sector legend)
+    via the shared real-data plotting helper, using a fixed Naive->Expert frame."""
     fig = th.plot_mean_transition_summary(
         summary,
         title=title,
@@ -971,8 +964,6 @@ def _save_summary(
         shift_lims=shift_lims,
         style=PLOT_STYLE,
     )
-    for points, style in overlays or []:
-        _overlay_examples(fig, points, **style)
     path = path.with_suffix(f".{image_format}")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=300, bbox_inches="tight")
@@ -992,12 +983,13 @@ def _save_plots(
     export_panels: bool,
     image_format: str,
     axis_clip_percentile: float,
-    overlays_by_group: dict[str, list[tuple[pd.DataFrame, dict]]] | None = None,
 ) -> None:
+    """Aggregate the per-cell responses into familiar/novel rotated-sector
+    summaries, save their figures and sector-fraction tables (and optionally a
+    per-transition breakdown)."""
     figures_dir = output_dir / "figures"
     summaries_dir = output_dir / "summaries"
     summaries_dir.mkdir(parents=True, exist_ok=True)
-    overlays_by_group = overlays_by_group or {}
 
     wide = _wide_table(transition_table)
     aggregate = {
@@ -1024,7 +1016,6 @@ def _save_plots(
             shift_lims,
             export_panels,
             image_format,
-            overlays=overlays_by_group.get(group),
         )
 
     if plot_by_transition:
@@ -1050,6 +1041,9 @@ def _save_plots(
 
 
 def run_model_scatter(args: argparse.Namespace) -> None:
+    """End-to-end driver: sample the population, simulate every cell in parallel,
+    write the response tables/metadata, and render the scatter figures (and, by
+    default, the center/canonical sanity panels)."""
     if args.n_samples < 1:
         raise ValueError("n_samples must be >= 1.")
     if args.n_steps_per_phase < 4:
@@ -1071,10 +1065,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
             sample,
             n_steps_per_phase=args.n_steps_per_phase,
             response_tail_fraction=args.response_tail_fraction,
-            zscore_responses=not args.raw_responses,
             test_stimuli=test_stimuli,
             training_stimuli=training_stimuli,
-            response_normalization=args.response_normalization,
             zscore_std_floor=args.zscore_std_floor,
         )
         for sample in samples
@@ -1098,15 +1090,12 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "transition_sampling": "canonical" if args.canonical_only else args.transition_sampling,
         "transition_sample_counts": counts,
         "transition_weights": {name: TRANSITIONS[name]["weight"] for name in transition_order},
-        "initial_condition_mode": args.initial_condition_mode,
         "seed": args.seed,
         "n_steps_per_phase": args.n_steps_per_phase,
         "test_trials": args.test_trials,
         "training_trials": args.training_trials,
         "fixed_scalars": list(FIXED_SCALARS),
-        "response_units": "raw" if args.raw_responses else "zscore",
-        "response_normalization": "none" if args.raw_responses else args.response_normalization,
-        "zscore_std_floor": None if args.raw_responses else args.zscore_std_floor,
+        "zscore_std_floor": args.zscore_std_floor,
         "response_tail_fraction": args.response_tail_fraction,
         "sector_threshold": args.threshold,
         "ff_plasticity_broad": FF_PLASTICITY_BROAD,
@@ -1115,28 +1104,6 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "n_invalid_response_rows": int(len(invalid)),
     }
     (args.output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, default=repr))
-
-    overlays_by_group: dict[str, list[tuple[pd.DataFrame, dict]]] = {}
-    example_points_path = args.output_dir / "example_points.csv"
-    if args.overlay_examples and not args.canonical_only:
-        canonical = _panel_point_summaries(
-            {t: _canonical_config(t) for t in transition_order},
-            args=args, test_stimuli=test_stimuli, training_stimuli=training_stimuli,
-        )
-        centers = _panel_point_summaries(
-            {t: _center_config(t) for t in transition_order},
-            args=args, test_stimuli=test_stimuli, training_stimuli=training_stimuli,
-        )
-        for group in ("familiar", "novel"):
-            overlays_by_group[group] = [
-                (centers[group], {"marker": "D", "color": "0.35", "label": "sampler center", "annotate": False}),
-                (canonical[group], {"marker": "*", "color": "black", "label": "config_s canonical", "annotate": True}),
-            ]
-        canonical_csv = pd.concat([df.assign(image_group=g, kind="canonical") for g, df in canonical.items()], ignore_index=True)
-        center_csv = pd.concat([df.assign(image_group=g, kind="center") for g, df in centers.items()], ignore_index=True)
-        pd.concat([canonical_csv, center_csv], ignore_index=True).to_csv(example_points_path, index=False)
-    elif example_points_path.exists():
-        example_points_path.unlink()
 
     _save_plots(
         transition_table,
@@ -1147,7 +1114,6 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         export_panels=args.export_panels,
         image_format=args.image_format,
         axis_clip_percentile=args.axis_clip_percentile,
-        overlays_by_group=overlays_by_group,
     )
 
     if not args.skip_center_panels and not args.canonical_only:
@@ -1163,33 +1129,25 @@ def run_model_scatter(args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sample noisy minimal2 configs and plot model-scatter transitions.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--n-samples", type=int, default=1200)
-    parser.add_argument("--n-steps-per-phase", type=int, default=400)
-    parser.add_argument("--test-trials", type=int, default=2)
-    parser.add_argument("--training-trials", type=int, default=5)
+    parser.add_argument("--n-samples", type=int, default=1200, help="Number of model cells to draw from the transition mixture.")
+    parser.add_argument("--n-steps-per-phase", type=int, default=400, help="Time steps per stimulus trial (stimulus occupies the final quarter).")
+    parser.add_argument("--test-trials", type=int, default=2, help="Repeats of each probe stimulus at naive and expert.")
+    parser.add_argument("--training-trials", type=int, default=5, help="Repeats of the familiar-image training block (the plastic phase).")
     parser.add_argument("--seed", type=int, default=20260604)
-    parser.add_argument("--n-jobs", type=int, default=-1)
-    parser.add_argument("--weight-noise-rel", type=float, default=0.55)
-    parser.add_argument("--weight-noise-floor", type=float, default=0.07)
-    parser.add_argument("--scalar-noise-multiplier", type=float, default=1.75)
-    parser.add_argument("--keep-init-sigma", action="store_true")
-    parser.add_argument("--initial-weights-only", action="store_true")
-    parser.add_argument("--canonical-only", action="store_true")
-    parser.add_argument("--transition-sampling", choices=("data-like", "equal"), default="data-like")
-    parser.add_argument("--initial-condition-mode", choices=("spec", "canonical-neighborhood"), default="spec")
-    parser.add_argument("--raw-responses", action="store_true")
-    parser.add_argument("--response-normalization", choices=("naive", "phase"), default="naive")
-    parser.add_argument("--zscore-std-floor", type=float, default=0.04)
-    parser.add_argument("--response-tail-fraction", type=float, default=1.0)
+    parser.add_argument("--n-jobs", type=int, default=-1, help="Parallel workers (joblib); -1 uses all cores.")
+    parser.add_argument("--scalar-noise-multiplier", type=float, default=1.75, help="Global multiplier on the SCALAR_NOISE jitter widths.")
+    parser.add_argument("--canonical-only", action="store_true", help="Debug: run the raw config_s templates once each instead of sampling.")
+    parser.add_argument("--transition-sampling", choices=("data-like", "equal"), default="data-like", help="Draw cells in proportion to sampling_weight, or equally per type.")
+    parser.add_argument("--zscore-std-floor", type=float, default=0.04, help="Lower bound on the per-cell z-score denominator.")
+    parser.add_argument("--response-tail-fraction", type=float, default=1.0, help="Fraction of the stimulus window (from the end) averaged into the response.")
     # Default matches the transitions>threshold notebook so the model scatter is
     # sectorized exactly like the real data.
-    parser.add_argument("--threshold", type=float, default=0.3)
+    parser.add_argument("--threshold", type=float, default=0.3, help="Rotated-sector small-shift threshold.")
     parser.add_argument("--image-format", choices=("png", "svg", "eps"), default="png", help="Figure output format (default png).")
     parser.add_argument("--axis-clip-percentile", type=float, default=99.0, help="Scale figure axes to this percentile of responses so a few extreme outliers fall outside the panel (100 = exact min/max like the real-data notebook).")
-    parser.add_argument("--skip-center-panels", action="store_true", help="Skip the experiment_s transition panel for the exact sampler centers.")
-    parser.add_argument("--overlay-examples", action="store_true", help="Overlay the config_s canonical examples and sampler centers on the aggregate scatter.")
-    parser.add_argument("--plot-by-transition", action="store_true")
-    parser.add_argument("--export-panels", action="store_true")
+    parser.add_argument("--skip-center-panels", action="store_true", help="Skip the center/canonical transition-panel sanity check.")
+    parser.add_argument("--plot-by-transition", action="store_true", help="Also save a separate familiar/novel scatter for each transition type.")
+    parser.add_argument("--export-panels", action="store_true", help="Also export each scatter's individual panels as separate images.")
     return parser.parse_args()
 
 

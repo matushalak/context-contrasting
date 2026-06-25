@@ -67,9 +67,9 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   canonical trace experiment).
 - `--transition-sampling data-like|equal`: random weighted transition draws or
   equal samples per canonical transition.
-- `--response-normalization naive|phase`: z-score post responses using the
-  naive probe baseline by default, so adapted cells are not inflated by a tiny
-  post-training baseline variance.
+- Responses are always z-scored to the naive probe baseline, so adapted cells are
+  not inflated by a tiny post-training baseline variance and the naive->expert
+  shift reflects only the change in evoked response.
 - `--zscore-std-floor`: denominator floor for model z-scores (`0.04` by
   default). Protects sectorization from tiny post-training baseline variances.
 - `--threshold`: rotated-sector small-shift threshold (`0.3` by default, matching
@@ -90,14 +90,10 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   from what their names imply). Rendered with the canonical `n_steps_per_phase`
   (400) so the traces match `minimal2/plotsexperiment_s/transition_panels`. These
   runs are parallelised across transitions (use `--n-jobs`).
-- `--overlay-examples`: optionally highlight one point per transition for the
-  `config_s` canonical examples (black stars, labelled) and the sampler centers
-  (gray diamonds), each run through the full scatter pipeline; their positions
-  are also written to `example_points.csv`. By default these overlays are off.
-- `--initial-condition-mode spec|canonical-neighborhood`: sample from the
-  compact transition range table, or sample around the raw canonical config
-  while still clipping to the transition bounds.
-- `--initial-weights-only`: skip scalar hyperparameter perturbation.
+- `--export-panels`: also export each scatter's individual panels as separate
+  images.
+- `--scalar-noise-multiplier`: global multiplier on the `SCALAR_NOISE` jitter
+  widths (`1.75` by default).
 - Aggregate figure axis limits match the real-data figures: a single shared
   response/shift frame across the familiar and novel panels via
   `transitions_helpers.compute_response_limits`/`compute_shift_limits`.
