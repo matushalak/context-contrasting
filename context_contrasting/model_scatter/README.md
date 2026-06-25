@@ -19,7 +19,6 @@ python -m context_contrasting.model_scatter.run_model_scatter \
   --test-trials 1 \
   --training-trials 1 \
   --n-jobs 1 \
-  --skip-by-transition \
   --skip-center-panels \
   --output-dir context_contrasting/model_scatter/outputs_smoke
 ```
@@ -39,7 +38,6 @@ Canonical-only run:
 ```bash
 python -m context_contrasting.model_scatter.run_model_scatter \
   --canonical-only \
-  --skip-by-transition \
   --output-dir context_contrasting/model_scatter/outputs_canonical
 ```
 
@@ -67,8 +65,6 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   scatter runs much faster than the canonical trace exports).
 - `--training-trials`: familiar-training repeats (`5` by default, matching the
   canonical trace experiment).
-- `--samples-per-transition`: compatibility override for old commands; draws
-  `len(transitions) * value` samples.
 - `--transition-sampling data-like|equal`: random weighted transition draws or
   equal samples per canonical transition.
 - `--response-normalization naive|phase`: z-score post responses using the
@@ -104,9 +100,7 @@ The main tuning levers are at the top of `run_model_scatter.py`:
 - `--initial-weights-only`: skip scalar hyperparameter perturbation.
 - Aggregate figure axis limits match the real-data figures: a single shared
   response/shift frame across the familiar and novel panels via
-  `transitions_helpers.compute_response_limits`/`compute_shift_limits`. The old
-  `--response-limit-percentile` / `--shift-limit-percentile` / `--limit-percentile`
-  flags are accepted but ignored.
+  `transitions_helpers.compute_response_limits`/`compute_shift_limits`.
 
 Outputs:
 
