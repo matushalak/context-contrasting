@@ -10,12 +10,11 @@ out how its responses shifted across learning.
 
 Three stimuli were used, encoded as $3$-dimensional one-hot vectors: two familiar
 images ($\mathbf{e}_1,\mathbf{e}_2$) and one novel image ($\mathbf{e}_3$). A test
-probe trial lasted $200$ steps: the first quarter was a stimulus-free baseline
-interval, the second quarter ($50$ steps) was the stimulus presentation, and the
-final half was post-stimulus ITI. Each probe repeat was run as an independent
-reset trial, so changing the number of test repeats changes averaging/noise rather
-than the within-trial dynamical state. At every step the feedforward and contextual
-inputs were drawn from
+probe trial lasted $200$ steps, of which the first three quarters were a
+stimulus-free inter-trial interval and the final quarter ($50$ steps) was the
+stimulus presentation. Probe repeats were run as continuous repeated trials, as
+in the original protocol. At every step the feedforward and contextual inputs
+were drawn from
 $\mathcal{N}(\text{mean},\,0.05)$ (mean $=\mathbf{0}$ in the inter-trial interval,
 $=$ the one-hot image during presentation). Each image was probed in two regimes:
 a **non-occluded** ("NO") trial in which both the feedforward input
@@ -25,14 +24,14 @@ input $\mathbf{c}$ was present (isolating the feedback-driven / ecRF response).
 
 The three phases were:
 
-1. **Naive probe** — every image, NO and O, $2$ independent reset trials each, with plasticity off.
+1. **Naive probe** — every image, NO and O, $2$ continuous trials each, with plasticity off.
 2. **Training** — the two familiar images interleaved, $5$ trials, with plasticity
    on (the only phase in which the local learning rules update the weights).
 3. **Expert probe** — identical to the naive probe, with plasticity off.
 
 For each (cell, image, trace) we took the mean PyC rate $y$ over the stimulus
 window and $z$-scored it to the cell's naive spontaneous activity (mean and s.d.
-of $y$ over the pre-stimulus quarter of the naive probe). To keep signal-poor
+of $y$ over the inter-trial intervals of the naive probe). To keep signal-poor
 responses (e.g. the $\sim 0$ NO response of a pure occluded responder) from
 exploding when divided by a near-zero spontaneous s.d., the $z$-score denominator
 was floored per cell at $\max(0.04,\,0.27\,\sigma_y)$, where $\sigma_y$ is the
@@ -89,7 +88,7 @@ initial weights and the per-cell scalar parameters varied (Tables 1–2).
 | $\mathbf{S}^p$ | PV feedforward specificity (diagonal / off-diagonal) | $0.8$ / $0.1$ |
 | $r_{\max}$ | maximum firing rate | $1.0$ |
 | — | weight decay | $0$ (off) |
-| — | steps per test trial / stimulus-window length | $200$ / $50$ (second quarter) |
+| — | steps per test trial / stimulus-window length | $200$ / $50$ (final quarter) |
 | — | naive and expert probe trials per image | $2$ |
 | — | familiar training trials | $5$ |
 | $\sigma_{\text{stim}}$ | stimulus and inter-trial input s.d. | $0.05$ |
@@ -99,18 +98,16 @@ initial weights and the per-cell scalar parameters varied (Tables 1–2).
 
 ### Table 2 — Per-cell variable parameters (population ranges)
 
-Each parameter is independently perturbed per cell and then clipped to the range
-shown. "Jitter" is the noise applied to the template value: *log-normal* multiplies
-by $\exp(\mathcal{N}(0,\sigma))$ and *additive* adds $\mathcal{N}(0,\sigma)$; all
+Only the parameters below are independently perturbed per cell and then clipped
+to the range shown. LAT, PV-lateral, PV feedforward, and all other scalar
+parameters are fixed at their transition-template values. "Jitter" is the noise
+applied to the template value: *log-normal* multiplies by
+$\exp(\mathcal{N}(0,\sigma))$ and *additive* adds $\mathcal{N}(0,\sigma)$; scalar
 widths $\sigma$ are further scaled by the global factor $1.75$.
 
 | Symbol | Parameter | Jitter | Population range |
 |---|---|---|---|
-| $\mathbf{w}_{FF},\mathbf{w}_{FB},w_{LAT},w_{pvLAT},\mathbf{w}_{PV}$ | initial synaptic weights | Gaussian about template center (s.d. $\max(22\text{–}65\%,\,0.002\text{–}0.04)$) | $\ge 0$, template-bounded |
+| $\mathbf{w}_{FF},\mathbf{w}_{FB}$ | initial synaptic weights | Independent Gaussian per weight element about template center (s.d. $\max(22\text{–}65\%,\,0.002\text{–}0.04)$, transition-specific) | $\ge 0$, template-bounded |
 | $g$ | apical maximum gain | log-normal, $\sigma=0.18$ | $2.5\text{–}11$ |
-| $k$ | apical gain slope | log-normal, $\sigma=0.18$ | $\approx 5$ (cap $0.1\text{–}30$) |
 | $\theta$ | apical drive threshold | additive, $\sigma=0.12$ | $0.12\text{–}0.5$ (FB-driving) vs $\ge 1.05$ (gain-only), cap $\le 3$ |
-| $\theta_g$ | apical gain offset | additive, $\sigma=0.08$ | $0$ ($0.03$ for narrow-novel templates) |
 | $\sigma_y$ | baseline-drive amplitude ($I_y$ s.d.) | log-normal, $\sigma=0.20$ | $0.085\text{–}0.52$ |
-| $\sigma_p$ | PV-noise amplitude ($I_p$ s.d.) | log-normal, $\sigma=0.20$ | $0.04\text{–}0.16$ |
-| $\alpha$ | feedback damping constant | log-normal, $\sigma=0.12$ | $\approx 1$ (cap $0.05\text{–}10$) |

@@ -45,11 +45,11 @@ from joblib import Parallel, delayed
 import context_contrasting.data_analysis.transitions_helpers as th
 from context_contrasting.minimal2.config_s import minimal_configs3
 from context_contrasting.minimal2.experiment_s import (
-    NO_RESPONSE_ABLATION_SPECS,
     PRIMARY_EXPERIMENT_SERIES,
     STIMULUS_SPECS,
+    _build_test_stimuli,
     _build_training_stimuli,
-    _temporary_model_overrides,
+    _run_test_phase_variants,
     run_experimental_phase,
 )
 from context_contrasting.minimal2.minimal_s import CCNeuron
@@ -58,7 +58,6 @@ from context_contrasting.minimal2.visualize_s import (
     save_grouped_transition_panels,
     wide_to_long,
 )
-from context_contrasting.utils import randn_reparam
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -123,18 +122,19 @@ PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
 
 def weight_init(
     center: list[float],
-    rel_noise: float,
-    noise_floor: float,
+    rel_noise: float | None = None,
+    noise_floor: float | None = None,
     lo: Any = 0.0,
     hi: Any = 1.0,
-) -> tuple:
-    """Sampling spec for one synaptic-weight vector (one entry per stimulus).
+) -> dict[str, Any]:
+    """Initial-weight spec for one synaptic-weight vector.
 
-    Each cell draws its initial weights from a Gaussian centred on ``center``
+    Center-only specs are fixed template weights. Specs with both ``rel_noise``
+    and ``noise_floor`` draw per-cell Gaussian samples centered on ``center``,
     with per-element sd ``max(|center| * rel_noise, noise_floor)``, clipped to
     ``[lo, hi]`` (``lo``/``hi`` may be scalars or per-element lists).
     """
-    return (center, rel_noise, noise_floor, lo, hi)
+    return {"center": center, "rel_noise": rel_noise, "noise_floor": noise_floor, "lo": lo, "hi": hi}
 
 
 def transition(
@@ -142,7 +142,7 @@ def transition(
     *,
     fixed: dict | None = None,
     clip: dict | None = None,
-    **weight_inits: tuple,
+    **weight_inits: dict[str, Any],
 ) -> dict:
     """Spec for one transition template (a cell type in the population).
 
@@ -150,8 +150,8 @@ def transition(
     ``fixed``            -- scalar model parameters pinned to a constant value.
     ``clip``             -- (lo, hi) bounds applied to scalar parameters after
                             their random perturbation.
-    ``weight_inits``     -- per-synapse ``weight_init`` specs, keyed by the short
-                            aliases in ``INIT_ALIASES`` (ff, fb, lat, pvlat, pv).
+    ``weight_inits``     -- per-synapse init specs, keyed by the short aliases in
+                            ``INIT_ALIASES`` (ff, fb, lat, pvlat, pv).
     """
     return {
         "weight": sampling_weight,
@@ -193,12 +193,14 @@ BASELINE_STD_SCALE = 0.27
 
 # The population mixture. Each entry is one cell type, built with `transition(
 # sampling_weight, fixed=..., clip=..., ff=..., fb=..., lat=..., pvlat=..., pv=...)`.
-# `sampling_weight` is its share of the population; the `ff/fb/lat/pvlat/pv`
-# `weight_init(...)` specs give the (center, rel_noise, noise_floor, lo, hi) of its
-# initial synaptic weights. Broad vs narrow tuning (see NARROW_TRANSITIONS) then
-# sets the FF-plasticity scale and the feedback drive-vs-gain regime. Names encode
-# the mechanism, e.g. FF_FB_narrow_novel = a narrowly tuned cell whose novel-image
-# feedforward drive is gain-amplified by feedback into a +NO response.
+# `sampling_weight` is its share of the population. The `ff/fb` entries specify
+# `rel_noise` and `noise_floor` and are sampled per cell with independent
+# Gaussian noise per weight element; `lat/pvlat/pv` entries pass only a center
+# and are fixed per transition template. Broad vs narrow tuning (see
+# NARROW_TRANSITIONS) then sets the FF-plasticity scale and the feedback
+# drive-vs-gain regime. Names encode the mechanism, e.g.
+# FF_FB_narrow_novel = a narrowly tuned cell whose novel-image feedforward drive
+# is gain-amplified by feedback into a +NO response.
 TRANSITIONS = {
     "weak_FB": transition(
         0.035,
@@ -208,9 +210,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (5.0, 8.5), "baseline_drive_sigma": (0.10, 0.25)},
         ff=weight_init([0.032, 0.032, 0.014], 0.45, 0.010, [0.006, 0.006, 0.0], [0.075, 0.075, 0.040]),
         fb=weight_init([0.050, 0.050, 0.040], 0.42, 0.008, [0.012, 0.012, 0.008], [0.105, 0.105, 0.085]),
-        lat=weight_init([0.22], 0.32, 0.030, 0.08, 0.45),
-        pvlat=weight_init([0.12], 0.40, 0.020, 0.03, 0.28),
-        pv=weight_init([0.26, 0.26, 0.22], 0.32, 0.035, [0.10, 0.10, 0.06], [0.52, 0.52, 0.44]),
+        lat=weight_init([0.22]),
+        pvlat=weight_init([0.12]),
+        pv=weight_init([0.26, 0.26, 0.22]),
     ),
     "weak_FF": transition(
         0.045,
@@ -221,9 +223,9 @@ TRANSITIONS = {
         },
         ff=weight_init([0.080, 0.006, 0.006], 0.42, 0.008, [0.035, 0.0, 0.0], [0.145, 0.020, 0.020]),
         fb=weight_init([0.045, 0.045, 0.035], 0.40, 0.006, hi=0.100),
-        lat=weight_init([0.02], 0.45, 0.008, hi=0.08),
-        pvlat=weight_init([0.02], 0.45, 0.008, hi=0.08),
-        pv=weight_init([0.025, 0.025, 0.025], 0.45, 0.012, hi=0.10),
+        lat=weight_init([0.02]),
+        pvlat=weight_init([0.02]),
+        pv=weight_init([0.025, 0.025, 0.025]),
     ),
     "un_un": transition(
         0.155,
@@ -233,9 +235,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (3.0, 8.0), "apical_drive_threshold": (0.15, 0.50), "baseline_drive_sigma": (0.18, 0.40)},
         ff=weight_init([0.01, 0.01, 0.01], 0.65, 0.012, hi=0.05),
         fb=weight_init([0.004, 0.004, 0.004], 0.65, 0.005, hi=0.035),
-        lat=weight_init([0.04], 0.60, 0.020, hi=0.15),
-        pvlat=weight_init([0.08], 0.50, 0.025, hi=0.20),
-        pv=weight_init([0.12, 0.12, 0.12], 0.45, 0.040, hi=0.35),
+        lat=weight_init([0.04]),
+        pvlat=weight_init([0.08]),
+        pv=weight_init([0.12, 0.12, 0.12]),
     ),
     "un_FB": transition(
         0.040,
@@ -247,27 +249,27 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (2.5, 4.5), "baseline_drive_sigma": (0.35, 0.52)},
         ff=weight_init([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.040),
         fb=weight_init([0.075, 0.075, 0.070], 0.35, 0.012, [0.030, 0.030, 0.028], [0.17, 0.17, 0.16]),
-        lat=weight_init([0.12], 0.30, 0.025, 0.04, 0.32),
-        pvlat=weight_init([0.10], 0.30, 0.025, 0.03, 0.30),
-        pv=weight_init([0.20, 0.20, 0.08], 0.26, 0.025, [0.07, 0.07, 0.0], [0.38, 0.38, 0.20]),
+        lat=weight_init([0.12]),
+        pvlat=weight_init([0.10]),
+        pv=weight_init([0.20, 0.20, 0.08]),
     ),
     "un_novel_FF": transition(
         0.055,
         clip={"apical_drive_threshold": (1.10, None), "apical_gain_strength": (6.0, 11.0), "baseline_drive_sigma": (0.10, 0.21)},
         ff=weight_init([0.003, 0.003, 0.09], 0.42, 0.005, [0.0, 0.0, 0.03], [0.012, 0.012, 0.20]),
         fb=weight_init([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
-        lat=weight_init([0.02], 0.45, 0.010, hi=0.10),
-        pvlat=weight_init([0.02], 0.45, 0.010, hi=0.10),
-        pv=weight_init([0.03, 0.03, 0.015], 0.45, 0.010, hi=0.10),
+        lat=weight_init([0.02]),
+        pvlat=weight_init([0.02]),
+        pv=weight_init([0.03, 0.03, 0.015]),
     ),
     "FF_un": transition(
         0.125,
         clip={"apical_drive_threshold": (0.85, None), "apical_gain_strength": (3.5, 8.0), "baseline_drive_sigma": (0.14, 0.30)},
         ff=weight_init([0.115, 0.115, 0.115], 0.36, 0.020, [0.040, 0.040, 0.040], [0.22, 0.22, 0.22]),
         fb=weight_init([0.001, 0.001, 0.001], 0.45, 0.002, hi=0.020),
-        lat=weight_init([0.075], 0.40, 0.018, 0.020, 0.22),
-        pvlat=weight_init([0.08], 0.45, 0.025, hi=0.25),
-        pv=weight_init([0.025, 0.025, 0.012], 0.35, 0.008, [0.006, 0.006, 0.0], [0.08, 0.08, 0.06]),
+        lat=weight_init([0.075]),
+        pvlat=weight_init([0.08]),
+        pv=weight_init([0.025, 0.025, 0.012]),
     ),
     "FF_FB_broad": transition(
         0.080,
@@ -281,9 +283,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (3.2, 5.5), "baseline_drive_sigma": (0.20, 0.34)},
         ff=weight_init([0.22, 0.22, 0.150], 0.24, 0.014, [0.080, 0.080, 0.040], [0.34, 0.34, 0.26]),
         fb=weight_init([0.145, 0.145, 0.025], 0.28, 0.010, [0.055, 0.055, 0.0], [0.30, 0.30, 0.065]),
-        lat=weight_init([0.14], 0.28, 0.022, 0.05, 0.40),
-        pvlat=weight_init([0.08], 0.35, 0.018, 0.02, 0.26),
-        pv=weight_init([0.26, 0.26, 0.10], 0.25, 0.026, [0.10, 0.10, 0.0], [0.50, 0.50, 0.24]),
+        lat=weight_init([0.14]),
+        pvlat=weight_init([0.08]),
+        pv=weight_init([0.26, 0.26, 0.10]),
     ),
     "FF_FB_broad_weak": transition(
         0.080,
@@ -295,9 +297,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (3.0, 5.0), "baseline_drive_sigma": (0.30, 0.46)},
         ff=weight_init([0.095, 0.095, 0.075], 0.26, 0.014, [0.035, 0.035, 0.025], [0.20, 0.20, 0.16]),
         fb=weight_init([0.190, 0.190, 0.028], 0.30, 0.012, [0.080, 0.080, 0.0], [0.32, 0.32, 0.065]),
-        lat=weight_init([0.13], 0.30, 0.022, 0.05, 0.30),
-        pvlat=weight_init([0.18], 0.30, 0.030, 0.06, 0.42),
-        pv=weight_init([0.28, 0.28, 0.09], 0.26, 0.026, [0.12, 0.12, 0.0], [0.52, 0.52, 0.22]),
+        lat=weight_init([0.13]),
+        pvlat=weight_init([0.18]),
+        pv=weight_init([0.28, 0.28, 0.09]),
     ),
     "FF_FB_broad_novel": transition(
         0.050,
@@ -310,27 +312,27 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (3.5, 6.0), "baseline_drive_sigma": (0.24, 0.42)},
         ff=weight_init([0.048, 0.048, 0.050], 0.28, 0.010, [0.015, 0.015, 0.022], [0.14, 0.14, 0.11]),
         fb=weight_init([0.118, 0.118, 0.130], 0.24, 0.012, [0.038, 0.038, 0.055], [0.25, 0.25, 0.27]),
-        lat=weight_init([0.12], 0.28, 0.024, 0.04, 0.40),
-        pvlat=weight_init([0.09], 0.35, 0.018, 0.02, 0.28),
-        pv=weight_init([0.22, 0.22, 0.18], 0.25, 0.026, [0.08, 0.08, 0.06], [0.46, 0.46, 0.34]),
+        lat=weight_init([0.12]),
+        pvlat=weight_init([0.09]),
+        pv=weight_init([0.22, 0.22, 0.18]),
     ),
     "FF_FB_narrow_familiar": transition(
         0.017,
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=weight_init([0.112, 0.010, 0.010], 0.42, 0.010, [0.060, 0.0, 0.0], [0.205, 0.022, 0.018]),
         fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=weight_init([0.035], 0.45, 0.012, hi=0.14),
-        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
-        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
+        lat=weight_init([0.035]),
+        pvlat=weight_init([0.03]),
+        pv=weight_init([0.03, 0.03, 0.03]),
     ),
     "FF_FB_narrow_familiar_2": transition(
         0.015,
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=weight_init([0.010, 0.112, 0.010], 0.32, 0.010, [0.0, 0.060, 0.0], [0.022, 0.205, 0.018]),
         fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=weight_init([0.035], 0.45, 0.012, hi=0.14),
-        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
-        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
+        lat=weight_init([0.035]),
+        pvlat=weight_init([0.03]),
+        pv=weight_init([0.03, 0.03, 0.03]),
     ),
     "FF_FB_narrow_familiar_novel": transition(
         0.024,
@@ -338,9 +340,9 @@ TRANSITIONS = {
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=weight_init([0.112, 0.010, 0.112], 0.32, 0.010, [0.060, 0.0, 0.060], [0.205, 0.022, 0.205]),
         fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=weight_init([0.035], 0.45, 0.012, hi=0.16),
-        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
-        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.16),
+        lat=weight_init([0.035]),
+        pvlat=weight_init([0.03]),
+        pv=weight_init([0.03, 0.03, 0.03]),
     ),
     "FF_FB_narrow_familiar_2_novel": transition(
         0.022,
@@ -348,9 +350,9 @@ TRANSITIONS = {
         clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=weight_init([0.010, 0.112, 0.112], 0.32, 0.010, [0.0, 0.060, 0.060], [0.022, 0.205, 0.205]),
         fb=weight_init([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
-        lat=weight_init([0.055], 0.45, 0.012, hi=0.16),
-        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
-        pv=weight_init([0.03, 0.08, 0.005], 0.45, 0.012, hi=0.16),
+        lat=weight_init([0.055]),
+        pvlat=weight_init([0.03]),
+        pv=weight_init([0.03, 0.08, 0.005]),
     ),
     "FF_FB_narrow_novel": transition(
         0.165,
@@ -358,9 +360,9 @@ TRANSITIONS = {
         clip={"apical_drive_threshold": (1.2, None), "apical_gain_strength": (5.0, 9.5), "baseline_drive_sigma": (0.085, 0.17)},
         ff=weight_init([0.003, 0.003, 0.080], 0.42, 0.006, [0.0, 0.0, 0.03], [0.014, 0.014, 0.160]),
         fb=weight_init([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
-        lat=weight_init([0.03], 0.45, 0.012, hi=0.12),
-        pvlat=weight_init([0.03], 0.45, 0.012, hi=0.12),
-        pv=weight_init([0.03, 0.03, 0.03], 0.45, 0.012, hi=0.12),
+        lat=weight_init([0.03]),
+        pvlat=weight_init([0.03]),
+        pv=weight_init([0.03, 0.03, 0.03]),
     ),
     "FB_FB": transition(
         0.045,
@@ -372,9 +374,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (4.0, 7.0), "baseline_drive_sigma": (0.24, 0.40)},
         ff=weight_init([0.001, 0.001, 0.001], 0.60, 0.003, hi=0.010),
         fb=weight_init([0.32, 0.32, 0.32], 0.26, 0.025, [0.16, 0.16, 0.16], [0.58, 0.58, 0.58]),
-        lat=weight_init([0.14], 0.30, 0.026, 0.05, 0.34),
-        pvlat=weight_init([0.12], 0.32, 0.022, 0.04, 0.32),
-        pv=weight_init([0.28, 0.28, 0.28], 0.28, 0.034, [0.09, 0.09, 0.09], [0.52, 0.52, 0.52]),
+        lat=weight_init([0.14]),
+        pvlat=weight_init([0.12]),
+        pv=weight_init([0.28, 0.28, 0.28]),
     ),
     "fb_fb_weak": transition(
         0.024,
@@ -386,9 +388,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (2.8, 5.2), "baseline_drive_sigma": (0.16, 0.30)},
         ff=weight_init([0.010, 0.010, 0.010], 0.60, 0.008, hi=0.04),
         fb=weight_init([0.165, 0.165, 0.165], 0.28, 0.012, [0.070, 0.070, 0.070], [0.32, 0.32, 0.32]),
-        lat=weight_init([0.12], 0.32, 0.025, 0.03, 0.26),
-        pvlat=weight_init([0.45], 0.30, 0.040, 0.18, 0.85),
-        pv=weight_init([0.55, 0.55, 0.42], 0.30, 0.040, [0.18, 0.18, 0.12], [0.90, 0.90, 0.75]),
+        lat=weight_init([0.12]),
+        pvlat=weight_init([0.45]),
+        pv=weight_init([0.55, 0.55, 0.42]),
     ),
     "O_un": transition(
         0.042,
@@ -402,9 +404,9 @@ TRANSITIONS = {
         clip={"apical_gain_strength": (4.0, 6.5), **O_RESPONDER_BASELINE},
         ff=weight_init([0.004, 0.004, 0.004], 0.40, 0.004, hi=0.018),
         fb=weight_init([0.32, 0.32, 0.32], 0.22, 0.025, [0.17, 0.17, 0.17], [0.56, 0.56, 0.56]),
-        lat=weight_init([0.18], 0.28, 0.026, 0.07, 0.38),
-        pvlat=weight_init([0.32], 0.28, 0.040, 0.12, 0.62),
-        pv=weight_init([0.38, 0.38, 0.34], 0.24, 0.034, [0.16, 0.16, 0.12], [0.68, 0.68, 0.62]),
+        lat=weight_init([0.18]),
+        pvlat=weight_init([0.32]),
+        pv=weight_init([0.38, 0.38, 0.34]),
     ),
 }
 
@@ -412,20 +414,25 @@ TRANSITIONS = {
 # across every transition (broad vs narrow), never per-transition and never 0.
 for _transition, _spec in TRANSITIONS.items():
     _spec["fix"]["ff_plasticity_scale"] = _ff_plasticity_scale(_transition)
+    for _init_key, _init_spec in _spec["init"].items():
+        _has_rel_noise = _init_spec["rel_noise"] is not None
+        _has_noise_floor = _init_spec["noise_floor"] is not None
+        if _has_rel_noise != _has_noise_floor:
+            raise ValueError(f"{_transition}: {INIT_LABELS[_init_key]} must specify both rel_noise and noise_floor, or neither.")
+        _is_sampled_init = _has_rel_noise and _has_noise_floor
+        if _is_sampled_init != (_init_key in {"w_ff_init", "w_fb_init"}):
+            raise ValueError(f"{_transition}: only w_ff_init and w_fb_init may specify rel_noise/noise_floor.")
 
 # Cell-to-cell jitter on the scalar model parameters, as (mode, scale, lo, hi,
-# floor). "log": multiply by exp(N(0, scale)) -> log-normal spread of a positive
-# parameter; "add": add N(0, max(|value|*scale, floor)). The result is clipped to
-# [lo, hi]. Together with the per-synapse weight noise this turns each transition
-# template into a cloud of cells rather than a single point.
+# floor). Only the scalar parameters below are sampled; other scalar parameters
+# and all PV/LAT-related initial weights stay at their transition-template
+# centers. "log": multiply by exp(N(0, scale)) -> log-normal spread of a
+# positive parameter; "add": add N(0, max(|value|*scale, floor)). The result is
+# clipped to [lo, hi].
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
-    "apical_gain_k": ("log", 0.18, 0.1, 30.0, 0.0),
     "baseline_drive_sigma": ("log", 0.20, 0.0, 1.0, 0.0),
-    "pv_noise_sigma": ("log", 0.20, 0.0, 0.5, 0.0),
-    "alpha": ("log", 0.12, 0.05, 10.0, 0.0),
     "apical_drive_threshold": ("add", 0.12, 0.0, 3.0, 0.05),
-    "apical_gain_threshold": ("add", 0.08, -1.0, 1.0, 0.04),
 }
 
 
@@ -461,13 +468,29 @@ def _set_init(config: dict[str, Any], key: str, values: np.ndarray, sigma: Any =
     config[key] = {"mu": [float(value) for value in values.reshape(-1)], "sigma": sigma}
 
 
-def _draw_init(init_spec: tuple, rng: np.random.Generator) -> np.ndarray:
+def _init_center(init_spec: dict[str, Any]) -> np.ndarray:
+    return np.asarray(init_spec["center"], dtype=float)
+
+
+def _init_bounds(init_spec: dict[str, Any]) -> tuple[Any, Any]:
+    return init_spec.get("lo", 0.0), init_spec.get("hi", 1.0)
+
+
+def _center_init_values(init_spec: dict[str, Any]) -> np.ndarray:
+    center = _init_center(init_spec)
+    if init_spec["rel_noise"] is None and init_spec["noise_floor"] is None:
+        return center
+    return _clip_array(center, *_init_bounds(init_spec))
+
+
+def _draw_init(init_spec: dict[str, Any], rng: np.random.Generator) -> np.ndarray:
     """Sample one initial-weight vector from a `weight_init` spec (Gaussian about
     `center`, sd `max(|center|*rel_noise, noise_floor)`, clipped to [lo, hi])."""
-    center, rel_noise, noise_floor, lo, hi = init_spec
-    center = np.asarray(center, dtype=float)
-    scale = np.maximum(np.abs(center) * rel_noise, noise_floor)
-    return _clip_array(center + rng.normal(0.0, scale, size=center.shape), lo, hi)
+    if init_spec["rel_noise"] is None or init_spec["noise_floor"] is None:
+        raise ValueError("Cannot sample from a center-only weight_init spec.")
+    center = _init_center(init_spec)
+    scale = np.maximum(np.abs(center) * init_spec["rel_noise"], init_spec["noise_floor"])
+    return _clip_array(center + rng.normal(0.0, scale, size=center.shape), *_init_bounds(init_spec))
 
 
 def _draw_scalar(value: float, spec: tuple, rng: np.random.Generator, multiplier: float) -> float:
@@ -497,22 +520,27 @@ def _perturb_config(
     """Draw one noisy cell of the given transition type.
 
     Starts from the canonical `minimal2` config, replaces its initial weights with
-    a fresh draw from each `weight_init` spec, jitters the scalar parameters
-    (`SCALAR_NOISE`), then applies the transition's fixed values and clip bounds
-    and the shared learning rates. The trailing `_`-prefixed keys are bookkeeping
-    (which template, which sample) that `CCNeuron` ignores.
+    a fresh FF/FB draw from each `weight_init` spec, sets other template weights
+    to their centers, jitters only the scalar parameters in `SCALAR_NOISE`, then
+    applies clip bounds and shared learning rates. The trailing `_`-prefixed keys
+    are bookkeeping (which template, which sample) that `CCNeuron` ignores.
     """
     config = copy.deepcopy(base_config)
     spec = TRANSITIONS[transition]
 
     for key, init_spec in spec["init"].items():
-        _set_init(config, key, _draw_init(init_spec, rng))
+        if key in {"w_ff_init", "w_fb_init"}:
+            values = _draw_init(init_spec, rng)
+        else:
+            values = _center_init_values(init_spec)
+        _set_init(config, key, values)
+
+    config.update(spec["fix"])
 
     for key, scalar_spec in SCALAR_NOISE.items():
         if key in config and _is_num(config[key]):
             config[key] = _draw_scalar(float(config[key]), scalar_spec, rng, scalar_noise_multiplier)
 
-    config.update(spec["fix"])
     for key, (lo, hi) in (GLOBAL_SCALAR_CLIP | spec["clip"]).items():
         if key in config and _is_num(config[key]):
             config[key] = _clip(float(config[key]), lo, hi)
@@ -537,8 +565,7 @@ def _center_config(transition: str) -> dict[str, Any]:
     config = copy.deepcopy(minimal_configs3[transition])
     spec = TRANSITIONS[transition]
     for key, init_spec in spec["init"].items():
-        center = np.asarray(init_spec[0], dtype=float)
-        _set_init(config, key, _clip_array(center, init_spec[3], init_spec[4]))
+        _set_init(config, key, _center_init_values(init_spec))
     config.update(spec["fix"])
     for key, (lo, hi) in (GLOBAL_SCALAR_CLIP | spec["clip"]).items():
         if key in config and _is_num(config[key]):
@@ -628,56 +655,6 @@ def _sample_configs(args: argparse.Namespace, transition_order: list[str]) -> li
     return samples
 
 
-def _probe_stimulus_window(n_steps_per_phase: int) -> tuple[int, int]:
-    stim_start = n_steps_per_phase // 4
-    stim_end = n_steps_per_phase // 2
-    if stim_end <= stim_start:
-        stim_end = min(n_steps_per_phase, stim_start + 1)
-    return stim_start, stim_end
-
-
-def _design_probe_trial(
-    input_mean: torch.Tensor | list[float],
-    context_mean: torch.Tensor | list[float],
-    *,
-    n_steps_per_phase: int,
-    input_var: float = 0.05,
-    context_var: float = 0.05,
-    intertrial_sigma: float = 0.05,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build one diagnostic test trial: 1/4 baseline, 1/4 stimulus, 1/2 post."""
-    stim_start, stim_end = _probe_stimulus_window(n_steps_per_phase)
-    stim_len = stim_end - stim_start
-    post_len = n_steps_per_phase - stim_end
-
-    x_stim = randn_reparam(size=(stim_len,), mu=input_mean, sigma=input_var)
-    c_stim = randn_reparam(size=(stim_len,), mu=context_mean, sigma=context_var)
-    x_pre = randn_reparam(size=(stim_start, *x_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
-    c_pre = randn_reparam(size=(stim_start, *c_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
-    x_post = randn_reparam(size=(post_len, *x_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
-    c_post = randn_reparam(size=(post_len, *c_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
-
-    return torch.cat((x_pre, x_stim, x_post), dim=0), torch.cat((c_pre, c_stim, c_post), dim=0)
-
-
-def _build_probe_stimuli(
-    *,
-    n_steps_per_phase: int,
-    n_trials: int = 1,
-) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
-    stimuli = {
-        name: _design_probe_trial(
-            input_mean=input_mean,
-            context_mean=context_mean,
-            n_steps_per_phase=n_steps_per_phase,
-        )
-        for name, (input_mean, context_mean) in STIMULUS_SPECS.items()
-    }
-    if n_trials == 1:
-        return stimuli
-    return {name: (x.repeat((n_trials, 1)), c.repeat((n_trials, 1))) for name, (x, c) in stimuli.items()}
-
-
 def _response_from_frame(
     frame: pd.DataFrame,
     *,
@@ -689,14 +666,14 @@ def _response_from_frame(
     """Mean z-scored response over the stimulus window of a probe trace.
 
     Averages the firing rate `y` over the last `response_tail_fraction` of each
-    trial's stimulus window (the stimulus occupies the second quarter of a trial),
+    trial's stimulus window (the stimulus occupies the final quarter of a trial),
     then z-scores by the `(mean, std)` baseline using `max(std, zscore_std_floor)`.
     """
-    stim_start, stim_end = _probe_stimulus_window(n_steps_per_phase)
-    stim_len = stim_end - stim_start
+    stim_start = 3 * n_steps_per_phase // 4
+    stim_len = n_steps_per_phase - stim_start
     tail_start = stim_start + int(round((1.0 - response_tail_fraction) * stim_len))
     trial_step = frame["step"].to_numpy(dtype=int) % n_steps_per_phase
-    mask = (trial_step >= tail_start) & (trial_step < stim_end)
+    mask = trial_step >= tail_start
     values = frame.loc[mask, "y"].to_numpy(dtype=float)
     mean, std = baseline
     scale = max(std, zscore_std_floor) if np.isfinite(std) and std > 1e-12 else max(1.0, zscore_std_floor)
@@ -704,9 +681,10 @@ def _response_from_frame(
 
 
 def _baseline(frames: list[pd.DataFrame], n_steps_per_phase: int) -> tuple[float, float]:
-    """Spontaneous `(mean, std)` of `y` over the displayed pre-stimulus quarter."""
+    """Spontaneous `(mean, std)` of `y` over the inter-trial windows (the first
+    three quarters of every trial, when no stimulus is present)."""
     chunks = []
-    stim_start, _ = _probe_stimulus_window(n_steps_per_phase)
+    stim_start = 3 * n_steps_per_phase // 4
     for frame in frames:
         trial_step = frame["step"].to_numpy(dtype=int) % n_steps_per_phase
         chunks.append(frame.loc[trial_step < stim_start, "y"].to_numpy(dtype=float))
@@ -724,7 +702,6 @@ def _probe_rows(
     *,
     phase: str,
     n_steps_per_phase: int,
-    test_trials: int,
     response_tail_fraction: float,
     baseline: tuple[float, float] | None,
     zscore_std_floor: float,
@@ -736,20 +713,10 @@ def _probe_rows(
     traces = []
     for condition, (x_full, c_full) in stimuli.items():
         for trace, x_phase in (("full", x_full), ("occlusion", torch.zeros_like(x_full))):
-            frames = [
-                run_experimental_phase(
-                    model,
-                    x_phase,
-                    c_full,
-                    f"{trace}_{condition}_{phase}",
-                    update=False,
-                    reset_rates=True,
-                )
-                for _ in range(test_trials)
-            ]
-            traces.append((condition, trace, frames))
+            frame = run_experimental_phase(model, x_phase, c_full, f"{trace}_{condition}_{phase}", update=False)
+            traces.append((condition, trace, frame))
 
-    local_baseline = _baseline([frame for _, _, frames in traces for frame in frames], n_steps_per_phase)
+    local_baseline = _baseline([frame for _, _, frame in traces], n_steps_per_phase)
     ref_baseline = baseline or local_baseline
     rows = [
         dict(
@@ -758,18 +725,15 @@ def _probe_rows(
             stage=STAGES[phase],
             trace=trace,
             image_type=TRACE_TYPES[trace],
-            response=float(np.nanmean([
-                _response_from_frame(
-                    frame,
-                    n_steps_per_phase=n_steps_per_phase,
-                    response_tail_fraction=response_tail_fraction,
-                    baseline=ref_baseline,
-                    zscore_std_floor=zscore_std_floor,
-                )
-                for frame in frames
-            ])),
+            response=_response_from_frame(
+                frame,
+                n_steps_per_phase=n_steps_per_phase,
+                response_tail_fraction=response_tail_fraction,
+                baseline=ref_baseline,
+                zscore_std_floor=zscore_std_floor,
+            ),
         )
-        for condition, trace, frames in traces
+        for condition, trace, frame in traces
     ]
     return rows, local_baseline
 
@@ -780,7 +744,6 @@ def _run_sample(
     n_steps_per_phase: int,
     response_tail_fraction: float,
     test_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
-    test_trials: int,
     training_stimuli: tuple[torch.Tensor, torch.Tensor],
     zscore_std_floor: float,
 ) -> pd.DataFrame:
@@ -796,7 +759,6 @@ def _run_sample(
         test_stimuli,
         phase="naive",
         n_steps_per_phase=n_steps_per_phase,
-        test_trials=test_trials,
         response_tail_fraction=response_tail_fraction,
         baseline=None,
         zscore_std_floor=cell_floor,
@@ -807,7 +769,6 @@ def _run_sample(
         test_stimuli,
         phase="expert",
         n_steps_per_phase=n_steps_per_phase,
-        test_trials=test_trials,
         response_tail_fraction=response_tail_fraction,
         baseline=naive_baseline,
         zscore_std_floor=cell_floor,
@@ -887,79 +848,37 @@ def _panel_step_window(n_steps_per_phase: int, test_trials: int) -> tuple[int, i
     """Focus transition panels on a real stimulus with pre/post ITI context.
 
     The displayed window is one trial long: 1/4 pre-stimulus ITI, 1/4 stimulus,
-    and 1/2 post-stimulus ITI.
+    and 1/2 post-stimulus ITI. In the continuous protocol the stimulus occupies
+    the final quarter of each generated trial, so the displayed window spans into
+    the appended following ITI.
     """
     trial_idx = max(0, test_trials - 1)
-    stim_start, stim_end = _probe_stimulus_window(n_steps_per_phase)
-    stim_start += trial_idx * n_steps_per_phase
-    stim_end += trial_idx * n_steps_per_phase
+    stim_start = trial_idx * n_steps_per_phase + 3 * n_steps_per_phase // 4
+    stim_end = (trial_idx + 1) * n_steps_per_phase
     stimulus_len = stim_end - stim_start
     return stim_start - stimulus_len, stim_end + 2 * stimulus_len
 
 
-def _concat_trial_frames(frames: list[pd.DataFrame], *, n_steps_per_phase: int) -> pd.DataFrame:
-    shifted = []
-    for trial_idx, frame in enumerate(frames):
-        copied = frame.copy()
-        copied["step"] = copied["step"].to_numpy(dtype=int) + trial_idx * n_steps_per_phase
-        shifted.append(copied)
-    return pd.concat(shifted, ignore_index=True)
-
-
-def _run_independent_test_phase_variants(
-    model: CCNeuron,
+def _append_post_stimulus_iti(
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     *,
-    phase_label: str,
     n_steps_per_phase: int,
-    test_trials: int,
-) -> list[pd.DataFrame]:
-    frames: list[pd.DataFrame] = []
+) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+    """Append display-only ITI samples so the final requested trial has a post window."""
+    post_steps = n_steps_per_phase // 2
+    if post_steps <= 0:
+        return stimuli
 
-    def run_repeated_trace(x_phase: torch.Tensor, c_phase: torch.Tensor, condition_name: str) -> pd.DataFrame:
-        return _concat_trial_frames(
-            [
-                run_experimental_phase(
-                    model,
-                    x_phase,
-                    c_phase,
-                    condition_name=condition_name,
-                    update=False,
-                    reset_rates=True,
-                )
-                for _ in range(test_trials)
-            ],
-            n_steps_per_phase=n_steps_per_phase,
+    extended: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+    for condition, (x_full, c_full) in stimuli.items():
+        tail_len = min(post_steps, x_full.shape[0], c_full.shape[0])
+        x_tail = x_full[:tail_len].clone()
+        c_tail = c_full[:tail_len].clone()
+        extended[condition] = (
+            torch.cat((x_full, x_tail), dim=0),
+            torch.cat((c_full, c_tail), dim=0),
         )
-
-    for condition_name, (x_full, c_full) in stimuli.items():
-        occluded_x = torch.zeros_like(x_full)
-        no_context_c = torch.zeros_like(c_full)
-
-        frames.append(run_repeated_trace(x_full, c_full, f"full_{condition_name}_{phase_label}"))
-        frames.append(run_repeated_trace(occluded_x, c_full, f"occlusion_{condition_name}_{phase_label}"))
-
-        for ablation_label, ablation_spec in NO_RESPONSE_ABLATION_SPECS.items():
-            ablated_c = no_context_c if ablation_spec.get("zero_context", False) else c_full
-            model_overrides = ablation_spec.get("model_overrides", {})
-            condition_prefix = ablation_spec.get("condition_prefix", ablation_label)
-            with _temporary_model_overrides(model, **model_overrides):
-                frames.append(
-                    run_repeated_trace(
-                        x_full,
-                        ablated_c,
-                        f"{condition_prefix}_{condition_name}_{phase_label}",
-                    )
-                )
-                frames.append(
-                    run_repeated_trace(
-                        occluded_x,
-                        ablated_c,
-                        f"occlusion_{condition_name}_{condition_prefix}_{phase_label}",
-                    )
-                )
-
-    return frames
+    return extended
 
 
 def _run_panel_config(
@@ -973,27 +892,15 @@ def _run_panel_config(
     """Lightweight naive->train->expert run for ONE config, including the same
     no-feedback and no-LAT variants used by the grouped minimal2 panels."""
     model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
-    single_trial_stimuli = _build_probe_stimuli(n_steps_per_phase=n_steps_per_phase)
-    stimuli = _build_probe_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials)
+    stimuli = _append_post_stimulus_iti(
+        _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials),
+        n_steps_per_phase=n_steps_per_phase,
+    )
     training = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
 
-    frames = _run_independent_test_phase_variants(
-        model,
-        single_trial_stimuli,
-        phase_label="naive",
-        n_steps_per_phase=n_steps_per_phase,
-        test_trials=test_trials,
-    )
+    frames = _run_test_phase_variants(model, stimuli, phase_label="naive")
     run_experimental_phase(model, training[0], training[1], "full_familiar_training", update=True)
-    frames.extend(
-        _run_independent_test_phase_variants(
-            model,
-            single_trial_stimuli,
-            phase_label="expert",
-            n_steps_per_phase=n_steps_per_phase,
-            test_trials=test_trials,
-        )
-    )
+    frames.extend(_run_test_phase_variants(model, stimuli, phase_label="expert"))
 
     df = pd.concat([frame.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES) for frame in frames], ignore_index=True)
     df["seed"] = config.get("seed", 42)
@@ -1218,7 +1125,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     samples = _sample_configs(args, transition_order)
 
     torch.manual_seed(args.seed)
-    test_stimuli = _build_probe_stimuli(n_steps_per_phase=args.n_steps_per_phase)
+    test_stimuli = _build_test_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.test_trials)
     training_stimuli = _build_training_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.training_trials)
     response_frames = Parallel(n_jobs=args.n_jobs, verbose=10 if args.n_jobs != 1 else 0)(
         delayed(_run_sample)(
@@ -1226,7 +1133,6 @@ def run_model_scatter(args: argparse.Namespace) -> None:
             n_steps_per_phase=args.n_steps_per_phase,
             response_tail_fraction=args.response_tail_fraction,
             test_stimuli=test_stimuli,
-            test_trials=args.test_trials,
             training_stimuli=training_stimuli,
             zscore_std_floor=args.zscore_std_floor,
         )
@@ -1256,6 +1162,9 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "test_trials": args.test_trials,
         "training_trials": args.training_trials,
         "fixed_scalars": list(FIXED_SCALARS),
+        "sampled_init_keys": ["w_ff_init", "w_fb_init"],
+        "fixed_template_init_keys": ["w_lat_init", "w_pv_lat_init", "W_pv_init"],
+        "scalar_noise_keys": list(SCALAR_NOISE),
         "zscore_std_floor": args.zscore_std_floor,
         "response_tail_fraction": args.response_tail_fraction,
         "sector_threshold": args.threshold,

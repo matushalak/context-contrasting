@@ -47,8 +47,16 @@ python -m context_contrasting.model_scatter.run_model_scatter \
 The main tuning levers are at the top of `run_model_scatter.py`:
 
 - `TRANSITIONS`: transition sampling proportions plus per-transition initial
-  weight centers, relative noise, noise floors, and clipping bounds.
-- `SCALAR_NOISE`: global scalar hyperparameter perturbation ranges.
+  weight centers. Center-only `weight_init(...)` specs are fixed exactly at that
+  center; specs that also provide relative noise, a noise floor, and bounds are
+  sampled.
+- Only FF and FB initial weights are sampled. LAT, PV-lateral, and PV feedforward
+  initial weights are fixed at their transition-template centers. FF/FB samples
+  use independent Gaussian noise per weight element, with the transition's
+  relative noise, floor, and bounds.
+- `SCALAR_NOISE`: perturbation ranges for `apical_drive_threshold`,
+  `apical_gain_strength`, and `baseline_drive_sigma`; other scalar parameters are
+  fixed per transition template unless explicitly set by the template.
 - Learning rates are fixed globally across all transition types via
   `SHARED_LEARNING_RATES`; transition-specific learning-rate values are
   intentionally ignored by the sampler.
@@ -62,11 +70,10 @@ The main tuning levers are at the top of `run_model_scatter.py`:
 - `--n-samples`: total cells to draw from the weighted transition mixture
   (`1200` by default, so the model distribution is smoother than the empirical
   sample).
-- `--n-steps-per-phase`: simulation steps per test trial (`200` by default;
-  probe trials use 1/4 pre-stimulus ITI, 1/4 stimulus, and 1/2 post-stimulus ITI).
-- `--test-trials`: independent reset probe repeats per stimulus (`2` by default);
-  changing this averages more or fewer noisy probe repeats without changing the
-  within-trial dynamical context.
+- `--n-steps-per-phase`: simulation steps per test trial (`200` by default; the
+  generated stimulus occupies the final quarter).
+- `--test-trials`: continuous probe repeats per stimulus (`2` by default), using
+  the same repeated-trial protocol as before.
 - `--training-trials`: familiar-training repeats (`5` by default, matching the
   canonical trace experiment).
 - `--transition-sampling data-like|equal`: random weighted transition draws or
@@ -93,7 +100,9 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   canonical examples (`canonical_panels`). These panels use the same
   `--n-steps-per-phase`, `--test-trials`, and `--training-trials` settings as
   the main run, include the no-feedback and no-LAT traces, and z-score each
-  displayed response to the pre-stimulus quarter of the independent reset probe
+  displayed response to the dynamically selected pre-stimulus panel window. The
+  displayed panel window is 1/4 baseline ITI, 1/4 stimulus, and 1/2 post-stimulus
+  ITI, even though the generated test protocol remains continuous repeated
   trials. These runs are parallelised across transitions (use `--n-jobs`).
 - `--export-panels`: also export each scatter's individual panels as separate
   images.
