@@ -45,18 +45,20 @@ from joblib import Parallel, delayed
 import context_contrasting.data_analysis.transitions_helpers as th
 from context_contrasting.minimal2.config_s import minimal_configs3
 from context_contrasting.minimal2.experiment_s import (
+    NO_RESPONSE_ABLATION_SPECS,
     PRIMARY_EXPERIMENT_SERIES,
     STIMULUS_SPECS,
-    _build_test_stimuli,
     _build_training_stimuli,
+    _temporary_model_overrides,
     run_experimental_phase,
 )
 from context_contrasting.minimal2.minimal_s import CCNeuron
 from context_contrasting.minimal2.visualize_s import (
     format_transition_label,
-    visualize_transition_panel,
+    save_grouped_transition_panels,
     wide_to_long,
 )
+from context_contrasting.utils import randn_reparam
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -626,6 +628,56 @@ def _sample_configs(args: argparse.Namespace, transition_order: list[str]) -> li
     return samples
 
 
+def _probe_stimulus_window(n_steps_per_phase: int) -> tuple[int, int]:
+    stim_start = n_steps_per_phase // 4
+    stim_end = n_steps_per_phase // 2
+    if stim_end <= stim_start:
+        stim_end = min(n_steps_per_phase, stim_start + 1)
+    return stim_start, stim_end
+
+
+def _design_probe_trial(
+    input_mean: torch.Tensor | list[float],
+    context_mean: torch.Tensor | list[float],
+    *,
+    n_steps_per_phase: int,
+    input_var: float = 0.05,
+    context_var: float = 0.05,
+    intertrial_sigma: float = 0.05,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build one diagnostic test trial: 1/4 baseline, 1/4 stimulus, 1/2 post."""
+    stim_start, stim_end = _probe_stimulus_window(n_steps_per_phase)
+    stim_len = stim_end - stim_start
+    post_len = n_steps_per_phase - stim_end
+
+    x_stim = randn_reparam(size=(stim_len,), mu=input_mean, sigma=input_var)
+    c_stim = randn_reparam(size=(stim_len,), mu=context_mean, sigma=context_var)
+    x_pre = randn_reparam(size=(stim_start, *x_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
+    c_pre = randn_reparam(size=(stim_start, *c_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
+    x_post = randn_reparam(size=(post_len, *x_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
+    c_post = randn_reparam(size=(post_len, *c_stim.shape[1:]), mu=0.0, sigma=intertrial_sigma)
+
+    return torch.cat((x_pre, x_stim, x_post), dim=0), torch.cat((c_pre, c_stim, c_post), dim=0)
+
+
+def _build_probe_stimuli(
+    *,
+    n_steps_per_phase: int,
+    n_trials: int = 1,
+) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+    stimuli = {
+        name: _design_probe_trial(
+            input_mean=input_mean,
+            context_mean=context_mean,
+            n_steps_per_phase=n_steps_per_phase,
+        )
+        for name, (input_mean, context_mean) in STIMULUS_SPECS.items()
+    }
+    if n_trials == 1:
+        return stimuli
+    return {name: (x.repeat((n_trials, 1)), c.repeat((n_trials, 1))) for name, (x, c) in stimuli.items()}
+
+
 def _response_from_frame(
     frame: pd.DataFrame,
     *,
@@ -637,13 +689,14 @@ def _response_from_frame(
     """Mean z-scored response over the stimulus window of a probe trace.
 
     Averages the firing rate `y` over the last `response_tail_fraction` of each
-    trial's stimulus window (the stimulus occupies the final quarter of a trial),
+    trial's stimulus window (the stimulus occupies the second quarter of a trial),
     then z-scores by the `(mean, std)` baseline using `max(std, zscore_std_floor)`.
     """
-    stim_start = 3 * n_steps_per_phase // 4
-    stim_len = n_steps_per_phase - stim_start
+    stim_start, stim_end = _probe_stimulus_window(n_steps_per_phase)
+    stim_len = stim_end - stim_start
     tail_start = stim_start + int(round((1.0 - response_tail_fraction) * stim_len))
-    mask = frame["step"].to_numpy(dtype=int) % n_steps_per_phase >= tail_start
+    trial_step = frame["step"].to_numpy(dtype=int) % n_steps_per_phase
+    mask = (trial_step >= tail_start) & (trial_step < stim_end)
     values = frame.loc[mask, "y"].to_numpy(dtype=float)
     mean, std = baseline
     scale = max(std, zscore_std_floor) if np.isfinite(std) and std > 1e-12 else max(1.0, zscore_std_floor)
@@ -651,10 +704,9 @@ def _response_from_frame(
 
 
 def _baseline(frames: list[pd.DataFrame], n_steps_per_phase: int) -> tuple[float, float]:
-    """Spontaneous `(mean, std)` of `y` over the inter-trial windows (the first
-    three quarters of every trial, when no stimulus is present)."""
+    """Spontaneous `(mean, std)` of `y` over the displayed pre-stimulus quarter."""
     chunks = []
-    stim_start = 3 * n_steps_per_phase // 4
+    stim_start, _ = _probe_stimulus_window(n_steps_per_phase)
     for frame in frames:
         trial_step = frame["step"].to_numpy(dtype=int) % n_steps_per_phase
         chunks.append(frame.loc[trial_step < stim_start, "y"].to_numpy(dtype=float))
@@ -672,6 +724,7 @@ def _probe_rows(
     *,
     phase: str,
     n_steps_per_phase: int,
+    test_trials: int,
     response_tail_fraction: float,
     baseline: tuple[float, float] | None,
     zscore_std_floor: float,
@@ -683,10 +736,20 @@ def _probe_rows(
     traces = []
     for condition, (x_full, c_full) in stimuli.items():
         for trace, x_phase in (("full", x_full), ("occlusion", torch.zeros_like(x_full))):
-            frame = run_experimental_phase(model, x_phase, c_full, f"{trace}_{condition}_{phase}", update=False)
-            traces.append((condition, trace, frame))
+            frames = [
+                run_experimental_phase(
+                    model,
+                    x_phase,
+                    c_full,
+                    f"{trace}_{condition}_{phase}",
+                    update=False,
+                    reset_rates=True,
+                )
+                for _ in range(test_trials)
+            ]
+            traces.append((condition, trace, frames))
 
-    local_baseline = _baseline([frame for _, _, frame in traces], n_steps_per_phase)
+    local_baseline = _baseline([frame for _, _, frames in traces for frame in frames], n_steps_per_phase)
     ref_baseline = baseline or local_baseline
     rows = [
         dict(
@@ -695,15 +758,18 @@ def _probe_rows(
             stage=STAGES[phase],
             trace=trace,
             image_type=TRACE_TYPES[trace],
-            response=_response_from_frame(
-                frame,
-                n_steps_per_phase=n_steps_per_phase,
-                response_tail_fraction=response_tail_fraction,
-                baseline=ref_baseline,
-                zscore_std_floor=zscore_std_floor,
-            ),
+            response=float(np.nanmean([
+                _response_from_frame(
+                    frame,
+                    n_steps_per_phase=n_steps_per_phase,
+                    response_tail_fraction=response_tail_fraction,
+                    baseline=ref_baseline,
+                    zscore_std_floor=zscore_std_floor,
+                )
+                for frame in frames
+            ])),
         )
-        for condition, trace, frame in traces
+        for condition, trace, frames in traces
     ]
     return rows, local_baseline
 
@@ -714,6 +780,7 @@ def _run_sample(
     n_steps_per_phase: int,
     response_tail_fraction: float,
     test_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    test_trials: int,
     training_stimuli: tuple[torch.Tensor, torch.Tensor],
     zscore_std_floor: float,
 ) -> pd.DataFrame:
@@ -729,6 +796,7 @@ def _run_sample(
         test_stimuli,
         phase="naive",
         n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
         response_tail_fraction=response_tail_fraction,
         baseline=None,
         zscore_std_floor=cell_floor,
@@ -739,6 +807,7 @@ def _run_sample(
         test_stimuli,
         phase="expert",
         n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
         response_tail_fraction=response_tail_fraction,
         baseline=naive_baseline,
         zscore_std_floor=cell_floor,
@@ -814,36 +883,117 @@ def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
-# Center/canonical panels are rendered with the canonical experiment_s protocol
-# (long stimulus window) so the per-step EMA dynamics develop and the traces look
-# like minimal2/plotsexperiment_s/transition_panels.
-CENTER_PANEL_N_STEPS = 400
-CENTER_PANEL_TEST_TRIALS = 4
+def _panel_step_window(n_steps_per_phase: int, test_trials: int) -> tuple[int, int]:
+    """Focus transition panels on a real stimulus with pre/post ITI context.
+
+    The displayed window is one trial long: 1/4 pre-stimulus ITI, 1/4 stimulus,
+    and 1/2 post-stimulus ITI.
+    """
+    trial_idx = max(0, test_trials - 1)
+    stim_start, stim_end = _probe_stimulus_window(n_steps_per_phase)
+    stim_start += trial_idx * n_steps_per_phase
+    stim_end += trial_idx * n_steps_per_phase
+    stimulus_len = stim_end - stim_start
+    return stim_start - stimulus_len, stim_end + 2 * stimulus_len
+
+
+def _concat_trial_frames(frames: list[pd.DataFrame], *, n_steps_per_phase: int) -> pd.DataFrame:
+    shifted = []
+    for trial_idx, frame in enumerate(frames):
+        copied = frame.copy()
+        copied["step"] = copied["step"].to_numpy(dtype=int) + trial_idx * n_steps_per_phase
+        shifted.append(copied)
+    return pd.concat(shifted, ignore_index=True)
+
+
+def _run_independent_test_phase_variants(
+    model: CCNeuron,
+    stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    *,
+    phase_label: str,
+    n_steps_per_phase: int,
+    test_trials: int,
+) -> list[pd.DataFrame]:
+    frames: list[pd.DataFrame] = []
+
+    def run_repeated_trace(x_phase: torch.Tensor, c_phase: torch.Tensor, condition_name: str) -> pd.DataFrame:
+        return _concat_trial_frames(
+            [
+                run_experimental_phase(
+                    model,
+                    x_phase,
+                    c_phase,
+                    condition_name=condition_name,
+                    update=False,
+                    reset_rates=True,
+                )
+                for _ in range(test_trials)
+            ],
+            n_steps_per_phase=n_steps_per_phase,
+        )
+
+    for condition_name, (x_full, c_full) in stimuli.items():
+        occluded_x = torch.zeros_like(x_full)
+        no_context_c = torch.zeros_like(c_full)
+
+        frames.append(run_repeated_trace(x_full, c_full, f"full_{condition_name}_{phase_label}"))
+        frames.append(run_repeated_trace(occluded_x, c_full, f"occlusion_{condition_name}_{phase_label}"))
+
+        for ablation_label, ablation_spec in NO_RESPONSE_ABLATION_SPECS.items():
+            ablated_c = no_context_c if ablation_spec.get("zero_context", False) else c_full
+            model_overrides = ablation_spec.get("model_overrides", {})
+            condition_prefix = ablation_spec.get("condition_prefix", ablation_label)
+            with _temporary_model_overrides(model, **model_overrides):
+                frames.append(
+                    run_repeated_trace(
+                        x_full,
+                        ablated_c,
+                        f"{condition_prefix}_{condition_name}_{phase_label}",
+                    )
+                )
+                frames.append(
+                    run_repeated_trace(
+                        occluded_x,
+                        ablated_c,
+                        f"occlusion_{condition_name}_{condition_prefix}_{phase_label}",
+                    )
+                )
+
+    return frames
 
 
 def _run_panel_config(
     transition: str,
     config: dict[str, Any],
     *,
+    n_steps_per_phase: int,
+    test_trials: int,
     training_trials: int,
 ) -> tuple[str, pd.DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
-    """Lightweight naive->train->expert run for ONE config, full + occlusion traces
-    only (no ablation variants), for the transition-panel plot. Module-level so it
-    can be parallelised."""
+    """Lightweight naive->train->expert run for ONE config, including the same
+    no-feedback and no-LAT variants used by the grouped minimal2 panels."""
     model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
-    stimuli = _build_test_stimuli(n_steps_per_phase=CENTER_PANEL_N_STEPS, n_trials=CENTER_PANEL_TEST_TRIALS)
-    training = _build_training_stimuli(n_steps_per_phase=CENTER_PANEL_N_STEPS, n_trials=training_trials)
+    single_trial_stimuli = _build_probe_stimuli(n_steps_per_phase=n_steps_per_phase)
+    stimuli = _build_probe_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials)
+    training = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
 
-    frames: list[pd.DataFrame] = []
-
-    def probe(phase: str) -> None:
-        for condition, (x_full, c_full) in stimuli.items():
-            frames.append(run_experimental_phase(model, x_full, c_full, f"full_{condition}_{phase}", update=False))
-            frames.append(run_experimental_phase(model, torch.zeros_like(x_full), c_full, f"occlusion_{condition}_{phase}", update=False))
-
-    probe("naive")
+    frames = _run_independent_test_phase_variants(
+        model,
+        single_trial_stimuli,
+        phase_label="naive",
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
+    )
     run_experimental_phase(model, training[0], training[1], "full_familiar_training", update=True)
-    probe("expert")
+    frames.extend(
+        _run_independent_test_phase_variants(
+            model,
+            single_trial_stimuli,
+            phase_label="expert",
+            n_steps_per_phase=n_steps_per_phase,
+            test_trials=test_trials,
+        )
+    )
 
     df = pd.concat([frame.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES) for frame in frames], ignore_index=True)
     df["seed"] = config.get("seed", 42)
@@ -856,7 +1006,8 @@ def _save_panels(
     configs_by_transition: dict[str, dict[str, Any]],
     *,
     out_dir: Path,
-    name: str,
+    n_steps_per_phase: int,
+    test_trials: int,
     training_trials: int,
     image_format: str,
     n_jobs: int,
@@ -867,23 +1018,28 @@ def _save_panels(
     out_dir.mkdir(parents=True, exist_ok=True)
     order = list(configs_by_transition)
     results = Parallel(n_jobs=n_jobs)(
-        delayed(_run_panel_config)(t, configs_by_transition[t], training_trials=training_trials) for t in order
+        delayed(_run_panel_config)(
+            t,
+            configs_by_transition[t],
+            n_steps_per_phase=n_steps_per_phase,
+            test_trials=test_trials,
+            training_trials=training_trials,
+        )
+        for t in order
     )
     long_dfs = {t: long_df for t, long_df, _ in results}
     stimuli = results[0][2] if results else None
     if stimuli is None:
         return
-    visualize_transition_panel(
+    save_grouped_transition_panels(
         long_dfs,
-        STIMULI=stimuli,
+        stimuli=stimuli,
         save_path=str(out_dir),
-        name=name,
-        image_mode="both",
         transition_order=order,
         transition_labels={t: format_transition_label(t) for t in order},
-        trace_types=("full", "occlusion"),
+        step_window=_panel_step_window(n_steps_per_phase, test_trials),
         save_in_transition_subdir=False,
-        save_csv=False,
+        zscore_activity=True,
         image_format=image_format,
     )
 
@@ -892,6 +1048,8 @@ def _save_center_panels(
     transition_order: list[str],
     *,
     output_dir: Path,
+    n_steps_per_phase: int,
+    test_trials: int,
     training_trials: int,
     image_format: str = "png",
     n_jobs: int = -1,
@@ -902,7 +1060,8 @@ def _save_center_panels(
     _save_panels(
         {t: _center_config(t) for t in transition_order},
         out_dir=output_dir / "center_panels",
-        name="center_transition_panel_naive_expert",
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
         training_trials=training_trials,
         image_format=image_format,
         n_jobs=n_jobs,
@@ -910,7 +1069,8 @@ def _save_center_panels(
     _save_panels(
         {t: _canonical_config(t) for t in transition_order},
         out_dir=output_dir / "canonical_panels",
-        name="canonical_transition_panel_naive_expert",
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
         training_trials=training_trials,
         image_format=image_format,
         n_jobs=n_jobs,
@@ -1058,7 +1218,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     samples = _sample_configs(args, transition_order)
 
     torch.manual_seed(args.seed)
-    test_stimuli = _build_test_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.test_trials)
+    test_stimuli = _build_probe_stimuli(n_steps_per_phase=args.n_steps_per_phase)
     training_stimuli = _build_training_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.training_trials)
     response_frames = Parallel(n_jobs=args.n_jobs, verbose=10 if args.n_jobs != 1 else 0)(
         delayed(_run_sample)(
@@ -1066,6 +1226,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
             n_steps_per_phase=args.n_steps_per_phase,
             response_tail_fraction=args.response_tail_fraction,
             test_stimuli=test_stimuli,
+            test_trials=args.test_trials,
             training_stimuli=training_stimuli,
             zscore_std_floor=args.zscore_std_floor,
         )
@@ -1120,6 +1281,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         _save_center_panels(
             transition_order,
             output_dir=args.output_dir,
+            n_steps_per_phase=args.n_steps_per_phase,
+            test_trials=args.test_trials,
             training_trials=args.training_trials,
             image_format=args.image_format,
             n_jobs=args.n_jobs,
@@ -1130,7 +1293,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sample noisy minimal2 configs and plot model-scatter transitions.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--n-samples", type=int, default=1200, help="Number of model cells to draw from the transition mixture.")
-    parser.add_argument("--n-steps-per-phase", type=int, default=400, help="Time steps per stimulus trial (stimulus occupies the final quarter).")
+    parser.add_argument("--n-steps-per-phase", type=int, default=200, help="Time steps per stimulus trial (stimulus occupies the final quarter).")
     parser.add_argument("--test-trials", type=int, default=2, help="Repeats of each probe stimulus at naive and expert.")
     parser.add_argument("--training-trials", type=int, default=5, help="Repeats of the familiar-image training block (the plastic phase).")
     parser.add_argument("--seed", type=int, default=20260604)

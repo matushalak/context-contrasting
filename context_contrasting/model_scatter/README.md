@@ -30,7 +30,10 @@ python -m context_contrasting.model_scatter.run_model_scatter \
   --n-samples 250 \
   --n-jobs 10 \
   --skip-center-panels \
-  --output-dir context_contrasting/model_scatter/outputs
+  --output-dir context_contrasting/model_scatter/outputs_final200 \
+  --n-steps-per-phase 200 \
+  --test-trials 2 \
+  --training-trials 5
 ```
 
 Canonical-only run:
@@ -59,10 +62,11 @@ The main tuning levers are at the top of `run_model_scatter.py`:
 - `--n-samples`: total cells to draw from the weighted transition mixture
   (`1200` by default, so the model distribution is smoother than the empirical
   sample).
-- `--n-steps-per-phase`: simulation steps per trial (`400` by default, matching
-  the canonical trace experiment).
-- `--test-trials`: test repeats per stimulus (`2` by default; this keeps the
-  scatter runs much faster than the canonical trace exports).
+- `--n-steps-per-phase`: simulation steps per test trial (`200` by default;
+  probe trials use 1/4 pre-stimulus ITI, 1/4 stimulus, and 1/2 post-stimulus ITI).
+- `--test-trials`: independent reset probe repeats per stimulus (`2` by default);
+  changing this averages more or fewer noisy probe repeats without changing the
+  within-trial dynamical context.
 - `--training-trials`: familiar-training repeats (`5` by default, matching the
   canonical trace experiment).
 - `--transition-sampling data-like|equal`: random weighted transition draws or
@@ -83,13 +87,14 @@ The main tuning levers are at the top of `run_model_scatter.py`:
   instead of compressing it; `100` reproduces the real-data notebook's exact
   min/max framing.
 - `--skip-center-panels`: by default every run also writes `center_panels/` and
-  `canonical_panels/`: the naive->expert transition panel (full + occlusion
-  traces) for configs built from the noise-free sampler centers (`center_panels`)
-  and for the raw `config_s` canonical examples (`canonical_panels`), so both can
-  be sanity-checked against the model mechanism (the sampler centers can drift
-  from what their names imply). Rendered with the canonical `n_steps_per_phase`
-  (400) so the traces match `minimal2/plotsexperiment_s/transition_panels`. These
-  runs are parallelised across transitions (use `--n-jobs`).
+  `canonical_panels/`: grouped `transitions_FAM` / `transitions_NOV` response
+  matrices plus the naive->expert transition panel for configs built from the
+  noise-free sampler centers (`center_panels`) and for the raw `config_s`
+  canonical examples (`canonical_panels`). These panels use the same
+  `--n-steps-per-phase`, `--test-trials`, and `--training-trials` settings as
+  the main run, include the no-feedback and no-LAT traces, and z-score each
+  displayed response to the pre-stimulus quarter of the independent reset probe
+  trials. These runs are parallelised across transitions (use `--n-jobs`).
 - `--export-panels`: also export each scatter's individual panels as separate
   images.
 - `--scalar-noise-multiplier`: global multiplier on the `SCALAR_NOISE` jitter
@@ -112,3 +117,5 @@ Outputs:
 - `center_panels/`: the naive->expert transition panel, FAM/NOV response
   matrices, and their CSVs for the exact noise-free sampler centers, unless
   `--skip-center-panels` is passed.
+- `canonical_panels/`: the same panel set for the raw `config_s` canonical
+  examples, unless `--skip-center-panels` is passed.

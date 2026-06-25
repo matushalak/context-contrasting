@@ -9,10 +9,13 @@ of familiar-image **training**, and re-probed in an **expert** state, and we rea
 out how its responses shifted across learning.
 
 Three stimuli were used, encoded as $3$-dimensional one-hot vectors: two familiar
-images ($\mathbf{e}_1,\mathbf{e}_2$) and one novel image ($\mathbf{e}_3$). A trial
-lasted $400$ steps, of which the first three quarters were a stimulus-free
-inter-trial interval and the final quarter ($100$ steps) was the stimulus
-presentation; at every step the feedforward and contextual inputs were drawn from
+images ($\mathbf{e}_1,\mathbf{e}_2$) and one novel image ($\mathbf{e}_3$). A test
+probe trial lasted $200$ steps: the first quarter was a stimulus-free baseline
+interval, the second quarter ($50$ steps) was the stimulus presentation, and the
+final half was post-stimulus ITI. Each probe repeat was run as an independent
+reset trial, so changing the number of test repeats changes averaging/noise rather
+than the within-trial dynamical state. At every step the feedforward and contextual
+inputs were drawn from
 $\mathcal{N}(\text{mean},\,0.05)$ (mean $=\mathbf{0}$ in the inter-trial interval,
 $=$ the one-hot image during presentation). Each image was probed in two regimes:
 a **non-occluded** ("NO") trial in which both the feedforward input
@@ -22,14 +25,14 @@ input $\mathbf{c}$ was present (isolating the feedback-driven / ecRF response).
 
 The three phases were:
 
-1. **Naive probe** — every image, NO and O, $2$ trials each, with plasticity off.
+1. **Naive probe** — every image, NO and O, $2$ independent reset trials each, with plasticity off.
 2. **Training** — the two familiar images interleaved, $5$ trials, with plasticity
    on (the only phase in which the local learning rules update the weights).
 3. **Expert probe** — identical to the naive probe, with plasticity off.
 
 For each (cell, image, trace) we took the mean PyC rate $y$ over the stimulus
 window and $z$-scored it to the cell's naive spontaneous activity (mean and s.d.
-of $y$ over the inter-trial intervals of the naive probe). To keep signal-poor
+of $y$ over the pre-stimulus quarter of the naive probe). To keep signal-poor
 responses (e.g. the $\sim 0$ NO response of a pure occluded responder) from
 exploding when divided by a near-zero spontaneous s.d., the $z$-score denominator
 was floored per cell at $\max(0.04,\,0.27\,\sigma_y)$, where $\sigma_y$ is the
@@ -50,7 +53,7 @@ the same threshold ($0.3$).
 ### Modeled population
 
 A single set of circuit equations cannot, on its own, reproduce a *scatter* of
-heterogeneous cells. We therefore drew a population of $N=1200$ model cells from a
+heterogeneous cells. We therefore drew a population of $N=250$ model cells from a
 mixture of $17$ transition **templates**, each template being a point in parameter
 space that produces one qualitative response type (e.g. a broadly tuned cell whose
 feedforward drive adapts away and is replaced by a feedback-driven occluded
@@ -63,9 +66,9 @@ template values (per-element s.d. $\max(22\text{–}65\%\times\text{center},\,
 its scalar parameters were jittered (Table 2) by a global factor of $1.75$. Two
 template properties were tied to a single **tuning-width** label rather than set
 per template: broadly tuned cells used a strong feedforward (anti-Hebbian)
-plasticity scale and a low apical drive threshold (so feedback *drives* the soma),
+plasticity scale and a lower apical drive threshold (so feedback can more easily *drive* the soma),
 whereas narrowly tuned cells used a weak — but non-zero — feedforward plasticity
-scale and a high drive threshold (so feedback only *gain-modulates*).
+scale and a higher drive threshold (so feedback mostly *gain-modulates* the soma).
 
 The learning rates were fixed and shared across the whole population; only the
 initial weights and the per-cell scalar parameters varied (Tables 1–2).
@@ -86,13 +89,13 @@ initial weights and the per-cell scalar parameters varied (Tables 1–2).
 | $\mathbf{S}^p$ | PV feedforward specificity (diagonal / off-diagonal) | $0.8$ / $0.1$ |
 | $r_{\max}$ | maximum firing rate | $1.0$ |
 | — | weight decay | $0$ (off) |
-| — | steps per trial / stimulus-window length | $400$ / $100$ (final quarter) |
+| — | steps per test trial / stimulus-window length | $200$ / $50$ (second quarter) |
 | — | naive and expert probe trials per image | $2$ |
 | — | familiar training trials | $5$ |
 | $\sigma_{\text{stim}}$ | stimulus and inter-trial input s.d. | $0.05$ |
 | — | rotated-sector small-shift threshold | $0.3$ |
 | — | $z$-score denominator floor | $\max(0.04,\,0.27\,\sigma_y)$ |
-| $N$ | sampled cells | $1200$ |
+| $N$ | sampled cells | $250$ |
 
 ### Table 2 — Per-cell variable parameters (population ranges)
 

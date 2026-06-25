@@ -451,6 +451,27 @@ def _expand_window_to_event_bounds(
 
     current_onset = int(onsets[best_idx])
     current_offset = int(offsets[best_idx])
+    total_steps = int(stimulus_strength.size)
+
+    if onsets.size > 1:
+        period = int(round(float(np.median(np.diff(onsets)))))
+        stimulus_len = int(round(float(np.median(offsets - onsets))))
+        pre_stimulus_len = stimulus_len
+        post_stimulus_len = max(0, period - pre_stimulus_len - stimulus_len)
+        expanded_start = max(0, current_onset - pre_stimulus_len)
+        expanded_end = min(total_steps, current_offset + post_stimulus_len)
+        if expanded_end < current_offset:
+            expanded_end = min(total_steps, current_offset)
+        return expanded_start, expanded_end
+
+    if start < current_onset and end > current_offset:
+        return max(0, int(start)), min(total_steps, int(end))
+
+    if current_onset > 0:
+        stimulus_len = current_offset - current_onset
+        expanded_start = max(0, current_onset - stimulus_len)
+        expanded_end = min(total_steps, current_offset + 2 * stimulus_len)
+        return expanded_start, expanded_end
 
     if best_idx > 0:
         prev_offset = int(offsets[best_idx - 1])
@@ -1623,6 +1644,7 @@ def save_grouped_transition_panels(
     transition_labels: dict[str, str] | None = None,
     save_in_transition_subdir: bool = True,
     step_window: tuple[int, int] = (1000, 1350),
+    zscore_activity: bool = False,
     image_format: str = "png",
 ) -> None:
     sample_df = next(iter(long_dfs_by_transition.values()), None)
@@ -1655,6 +1677,7 @@ def save_grouped_transition_panels(
             step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
+            zscore_activity=zscore_activity,
             image_format=image_format,
         )
         visualize_transition_response_matrix(
@@ -1668,6 +1691,7 @@ def save_grouped_transition_panels(
             step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
+            zscore_activity=zscore_activity,
             image_format=image_format,
         )
         visualize_transition_response_matrix(
@@ -1681,6 +1705,7 @@ def save_grouped_transition_panels(
             step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
             save_csv=True,
+            zscore_activity=zscore_activity,
             image_format=image_format,
         )
 
