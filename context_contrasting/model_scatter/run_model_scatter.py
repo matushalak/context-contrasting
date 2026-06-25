@@ -155,9 +155,9 @@ TRANSITIONS = {
         clip={
             "apical_drive_threshold": (1.05, None),
             "apical_gain_strength": (4.5, 8.0),
-            "baseline_drive_sigma": (0.06, 0.16),
+            "baseline_drive_sigma": (0.085, 0.17),
         },
-        ff=I([0.080, 0.006, 0.006], 0.32, 0.008, [0.035, 0.0, 0.0], [0.145, 0.020, 0.020]),
+        ff=I([0.080, 0.006, 0.006], 0.42, 0.008, [0.035, 0.0, 0.0], [0.145, 0.020, 0.020]),
         fb=I([0.045, 0.045, 0.035], 0.40, 0.006, hi=0.100),
         lat=I([0.02], 0.45, 0.008, hi=0.08),
         pvlat=I([0.02], 0.45, 0.008, hi=0.08),
@@ -191,8 +191,8 @@ TRANSITIONS = {
     ),
     "un_novel_FF": S(
         0.055,
-        clip={"apical_drive_threshold": (1.10, None), "apical_gain_strength": (10.0, 24.0), "baseline_drive_sigma": (0.12, 0.32)},
-        ff=I([0.003, 0.003, 0.13], 0.30, 0.005, [0.0, 0.0, 0.06], [0.012, 0.012, 0.25]),
+        clip={"apical_drive_threshold": (1.10, None), "apical_gain_strength": (6.0, 11.0), "baseline_drive_sigma": (0.10, 0.21)},
+        ff=I([0.003, 0.003, 0.09], 0.42, 0.005, [0.0, 0.0, 0.03], [0.012, 0.012, 0.20]),
         fb=I([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
         lat=I([0.02], 0.45, 0.010, hi=0.10),
         pvlat=I([0.02], 0.45, 0.010, hi=0.10),
@@ -254,8 +254,8 @@ TRANSITIONS = {
     ),
     "FF_FB_narrow_familiar": S(
         0.017,
-        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.06, 0.16)},
-        ff=I([0.112, 0.010, 0.010], 0.32, 0.010, [0.060, 0.0, 0.0], [0.205, 0.022, 0.018]),
+        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
+        ff=I([0.112, 0.010, 0.010], 0.42, 0.010, [0.060, 0.0, 0.0], [0.205, 0.022, 0.018]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
         lat=I([0.035], 0.45, 0.012, hi=0.14),
         pvlat=I([0.03], 0.45, 0.012, hi=0.12),
@@ -263,7 +263,7 @@ TRANSITIONS = {
     ),
     "FF_FB_narrow_familiar_2": S(
         0.015,
-        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.06, 0.16)},
+        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=I([0.010, 0.112, 0.010], 0.32, 0.010, [0.0, 0.060, 0.0], [0.022, 0.205, 0.018]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
         lat=I([0.035], 0.45, 0.012, hi=0.14),
@@ -273,7 +273,7 @@ TRANSITIONS = {
     "FF_FB_narrow_familiar_novel": S(
         0.024,
         fix={"apical_gain_threshold": 0.03},
-        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.06, 0.16)},
+        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=I([0.112, 0.010, 0.112], 0.32, 0.010, [0.060, 0.0, 0.060], [0.205, 0.022, 0.205]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
         lat=I([0.035], 0.45, 0.012, hi=0.16),
@@ -283,7 +283,7 @@ TRANSITIONS = {
     "FF_FB_narrow_familiar_2_novel": S(
         0.022,
         fix={"apical_gain_threshold": 0.03},
-        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.06, 0.16)},
+        clip={**NARROW_GAIN_CLIP, "apical_gain_strength": (4.8, 8.0), "baseline_drive_sigma": (0.085, 0.17)},
         ff=I([0.010, 0.112, 0.112], 0.32, 0.010, [0.0, 0.060, 0.060], [0.022, 0.205, 0.205]),
         fb=I([0.025, 0.025, 0.020], 0.50, 0.004, hi=0.065),
         lat=I([0.055], 0.45, 0.012, hi=0.16),
@@ -293,8 +293,8 @@ TRANSITIONS = {
     "FF_FB_narrow_novel": S(
         0.165,
         fix={"apical_gain_threshold": 0.03},
-        clip={"apical_drive_threshold": (1.2, None), "apical_gain_strength": (6.0, 12.0), **BASELINE_MIN},
-        ff=I([0.003, 0.003, 0.080], 0.24, 0.006, [0.0, 0.0, 0.05], [0.014, 0.014, 0.160]),
+        clip={"apical_drive_threshold": (1.2, None), "apical_gain_strength": (5.0, 9.5), "baseline_drive_sigma": (0.085, 0.17)},
+        ff=I([0.003, 0.003, 0.080], 0.42, 0.006, [0.0, 0.0, 0.03], [0.014, 0.014, 0.160]),
         fb=I([0.012, 0.012, 0.02], 0.45, 0.003, hi=[0.026, 0.026, 0.045]),
         lat=I([0.03], 0.45, 0.012, hi=0.12),
         pvlat=I([0.03], 0.45, 0.012, hi=0.12),
