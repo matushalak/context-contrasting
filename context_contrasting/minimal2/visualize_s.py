@@ -607,6 +607,40 @@ def _collect_shared_baseline_stats(
     return _compute_baseline_stats(np.concatenate(baseline_chunks))
 
 
+def _collect_naive_row_baseline_stats(
+    long_df: DataFrame,
+    *,
+    selected_conditions: list[str],
+    trace_types: tuple[str, ...],
+    stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    focus_window: tuple[float, float],
+    series_lookup: dict[tuple[str, str, str], np.ndarray] | None = None,
+) -> dict[str, float | int] | None:
+    return _collect_shared_baseline_stats(
+        long_df,
+        trace_specs=[
+            (condition, "naive", trace_type)
+            for condition in selected_conditions
+            for trace_type in trace_types
+        ],
+        stimuli=stimuli,
+        focus_window=focus_window,
+        series_lookup=series_lookup,
+    )
+
+
+def _require_naive_row_baseline(
+    baseline_stats: dict[str, float | int] | None,
+    *,
+    transition_name: str,
+) -> dict[str, float | int]:
+    if baseline_stats is None:
+        raise ValueError(
+            f"Cannot z-score transition '{transition_name}': no naive pre-stimulus baseline samples were found."
+        )
+    return baseline_stats
+
+
 def _summarize_windowed_repeated_trace(
     long_df: DataFrame,
     *,
@@ -679,18 +713,20 @@ def _build_windowed_transition_export(
     for transition_row, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
         series_lookup = _build_trace_series_lookup(long_df)
-        for phase_index, phase in enumerate(phases):
-            baseline_stats = _collect_shared_baseline_stats(
-                long_df,
-                trace_specs=[
-                    (condition, phase, trace_type)
-                    for condition in selected_conditions
-                    for trace_type in trace_types
-                ],
-                stimuli=stimuli,
-                focus_window=plot_window,
-                series_lookup=series_lookup,
+        row_baseline_stats = _collect_naive_row_baseline_stats(
+            long_df,
+            selected_conditions=selected_conditions,
+            trace_types=trace_types,
+            stimuli=stimuli,
+            focus_window=plot_window,
+            series_lookup=series_lookup,
+        )
+        if zscore_activity:
+            row_baseline_stats = _require_naive_row_baseline(
+                row_baseline_stats,
+                transition_name=transition_name,
             )
+        for phase_index, phase in enumerate(phases):
             for condition_index, condition in enumerate(selected_conditions):
                 stim_pair = stimuli.get(condition)
                 if stim_pair is None:
@@ -704,7 +740,7 @@ def _build_windowed_transition_export(
                         stim_pair=stim_pair,
                         focus_window=plot_window,
                         zscore=zscore_activity,
-                        baseline_stats=baseline_stats,
+                        baseline_stats=row_baseline_stats,
                         series_lookup=series_lookup,
                     )
                     if summary is None:
@@ -816,23 +852,32 @@ def _build_response_transition_export(
     for transition_row, transition_name in enumerate(ordered_transitions):
         long_df = long_dfs_by_transition[transition_name]
         series_lookup = _build_trace_series_lookup(long_df)
+        response_trace_types = tuple(
+            dict.fromkeys(
+                trace_type
+                for column_spec in column_specs
+                for trace_type in (column_spec["o_trace"], column_spec["no_trace"])
+            )
+        )
+        row_baseline_stats = _collect_naive_row_baseline_stats(
+            long_df,
+            selected_conditions=selected_conditions,
+            trace_types=response_trace_types,
+            stimuli=stimuli,
+            focus_window=plot_window,
+            series_lookup=series_lookup,
+        )
+        if zscore_activity:
+            row_baseline_stats = _require_naive_row_baseline(
+                row_baseline_stats,
+                transition_name=transition_name,
+            )
         for column_index, column_spec in enumerate(column_specs):
             phase = column_spec["phase"]
             trace_specs = [
                 ("O", column_spec["o_trace"], "O"),
                 ("NO", column_spec["no_trace"], "NO"),
             ]
-            baseline_stats = _collect_shared_baseline_stats(
-                long_df,
-                trace_specs=[
-                    (condition, phase, trace_type)
-                    for condition in selected_conditions
-                    for _, trace_type, _ in trace_specs
-                ],
-                stimuli=stimuli,
-                focus_window=plot_window,
-                series_lookup=series_lookup,
-            )
             for condition_index, condition in enumerate(selected_conditions):
                 stim_pair = stimuli.get(condition)
                 if stim_pair is None:
@@ -846,7 +891,7 @@ def _build_response_transition_export(
                         stim_pair=stim_pair,
                         focus_window=plot_window,
                         zscore=zscore_activity,
-                        baseline_stats=baseline_stats,
+                        baseline_stats=row_baseline_stats,
                         series_lookup=series_lookup,
                     )
                     if summary is None:
@@ -953,7 +998,7 @@ def visualize_transition_response_matrix(
     step_window: tuple[int, int] = (1000, 1350),
     save_in_transition_subdir: bool = True,
     save_csv: bool = True,
-    zscore_activity: bool = False,
+    zscore_activity: bool = True,
     image_format: str = "png",
 ) -> list[str]:
     if not long_dfs_by_transition:
@@ -1086,20 +1131,26 @@ def visualize_transition_response_matrix(
         long_df = long_dfs_by_transition[transition_name]
         series_lookup = _build_trace_series_lookup(long_df)
         row_bounds: list[tuple[float, float]] = []
-        baseline_by_column = {
-            column_spec["key"]: _collect_shared_baseline_stats(
-                long_df,
-                trace_specs=[
-                    (condition, column_spec["phase"], trace_type)
-                    for condition in selected_conditions
-                    for trace_type in (column_spec["o_trace"], column_spec["no_trace"])
-                ],
-                stimuli=STIMULI,
-                focus_window=plot_window,
-                series_lookup=series_lookup,
+        response_trace_types = tuple(
+            dict.fromkeys(
+                trace_type
+                for column_spec in column_specs
+                for trace_type in (column_spec["o_trace"], column_spec["no_trace"])
             )
-            for column_spec in column_specs
-        }
+        )
+        row_baseline_stats = _collect_naive_row_baseline_stats(
+            long_df,
+            selected_conditions=selected_conditions,
+            trace_types=response_trace_types,
+            stimuli=STIMULI,
+            focus_window=plot_window,
+            series_lookup=series_lookup,
+        )
+        if zscore_activity:
+            row_baseline_stats = _require_naive_row_baseline(
+                row_baseline_stats,
+                transition_name=transition_name,
+            )
 
         for col_idx, (column_spec, condition) in enumerate(column_condition_specs):
             ax = axes[row_idx, col_idx]
@@ -1124,7 +1175,7 @@ def visualize_transition_response_matrix(
                     stim_pair=STIMULI[condition],
                     focus_window=plot_window,
                     zscore=zscore_activity,
-                    baseline_stats=baseline_by_column.get(column_spec["key"]),
+                    baseline_stats=row_baseline_stats,
                     series_lookup=series_lookup,
                 )
                 if summary is None:
@@ -1239,21 +1290,21 @@ def _plot_panel_a_activity(
         if trace_type in TRACE_COLORS
     ]
 
-    phase_baseline_stats: dict[str, dict[str, float | int]] = {}
-    for phase in list(dict.fromkeys(phase_name for _, phase_name in activity_layout)):
-        trace_specs: list[tuple[str, str, str]] = []
-        for condition, condition_phase in activity_layout:
-            if condition_phase != phase or condition not in STIMULI:
-                continue
-            trace_specs.extend((condition, phase, trace_type) for trace_type in trace_types)
-        baseline_stats = _collect_shared_baseline_stats(
-            y_df,
-            trace_specs=trace_specs,
-            stimuli=STIMULI,
-            focus_window=xlim,
+    selected_conditions = list(
+        dict.fromkeys(condition for condition, _ in activity_layout if condition in STIMULI)
+    )
+    row_baseline_stats = _collect_naive_row_baseline_stats(
+        y_df,
+        selected_conditions=selected_conditions,
+        trace_types=trace_types,
+        stimuli=STIMULI,
+        focus_window=xlim,
+    )
+    if zscore_activity:
+        row_baseline_stats = _require_naive_row_baseline(
+            row_baseline_stats,
+            transition_name="panel A activity",
         )
-        if baseline_stats is not None:
-            phase_baseline_stats[phase] = baseline_stats
 
     xlims_seconds: list[tuple[float, float]] = []
     stim_windows_seconds: dict[str, tuple[float, float] | None] = {}
@@ -1268,7 +1319,7 @@ def _plot_panel_a_activity(
             stim_pair=STIMULI[condition],
             focus_window=xlim,
             zscore=zscore_activity,
-            baseline_stats=phase_baseline_stats.get(activity_layout[0][1]),
+            baseline_stats=row_baseline_stats,
         )
         if summary is None:
             continue
@@ -1307,7 +1358,7 @@ def _plot_panel_a_activity(
                 stim_pair=STIMULI[condition],
                 focus_window=xlim,
                 zscore=zscore_activity,
-                baseline_stats=phase_baseline_stats.get(phase),
+                baseline_stats=row_baseline_stats,
             )
             if summary is None:
                 continue
@@ -1396,7 +1447,7 @@ def visualize_transition_panel(
     step_window: tuple[int, int] = (1000, 1350),
     save_in_transition_subdir: bool = True,
     save_csv: bool = True,
-    zscore_activity: bool = False,
+    zscore_activity: bool = True,
     image_format: str = "png",
 ) -> str:
     if not long_dfs_by_transition:
@@ -1541,20 +1592,19 @@ def visualize_transition_panel(
         long_df = long_dfs_by_transition[transition_name]
         series_lookup = _build_trace_series_lookup(long_df)
         row_bounds: list[tuple[float, float]] = []
-        phase_baseline_stats = {
-            phase: _collect_shared_baseline_stats(
-                long_df,
-                trace_specs=[
-                    (condition, phase, trace_type)
-                    for condition in selected_conditions
-                    for trace_type in resolved_trace_types
-                ],
-                stimuli=STIMULI,
-                focus_window=plot_window,
-                series_lookup=series_lookup,
+        row_baseline_stats = _collect_naive_row_baseline_stats(
+            long_df,
+            selected_conditions=selected_conditions,
+            trace_types=resolved_trace_types,
+            stimuli=STIMULI,
+            focus_window=plot_window,
+            series_lookup=series_lookup,
+        )
+        if zscore_activity:
+            row_baseline_stats = _require_naive_row_baseline(
+                row_baseline_stats,
+                transition_name=transition_name,
             )
-            for phase in phases
-        }
 
         for col_idx, (phase, condition) in enumerate(column_specs):
             ax = axes[row_idx, col_idx]
@@ -1576,7 +1626,7 @@ def visualize_transition_panel(
                     stim_pair=STIMULI[condition],
                     focus_window=plot_window,
                     zscore=zscore_activity,
-                    baseline_stats=phase_baseline_stats.get(phase),
+                    baseline_stats=row_baseline_stats,
                     series_lookup=series_lookup,
                 )
                 if summary is None:
@@ -1644,7 +1694,7 @@ def save_grouped_transition_panels(
     transition_labels: dict[str, str] | None = None,
     save_in_transition_subdir: bool = True,
     step_window: tuple[int, int] = (1000, 1350),
-    zscore_activity: bool = False,
+    zscore_activity: bool = True,
     image_format: str = "png",
 ) -> None:
     sample_df = next(iter(long_dfs_by_transition.values()), None)
