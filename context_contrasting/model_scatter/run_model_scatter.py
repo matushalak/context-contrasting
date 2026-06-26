@@ -973,15 +973,15 @@ def _save_center_panels(
         image_format=image_format,
         n_jobs=n_jobs,
     )
-    _save_panels(
-        {t: _canonical_config(t) for t in transition_order},
-        out_dir=output_dir / "canonical_panels",
-        n_steps_per_phase=n_steps_per_phase,
-        test_trials=test_trials,
-        training_trials=training_trials,
-        image_format=image_format,
-        n_jobs=n_jobs,
-    )
+    # _save_panels(
+    #     {t: _canonical_config(t) for t in transition_order},
+    #     out_dir=output_dir / "canonical_panels",
+    #     n_steps_per_phase=n_steps_per_phase,
+    #     test_trials=test_trials,
+    #     training_trials=training_trials,
+    #     image_format=image_format,
+    #     n_jobs=n_jobs,
+    # )
 
 
 def _robust_response_limits(summaries: list[pd.DataFrame], *, hi_percentile: float, pad: float = 0.4) -> list[float]:

@@ -312,6 +312,35 @@ def _perturb_config_factory():
     return _perturb_config
 
 
+def _canonical_tuned_indices(tuning: str) -> tuple[int, ...]:
+    """A fixed, representative preferred-stimulus set for a tuning mode, used for the
+    noise-free center-panel traces (permuted cells are shown tuned to familiar_1)."""
+    if tuning == "all":
+        return tuple(range(N_FEATURES))
+    if tuning == "novel":
+        return (NOVEL_INDEX,)
+    if tuning == "permuted1":
+        return (0,)
+    raise ValueError(f"unknown tuning mode: {tuning}")
+
+
+def _center_config(name: str) -> dict[str, Any]:
+    """Noise-free config at the template centers (no weight/scalar jitter), for the
+    center-panel trace plots. Replaces ``base._center_config`` so each pruned
+    template renders correctly."""
+    spec = _build_config(name, _canonical_tuned_indices(TEMPLATES[name]["tuning"]))
+    config = copy.deepcopy(base.minimal_configs3[name])
+    for key, init_spec in spec["init"].items():
+        base._set_init(config, key, base._center_init_values(init_spec))
+    config.update(spec["fix"])
+    for key, (lo, hi) in (base.GLOBAL_SCALAR_CLIP | spec["clip"]).items():
+        if key in config and base._is_num(config[key]):
+            config[key] = base._clip(float(config[key]), lo, hi)
+    base._apply_shared_learning_rates(config)
+    config.update(_canonical_transition=name, _sample_idx=0, _sample_global_idx=0)
+    return config
+
+
 def _configure_pruned_variant() -> None:
     transitions = _build_transition_specs()
     generic_config = copy.deepcopy(base.minimal_configs3[GENERIC_BASE_CONFIG])
@@ -319,6 +348,11 @@ def _configure_pruned_variant() -> None:
     base.minimal_configs3 = {name: copy.deepcopy(generic_config) for name in transitions}
     base.SHARED_LEARNING_RATES = dict(SHARED_LEARNING_RATES)
     base._perturb_config = _perturb_config_factory()
+    # Center-panel traces (one panel per template) use the noise-free template
+    # centers; there is no separate config_s canonical example, so both panel sets
+    # show the same template centers.
+    base._center_config = _center_config
+    # base._canonical_config = _center_config
 
 
 def _write_metadata(args: argparse.Namespace) -> None:
@@ -352,7 +386,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threshold", type=float, default=0.3)
     parser.add_argument("--image-format", choices=("png", "svg", "eps"), default="png")
     parser.add_argument("--axis-clip-percentile", type=float, default=99.0)
-    parser.add_argument("--skip-center-panels", action="store_true", default=True)
+    parser.add_argument("--plot-center-panels", action="store_true", help="Also render one naive->expert trace panel per transition template (off by default).")
     parser.add_argument("--plot-by-transition", action="store_true")
     parser.add_argument("--export-panels", action="store_true")
     return parser.parse_args()
@@ -362,6 +396,9 @@ def main() -> None:
     args = parse_args()
     if args.canonical_only:
         raise ValueError("--canonical-only is not supported by the pruned mini sampler (permutation sampling has no canonical orientation).")
+    # Base runner skips the per-template trace panels when skip_center_panels is set;
+    # expose the inverse opt-in flag here.
+    args.skip_center_panels = not args.plot_center_panels
     _configure_pruned_variant()
     base.run_model_scatter(args)
     _write_metadata(args)
