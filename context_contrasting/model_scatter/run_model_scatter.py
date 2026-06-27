@@ -47,8 +47,6 @@ from context_contrasting.minimal2.config_s import minimal_configs3
 from context_contrasting.minimal2.experiment_s import (
     PRIMARY_EXPERIMENT_SERIES,
     STIMULUS_SPECS,
-    _build_test_stimuli,
-    _build_training_stimuli,
     _run_test_phase_variants,
     run_experimental_phase,
 )
@@ -70,6 +68,65 @@ IMAGE_INFO = {
     "familiar_2": ("familiar", 2, 2),
     "novel": ("novel", 3, 1),
 }
+
+
+def _design_model_scatter_phase(
+    *,
+    input_mean: torch.Tensor | list[float],
+    context_mean: torch.Tensor | list[float],
+    n_steps: int,
+    n_trials: int | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Deterministic phase: exact-zero ITI and exact stimulus/context vectors."""
+    pre_steps = 3 * n_steps // 4
+    stim_steps = n_steps - pre_steps
+    x_stim = torch.as_tensor(input_mean, dtype=torch.float32).reshape(1, -1).repeat(stim_steps, 1)
+    c_stim = torch.as_tensor(context_mean, dtype=torch.float32).reshape(1, -1).repeat(stim_steps, 1)
+    x = torch.cat((torch.zeros(pre_steps, x_stim.shape[1], dtype=x_stim.dtype), x_stim), dim=0)
+    c = torch.cat((torch.zeros(pre_steps, c_stim.shape[1], dtype=c_stim.dtype), c_stim), dim=0)
+
+    if n_trials is not None:
+        x = x.repeat((n_trials, 1))
+        c = c.repeat((n_trials, 1))
+    return x, c
+
+
+def _build_model_scatter_test_stimuli(
+    *,
+    n_steps_per_phase: int,
+    n_trials: int,
+) -> dict[str, tuple[torch.Tensor, torch.Tensor]]:
+    return {
+        name: _design_model_scatter_phase(
+            input_mean=input_mean,
+            context_mean=context_mean,
+            n_steps=n_steps_per_phase,
+            n_trials=n_trials,
+        )
+        for name, (input_mean, context_mean) in STIMULUS_SPECS.items()
+    }
+
+
+def _build_model_scatter_training_stimuli(
+    *,
+    n_steps_per_phase: int,
+    n_trials: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    phases = [
+        _design_model_scatter_phase(
+            input_mean=input_mean,
+            context_mean=context_mean,
+            n_steps=n_steps_per_phase,
+            n_trials=None,
+        )
+        for name, (input_mean, context_mean) in STIMULUS_SPECS.items()
+        if name.startswith("familiar")
+    ]
+    x = torch.cat([phase[0] for phase in phases], dim=0)
+    c = torch.cat([phase[1] for phase in phases], dim=0)
+    return x.repeat((n_trials, 1)), c.repeat((n_trials, 1))
+
+
 INIT_KEYS = ("w_ff_init", "w_fb_init", "w_lat_init", "w_pv_lat_init", "W_pv_init")
 INIT_ALIASES = {
     "ff": "w_ff_init",
@@ -893,10 +950,10 @@ def _run_panel_config(
     no-feedback and no-LAT variants used by the grouped minimal2 panels."""
     model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
     stimuli = _append_post_stimulus_iti(
-        _build_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials),
+        _build_model_scatter_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials),
         n_steps_per_phase=n_steps_per_phase,
     )
-    training = _build_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
+    training = _build_model_scatter_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
 
     frames = _run_test_phase_variants(model, stimuli, phase_label="naive")
     run_experimental_phase(model, training[0], training[1], "full_familiar_training", update=True)
@@ -1125,8 +1182,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     samples = _sample_configs(args, transition_order)
 
     torch.manual_seed(args.seed)
-    test_stimuli = _build_test_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.test_trials)
-    training_stimuli = _build_training_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.training_trials)
+    test_stimuli = _build_model_scatter_test_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.test_trials)
+    training_stimuli = _build_model_scatter_training_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.training_trials)
     response_frames = Parallel(n_jobs=args.n_jobs, verbose=10 if args.n_jobs != 1 else 0)(
         delayed(_run_sample)(
             sample,
