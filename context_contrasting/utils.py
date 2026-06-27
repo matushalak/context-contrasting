@@ -80,19 +80,24 @@ class ExponentialMovingAverage(torch.nn.Module):
 
 class ThresholdReLU(torch.nn.Module):
     '''
+    TODO: rewrite docstring to be accurate
     Thresholded ReLU activation function: f(x) = max(0, x - threshold)
     '''
-    def __init__(self, threshold:float = 0.0, hard:bool = True):
+    def __init__(self, threshold:float = 0.0, subtractive:bool = True, hasMax:bool = False, maxValue:float = 1.0):
         super().__init__()
         self.threshold = threshold
-        self.hard = hard
-    
+        self.subtractive = subtractive
+        self.hasMax = hasMax
+        self.maxValue = maxValue
+
     def forward(self, x:torch.Tensor) -> torch.Tensor:
-        x = (x > self.threshold).float() * x
-        if self.hard:
-            return x
+        if self.subtractive:
+            x = torch.clamp(x - self.threshold, min=0.0)
         else:
-            return torch.clamp(x, max=1.0) # max firing rate = 1.0
+            x = (x > self.threshold).float() * x
+        if self.hasMax:
+            x = torch.clamp(x, max=self.maxValue)
+        return x
 
 
 class GainSigmoid(torch.nn.Module):

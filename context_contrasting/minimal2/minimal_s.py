@@ -49,7 +49,11 @@ class CCNeuron(nn.Module):
         pyc_decay:float = 0.1,
         pv_decay:float = 0.25,
         apical_drive_threshold: float = 0.2,
-        apical_drive_hard: bool = True,
+        # Apical dendritic drive threshold nonlinearity. Default (subtractive=False,
+        # hasMax=False) is the hard threshold (x>threshold)*x with no cap. Setting
+        # apical_drive_subtractive=True switches to a shifted ReLU max(0, x-threshold)
+        # so the feedback drive ramps continuously from 0 once it crosses threshold.
+        apical_drive_subtractive: bool = False,
         apical_gain_strength: float = 2.0,
         apical_gain_k: float = 5.0,
         apical_gain_threshold: float = 0.0,
@@ -91,7 +95,12 @@ class CCNeuron(nn.Module):
         self.n_features = n_features
         self.n_pv = n_pv
         self.n_context = n_context
-        self.activation = activation if activation is not None else nn.ReLU()
+        # Cellular activation: ReLU-with-cap. ThresholdReLU(threshold=0,
+        # subtractive=False, hasMax=True, maxValue=1.0) == max(0, x) clamped to 1.0,
+        # i.e. the rate is non-negative and capped at the max firing rate.
+        self.activation = activation if activation is not None else ThresholdReLU(
+            threshold=0.0, subtractive=False, hasMax=True, maxValue=1.0
+        )
 
         # Learnable weights updated manually via local rules
         self.w_ff = nonnegative(randn_reparam(size=(1,), **w_ff_init))
@@ -123,7 +132,7 @@ class CCNeuron(nn.Module):
         self.pyramidal = EMA(shape=(), alpha=pyc_decay)
         self.adapt = EMA(shape=(), alpha=pyc_decay*0.2)
 
-        self.threshold = ThresholdReLU(threshold=apical_drive_threshold, hard=apical_drive_hard)
+        self.threshold = ThresholdReLU(threshold=apical_drive_threshold, subtractive=apical_drive_subtractive, hasMax=False)
         self.sigmoid = GainSigmoid(gain=apical_gain_strength, k=apical_gain_k, threshold=apical_gain_threshold)
 
         # EMA of weights to implement decay towards baseline in absence of input (optional)

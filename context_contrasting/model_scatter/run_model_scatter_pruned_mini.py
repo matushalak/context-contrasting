@@ -481,7 +481,7 @@ def _flatten_config_factory(original_flatten):
 def _configure_pruned_variant(n_steps_per_phase: int = LEARNING_RATE_REFERENCE_STEPS) -> None:
     transitions = _build_transition_specs()
     generic_config = copy.deepcopy(base.minimal_configs3[GENERIC_BASE_CONFIG])
-    generic_config["activation"] = ThresholdReLU(threshold=SOMA_ACTIVATION_THRESHOLD, hard=False)
+    generic_config["activation"] = ThresholdReLU(threshold=SOMA_ACTIVATION_THRESHOLD, subtractive=False, hasMax=True, maxValue=1.0)
     base.TRANSITIONS = transitions
     base.minimal_configs3 = {name: copy.deepcopy(generic_config) for name in transitions}
     base.SHARED_LEARNING_RATES = _effective_learning_rates(n_steps_per_phase)
