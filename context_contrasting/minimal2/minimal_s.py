@@ -231,9 +231,9 @@ class CCNeuron(nn.Module):
             match self.FBrule:
                 # contextual strengthening general (not only the experienced context, also novel)
                 case "dampened-anti-Hebbian":
-                    dw_fb = self.lr_fb * (damp * self.fb_specificity @ c_t) * self.receives_context * (1.0 - self.w_fb)
+                    dw_fb = self.lr_fb * (damp * self.fb_specificity @ c_t * self.receives_context) * (1.0 - self.w_fb)
                 case "Hebbian":
-                    dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t) * self.receives_context * (1.0 - self.w_fb)
+                    dw_fb = self.lr_fb * (y_next * self.fb_specificity @ c_t * self.receives_context) * (1.0 - self.w_fb)
 
         # 3) Hebbian update for w_lat and w_pv_lat
         if self.lat_plasticity and self.use_lat_connection:

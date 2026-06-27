@@ -2,12 +2,12 @@
 
 Keeps the mini model assumptions -- only the PyC synapses ``w_ff``, ``w_fb`` and
 ``w_lat`` learn (PV tuning ``W_pv`` / ``w_pv_lat`` is fixed), and per-cell noise is
-injected only into the FF/FB initial weights, ``apical_drive_threshold``,
-``apical_gain_strength`` and ``baseline_drive_sigma`` -- but replaces the 17
+injected only into the FF/FB initial weights, ``apical_drive_threshold`` and
+``apical_gain_strength`` -- but replaces the 17
 hand-tuned, partly ad-hoc transition templates with a small set keyed entirely by
 **tuning width**:
 
-  * ``untuned`` (width 0): no FF tuning. With no feedback it stays near the origin
+  * ``silent``: near-silent FF drive. With no feedback it stays near the origin
     (small dNO/dO); with strong generalized feedback it is a feedback-driven
     occluded ("O") responder.
   * ``narrow`` (width 1): weak FF (anti-Hebbian) plasticity + a high apical drive
@@ -22,11 +22,11 @@ hand-tuned, partly ad-hoc transition templates with a small set keyed entirely b
     drives the occluded response (``+O``).
 
 Two principled choices distinguish this from the legacy templates: feedback is
-always **generalized** (equal across all three context channels, as in the
-biology -- no hand-painted per-channel asymmetry), and narrow/broad tuning is the
-*only* thing that sets the FF-plasticity scale and the feedback drive-vs-gain
-regime. Surround weights (``w_lat``, ``W_pv``, ``w_pv_lat``) are coupled per
-template; only ``w_lat`` is plastic.
+always **generalized over the context channels a cell receives** (no hand-painted
+per-channel weight asymmetry), and narrow/broad tuning is the *only* thing that
+sets the FF-plasticity scale and the feedback drive-vs-gain regime. Surround
+weights (``w_lat``, ``W_pv``, ``w_pv_lat``) are coupled per template; only
+``w_lat`` is plastic.
 
 The width-class scalars and the mixture weights at the top of this file are the
 tuning levers; everything downstream reuses ``run_model_scatter.py``.
@@ -43,18 +43,31 @@ from typing import Any
 import numpy as np
 
 from context_contrasting.model_scatter import run_model_scatter as base
+from context_contrasting.utils import ThresholdReLU
 
 
 DEFAULT_OUTPUT_DIR = base.PACKAGE_DIR / "outputs_pruned_mini"
 GENERIC_BASE_CONFIG = "FF_FB_broad"
 N_FEATURES = 3
 
-# Only PyC synapses learn; PV feedforward learning is off (lr_pv = 0). Lateral
-# (surround) learning is doubled relative to the base, and feedback learning is
-# boosted: feedback strengthening is the engine of every learning-induced change
-# (narrow +NO gain amplification and broad +O drive), so the tiny base lr_fb
-# leaves the population stuck near naive (everything reads as small dNO/dO).
-SHARED_LEARNING_RATES = {"lr_ff": 0.015, "lr_fb": 0.0012, "lr_lat": 0.005, "lr_pv": 0.0}
+# Only PyC synapses learn; PV feedforward learning is off (lr_pv = 0). Feedback
+# strengthening and lateral surround learning stay shared across templates. These
+# rates are calibrated at 200 steps/phase; longer phase durations scale them down
+# so the accumulated plasticity stays close to the clearer 200-step scatter.
+LEARNING_RATE_REFERENCE_STEPS = 200
+SHARED_LEARNING_RATES = {"lr_ff": 0.0135, "lr_fb": 0.00062, "lr_lat": 0.0052, "lr_pv": 0.0}
+SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
+SOMA_ACTIVATION_THRESHOLD = 0.08
+
+
+def _effective_learning_rates(n_steps_per_phase: int) -> dict[str, float]:
+    if n_steps_per_phase <= 0:
+        raise ValueError("n_steps_per_phase must be positive.")
+    scale = LEARNING_RATE_REFERENCE_STEPS / float(n_steps_per_phase)
+    return {
+        name: (float(rate) * scale if name != "lr_pv" else float(rate))
+        for name, rate in SHARED_LEARNING_RATES.items()
+    }
 
 # Two tuning-width classes only. BROAD: strong FF (anti-Hebbian) plasticity + a low
 # apical drive threshold, so feedback DRIVES the soma. NARROW: weak FF plasticity +
@@ -67,12 +80,12 @@ SHARED_LEARNING_RATES = {"lr_ff": 0.015, "lr_fb": 0.0012, "lr_lat": 0.005, "lr_p
 WIDTH_CLASSES: dict[str, dict[str, Any]] = {
     "broad": dict(
         ff_plasticity_scale=8.0,
-        # Capped gain keeps the strong naive NO responders within ~0-2 SD (they then
-        # strengthen toward 3 via plasticity / amplification) without compressing the
-        # -NO adaptation shift (which a higher baseline would).
-        gain=4.0, gain_clip=(3.0, 5.0),
+        # Broad cells need enough gain that intact novel FF drive can be amplified
+        # alongside strengthened generalized FB; otherwise novel expert NO gets
+        # suppressed even for mixed FF+FB responders.
+        gain=3.8, gain_clip=(2.8, 5.8),
         drive=0.16, drive_clip=(0.10, 0.45),
-        baseline=0.21, baseline_clip=(0.15, 0.34),
+        baseline=0.16, baseline_clip=(0.12, 0.26),
     ),
     "narrow": dict(
         # Weak (not zero) FF plasticity: a narrow cell tuned to a *familiar* image
@@ -81,7 +94,7 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # amplified to +NO -- so the familiar<novel +NO asymmetry emerges from the
         # protocol rather than being hand-assigned.
         ff_plasticity_scale=0.55,
-        gain=8.0, gain_clip=(5.0, 11.0),
+        gain=5.8, gain_clip=(4.0, 8.5),
         # Shift + steepen the gain sigmoid so the small feedback growth during
         # training moves the gain enough to turn the non-adapted FF drive into a
         # clear +NO shift at expert (suppressed naive -> amplified expert).
@@ -90,25 +103,19 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # Low baseline -> low adaptation current, so the occluded basal stays near 0
         # and the rising gain barely drags the occluded response negative: the +NO
         # cells stay centred at O~0 (their NO shift is FF-driven, baseline-independent).
-        baseline=0.08, baseline_clip=(0.055, 0.12),
+        baseline=0.07, baseline_clip=(0.050, 0.10),
     ),
 }
 
-# Feedforward initial-weight strength, picked per template (not per width): a weak/
-# already-adapted broad cell ("silent") and a strongly tuned broad cell share the
-# broad width class but differ only in FF drive. (tuned, silent center; rel_noise;
-# noise_floor; lo; hi). `broad_weak` is the weakly-NO-tuned broad cell that becomes
-# an O responder (naive NO ~0.25-0.75); `broad` is the strongly NO-tuned -NO cell.
+# Shared feedforward initial-weight levels. These are independent of tuning width:
+# the tuned value is assigned to preferred stimulus channels and the silent value
+# to non-preferred channels. Broad cells simply tune all channels, while narrow
+# cells tune the drawn preferred channel only.
 FF_STRENGTHS: dict[str, dict[str, Any]] = {
-    "silent": dict(tuned=0.010, silent=0.010, rel=0.60, floor=0.012, lo=0.0, hi=0.05),
-    "broad_weak": dict(tuned=0.080, silent=0.060, rel=0.40, floor=0.012, lo=0.0, hi=0.17),
-    "broad": dict(tuned=0.115, silent=0.090, rel=0.40, floor=0.014, lo=0.0, hi=0.22),
-    # Moderate FF with TIGHT noise: stays under ~2 SD at naive, but its intact novel
-    # FF reaches NO~1 at expert -> the mixed +NO+O novel cloud.
-    "broad_mid": dict(tuned=0.155, silent=0.120, rel=0.26, floor=0.014, lo=0.0, hi=0.24),
-    "narrow_weak": dict(tuned=0.090, silent=0.006, rel=0.50, floor=0.010, lo=0.0, hi=0.22),
-    "narrow": dict(tuned=0.120, silent=0.006, rel=0.48, floor=0.010, lo=0.0, hi=0.24),
-    "narrow_strong": dict(tuned=0.140, silent=0.008, rel=0.46, floor=0.012, lo=0.0, hi=0.28),
+    "silent": dict(tuned=0.010, silent=0.010, rel=0.60, floor=0.012, lo=0.0, hi=0.050),
+    "weak": dict(tuned=0.090, silent=0.006, rel=0.50, floor=0.010, lo=0.0, hi=0.220),
+    "mid": dict(tuned=0.120, silent=0.006, rel=0.46, floor=0.010, lo=0.0, hi=0.250),
+    "strong": dict(tuned=0.155, silent=0.008, rel=0.34, floor=0.014, lo=0.0, hi=0.300),
 }
 
 # Generalized feedback levels (equal across all three context channels):
@@ -116,12 +123,8 @@ FF_STRENGTHS: dict[str, dict[str, Any]] = {
 FB_LEVELS: dict[str, dict[str, Any]] = {
     "none": dict(receives=False, center=0.004, rel=0.60, floor=0.005, lo=0.0, hi=0.030),
     "weak": dict(receives=True, center=0.040, rel=0.42, floor=0.010, lo=0.006, hi=0.120),
-    "weak_plus": dict(receives=True, center=0.070, rel=0.40, floor=0.012, lo=0.012, hi=0.150),
-    "strong": dict(receives=True, center=0.250, rel=0.28, floor=0.024, lo=0.140, hi=0.480),
-    # Near-saturated feedback: a naive O responder whose feedback is already high and
-    # grows little during training -> its O barely shifts -> it sits in the naive
-    # O-responder cloud as a small-delta / slight -O cell rather than rising to +O.
-    "strong_sat": dict(receives=True, center=0.400, rel=0.26, floor=0.024, lo=0.260, hi=0.560),
+    "mid": dict(receives=True, center=0.075, rel=0.40, floor=0.012, lo=0.012, hi=0.170),
+    "strong": dict(receives=True, center=0.110, rel=0.28, floor=0.016, lo=0.050, hi=0.300),
 }
 
 # Which feedforward channels each cell prefers (drawn per cell):
@@ -130,63 +133,98 @@ FB_LEVELS: dict[str, dict[str, Any]] = {
 #   "novel"     -> the novel image, index 2 (the narrow_novel special case)
 NOVEL_INDEX = 2
 
+# Which context channels each feedback-receiving cell receives. The FB weights are
+# still drawn from the shared generalized FB levels; this only masks whether a
+# channel exists for a subclass of cells.
+CONTEXT_MODES = ("none", "all", "random1", "random2", "familiar", "novel")
+
 # The pruned population mixture. Each template = (width, FF strength, FB level,
-# tuning) plus its coupled surround (w_lat, w_pv_lat, W_pv on tuned/silent channels),
-# optional baseline override, and optional per-template scalar overrides (gain etc.).
-# `weight` is its share of the population.
+# tuning, context-receive mode) plus its coupled surround (w_lat, w_pv_lat, W_pv on
+# tuned/silent channels), optional baseline override, and optional per-template
+# scalar overrides (gain etc.). `weight` is its share of the population.
 TEMPLATES: dict[str, dict[str, Any]] = {
-    # Weak / already-adapted broad cell, no feedback -> unresponsive (small dNO/dO).
-    "weak_broad": dict(
-        width="broad", ff="silent", fb="none", tuning="all", weight=0.10,
+    # Silent / already-adapted broad cell, no feedback -> unresponsive (small dNO/dO).
+    "silent_broad_FFonly": dict(
+        width="broad", ff="silent", fb="none", tuning="all", context="none", weight=0.12,
         lat=0.04, pvlat=0.08, pv_tuned=0.18, pv_silent=0.18,
     ),
-    # Weak broad + strong generalized feedback (FB->FB-like: little FF, strong FB)
-    # -> naive feedback-driven O responder (NO~0, O>0) for BOTH familiar and novel:
-    # the distinct naive O-responder cloud.
-    "weak_broad_FB": dict(
-        width="broad", ff="silent", fb="strong_sat", tuning="all", weight=0.14,
-        lat=0.18, pvlat=0.18, pv_tuned=0.51, pv_silent=0.51,
-        baseline=0.35, baseline_clip=(0.28, 0.46),
+    # Silent broad + weak generalized FB: starts close to the unresponsive cloud,
+    # then shared FB/LAT plasticity moves it vertically into the O cloud while the
+    # learned full-image surround keeps expert NO near 0.
+    "silent_broad_FB_weak": dict(
+        width="broad", ff="silent", fb="weak", tuning="all", context="all", weight=0.040,
+        drive=0.035, drive_clip=(0.0, 0.10),
+        gain=3.0, gain_clip=(1.4, 3.4),
+        lat=0.08, pvlat=0.030, pv_tuned=0.55, pv_silent=0.55,
+        baseline=0.18, baseline_clip=(0.13, 0.24),
     ),
-    # Strong broad FF, no feedback -> familiar FF adapts away -> pure -NO. Kept small:
-    # on novel these are static extreme-NO cells (no FB -> no movement), which the
-    # data does not show, so most broad cells instead carry feedback (below).
-    "broad_FFonly": dict(
-        width="broad", ff="broad", fb="none", tuning="all", weight=0.13,
+    # FB->FB-like: little FF and moderate generalized FB. This supplies the missing
+    # naive O-responder cloud. It still uses the same shared FB/LAT plasticity as the
+    # other broad feedback templates; the stronger full-image surround keeps the
+    # expert endpoint vertical rather than drifting to +NO.
+    "silent_broad_FB_mid": dict(
+        width="broad", ff="silent", fb="mid", tuning="all", context="all", weight=0.025,
+        drive=0.035, drive_clip=(0.0, 0.10),
+        gain=3.0, gain_clip=(1.4, 3.4),
+        lat=0.10, pvlat=0.035, pv_tuned=0.60, pv_silent=0.60,
+        baseline=0.18, baseline_clip=(0.13, 0.24),
+    ),
+    # Partial-context silent broad cells: same generalized FB on received channels,
+    # but only one or two context inputs exist. These fill the weak/intermediate O
+    # band without forcing every stimulus from the cell into the strong O cloud.
+    "silent_broad_FB_partial2": dict(
+        width="broad", ff="silent", fb="mid", tuning="all", context="random2", weight=0.090,
+        drive=0.035, drive_clip=(0.0, 0.10),
+        gain=3.0, gain_clip=(1.4, 3.4),
+        lat=0.09, pvlat=0.035, pv_tuned=0.56, pv_silent=0.56,
+        baseline=0.18, baseline_clip=(0.13, 0.24),
+    ),
+    # Mid broad FF, no feedback -> familiar FF adapts away -> pure -NO. Kept small:
+    # on novel these are static NO cells (no FB -> no movement), which the data does
+    # not show as the dominant broad population.
+    "mid_broad_FFonly": dict(
+        width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.160,
         lat=0.11, pvlat=0.12, pv_tuned=0.20, pv_silent=0.20,
     ),
-    # Broad FF + feedback: the key naive-NO -> expert-O transition. Naive weak O&NO
-    # responder (NO~0.5-1.2, O~0.3-0.8). FAMILIAR: FF adapts + growing FF->PV surround
-    # cancels the drive on the full image -> moves UP and LEFT into the expert O cloud
-    # at NO~0 (a range of O levels). NOVEL: FF stays intact + FB grows -> moves UP and
-    # RIGHT into the mixed +NO+O cloud. Weak/strong FB span weak->strong O responders.
-    "broad_FB_weak": dict(
-        width="broad", ff="broad", fb="weak", tuning="all", weight=0.15,
-        lat=0.13, pvlat=0.18, pv_tuned=0.50, pv_silent=0.50,
-        baseline=0.30, baseline_clip=(0.22, 0.42),
+
+    # Broad FF + generalized FB: the key medium NO/O -> expert O class. Familiar
+    # FF adapts down while generalized FB grows; novel keeps its FF and should move
+    # +NO and/or +O rather than being suppressed.
+    "mid_broad_FB_weak": dict(
+        width="broad", ff="mid", fb="weak", tuning="all", context="all", weight=0.095,
+        drive=0.085, drive_clip=(0.060, 0.22),
+        gain=4.2, lat=0.05, pvlat=0.035, pv_tuned=0.50, pv_silent=0.50,
+        baseline=0.18, baseline_clip=(0.13, 0.26),
     ),
-    "broad_FB_strong": dict(
-        width="broad", ff="broad_mid", fb="strong", tuning="all", weight=0.15,
-        lat=0.13, pvlat=0.18, pv_tuned=0.50, pv_silent=0.50,
-        baseline=0.38, baseline_clip=(0.30, 0.50),
+    "mid_broad_FB_partial2": dict(
+        width="broad", ff="mid", fb="mid", tuning="all", context="random2", weight=0.075,
+        drive=0.080, drive_clip=(0.055, 0.20),
+        gain=4.0, lat=0.045, pvlat=0.035, pv_tuned=0.48, pv_silent=0.48,
+        baseline=0.18, baseline_clip=(0.13, 0.26),
+    ),
+    "strong_broad_FB_strong": dict(
+        width="broad", ff="strong", fb="strong", tuning="all", context="all", weight=0.065,
+        drive=0.105, drive_clip=(0.070, 0.24),
+        gain=4.6, lat=0.06, pvlat=0.04, pv_tuned=0.55, pv_silent=0.55,
+        baseline=0.24, baseline_clip=(0.18, 0.34),
     ),
     # Narrow, one random preferred image -> +NO via gain; the emergent familiar/novel
-    # +NO asymmetry. Weak and strong FF variants give a range of +NO magnitudes.
+    # +NO asymmetry. Weak and mid FF variants give a range of +NO magnitudes.
     "narrow_weak": dict(
-        width="narrow", ff="narrow_weak", fb="weak", tuning="permuted1", weight=0.13,
+        width="narrow", ff="weak", fb="weak", tuning="permuted1", context="all", weight=0.13,
         lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
-    "narrow_strong": dict(
-        width="narrow", ff="narrow_strong", fb="weak", tuning="permuted1", weight=0.13,
+    "narrow_mid": dict(
+        width="narrow", ff="mid", fb="weak", tuning="permuted1", context="all", weight=0.105,
         lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
-    # Special case: a narrowly NOVEL-tuned cell -- suppressed at naive (gain < 1 so it
-    # starts ~0, "unresponsive"), then strong gain + feedback growth make it a clear
-    # +NO responder at expert. The dedicated unresponsive->novel +NO population
-    # (cf. mini's FF_FB_narrow_novel).
+    # Special case: a narrowly NOVEL-tuned cell. A weak novel FF seed plus strong
+    # generalized FB keeps naive responses near silent while giving FB growth enough
+    # leverage to produce a qualitative silent -> novel-NO transition.
     "narrow_novel": dict(
-        width="narrow", ff="narrow", fb="weak_plus", tuning="novel", weight=0.16,
-        gain=8.5, lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
+        width="narrow", ff="weak", fb="weak", tuning="novel", context="all", weight=0.095,
+        gain=6.5, gain_threshold=0.06,
+        lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
 }
 
@@ -210,9 +248,50 @@ def _draw_tuned_indices(tuning: str, rng: np.random.Generator) -> tuple[int, ...
     raise ValueError(f"unknown tuning mode: {tuning}")
 
 
+def _draw_context_indices(mode: str, rng: np.random.Generator) -> tuple[int, ...]:
+    if mode == "none":
+        return ()
+    if mode == "all":
+        return tuple(range(N_FEATURES))
+    if mode == "familiar":
+        return (0, 1)
+    if mode == "novel":
+        return (NOVEL_INDEX,)
+    if mode == "random1":
+        return (int(rng.integers(0, N_FEATURES)),)
+    if mode == "random2":
+        return tuple(sorted(int(idx) for idx in rng.choice(N_FEATURES, size=2, replace=False)))
+    raise ValueError(f"unknown context mode: {mode}")
+
+
+def _canonical_context_indices(mode: str) -> tuple[int, ...]:
+    if mode == "none":
+        return ()
+    if mode == "all":
+        return tuple(range(N_FEATURES))
+    if mode == "familiar":
+        return (0, 1)
+    if mode == "novel":
+        return (NOVEL_INDEX,)
+    if mode == "random1":
+        return (0,)
+    if mode == "random2":
+        return (0, NOVEL_INDEX)
+    raise ValueError(f"unknown context mode: {mode}")
+
+
 def _vector(tuned_indices: tuple[int, ...], tuned: float, silent: float) -> list[float]:
     tuned_set = set(tuned_indices)
     return [float(tuned if idx in tuned_set else silent) for idx in range(N_FEATURES)]
+
+
+def _general_vector(value: float) -> list[float]:
+    return [float(value)] * N_FEATURES
+
+
+def _bool_vector(indices: tuple[int, ...]) -> tuple[bool, ...]:
+    index_set = set(indices)
+    return tuple(idx in index_set for idx in range(N_FEATURES))
 
 
 def _build_transition_specs() -> dict[str, dict[str, Any]]:
@@ -224,7 +303,11 @@ def _build_transition_specs() -> dict[str, dict[str, Any]]:
     return specs
 
 
-def _build_config(name: str, tuned_indices: tuple[int, ...]) -> dict[str, Any]:
+def _build_config(
+    name: str,
+    tuned_indices: tuple[int, ...],
+    context_indices: tuple[int, ...],
+) -> dict[str, Any]:
     """Assemble the (noise-free) config for one cell of a template, given the drawn
     preferred-stimulus set ``tuned_indices``."""
     template = TEMPLATES[name]
@@ -241,15 +324,15 @@ def _build_config(name: str, tuned_indices: tuple[int, ...]) -> dict[str, Any]:
             _vector(tuned_indices, ff["hi"], ff["hi"]),
         ),
         "w_fb_init": base.weight_init(
-            [fb["center"]] * N_FEATURES, fb["rel"], fb["floor"],
-            [fb["lo"]] * N_FEATURES, [fb["hi"]] * N_FEATURES,
+            _general_vector(fb["center"]), fb["rel"], fb["floor"],
+            _general_vector(fb["lo"]), _general_vector(fb["hi"]),
         ),
         "w_lat_init": base.weight_init([template["lat"]]),
         "w_pv_lat_init": base.weight_init([template["pvlat"]]),
         "W_pv_init": base.weight_init(pv_vec),
     }
     fixed = {
-        "receives_context": (fb["receives"],) * N_FEATURES,
+        "receives_context": _bool_vector(context_indices) if fb["receives"] else (False,) * N_FEATURES,
         "baseline_drive_sigma": template.get("baseline", width_class["baseline"]),
         "pv_plasticity": False,
         "pv_lat_plasticity": False,
@@ -260,11 +343,11 @@ def _build_config(name: str, tuned_indices: tuple[int, ...]) -> dict[str, Any]:
         if value is not None:
             fixed[model_key] = value
     clip = {
-        "apical_gain_strength": width_class["gain_clip"],
-        "apical_drive_threshold": width_class["drive_clip"],
+        "apical_gain_strength": template.get("gain_clip", width_class["gain_clip"]),
+        "apical_drive_threshold": template.get("drive_clip", width_class["drive_clip"]),
         "baseline_drive_sigma": template.get("baseline_clip", width_class["baseline_clip"]),
     }
-    return {"init": config, "fix": fixed, "clip": clip, "width": len(tuned_indices)}
+    return {"init": config, "fix": fixed, "clip": clip, "width": len(tuned_indices), "context_width": len(context_indices)}
 
 
 def _perturb_config_factory():
@@ -282,7 +365,10 @@ def _perturb_config_factory():
         rng: np.random.Generator,
         scalar_noise_multiplier: float,
     ) -> dict[str, Any]:
-        spec = _build_config(transition, _draw_tuned_indices(TEMPLATES[transition]["tuning"], rng))
+        template = TEMPLATES[transition]
+        tuned_indices = _draw_tuned_indices(template["tuning"], rng)
+        context_indices = _draw_context_indices(template.get("context", "all"), rng)
+        spec = _build_config(transition, tuned_indices, context_indices)
         config = copy.deepcopy(base_config)
         for key, init_spec in spec["init"].items():
             if key in {"w_ff_init", "w_fb_init"}:
@@ -306,6 +392,10 @@ def _perturb_config_factory():
             _sample_idx=int(sample_idx),
             _sample_global_idx=int(global_idx),
             _ff_tuning_width=int(spec["width"]),
+            _ff_strength=template["ff"],
+            _fb_level=template["fb"],
+            _tuned_indices=list(tuned_indices),
+            _context_indices=list(context_indices),
         )
         return config
 
@@ -328,7 +418,10 @@ def _center_config(name: str) -> dict[str, Any]:
     """Noise-free config at the template centers (no weight/scalar jitter), for the
     center-panel trace plots. Replaces ``base._center_config`` so each pruned
     template renders correctly."""
-    spec = _build_config(name, _canonical_tuned_indices(TEMPLATES[name]["tuning"]))
+    template = TEMPLATES[name]
+    tuned_indices = _canonical_tuned_indices(template["tuning"])
+    context_indices = _canonical_context_indices(template.get("context", "all"))
+    spec = _build_config(name, tuned_indices, context_indices)
     config = copy.deepcopy(base.minimal_configs3[name])
     for key, init_spec in spec["init"].items():
         base._set_init(config, key, base._center_init_values(init_spec))
@@ -337,17 +430,45 @@ def _center_config(name: str) -> dict[str, Any]:
         if key in config and base._is_num(config[key]):
             config[key] = base._clip(float(config[key]), lo, hi)
     base._apply_shared_learning_rates(config)
-    config.update(_canonical_transition=name, _sample_idx=0, _sample_global_idx=0)
+    config.update(
+        _canonical_transition=name,
+        _sample_idx=0,
+        _sample_global_idx=0,
+        _ff_tuning_width=int(spec["width"]),
+        _ff_strength=template["ff"],
+        _fb_level=template["fb"],
+        _tuned_indices=list(tuned_indices),
+        _context_indices=list(context_indices),
+    )
     return config
 
 
-def _configure_pruned_variant() -> None:
+def _flatten_config_factory(original_flatten):
+    def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
+        flat = original_flatten(config)
+        flat["ff_tuning_width"] = config.get("_ff_tuning_width")
+        flat["ff_strength"] = config.get("_ff_strength")
+        flat["fb_level"] = config.get("_fb_level")
+        tuned = config.get("_tuned_indices", [])
+        context = config.get("_context_indices", [])
+        for idx in range(N_FEATURES):
+            flat[f"tuned_index_{idx}"] = int(idx in tuned)
+            flat[f"receives_context_{idx}"] = int(idx in context)
+        return flat
+
+    return _flatten_config
+
+
+def _configure_pruned_variant(n_steps_per_phase: int = LEARNING_RATE_REFERENCE_STEPS) -> None:
     transitions = _build_transition_specs()
     generic_config = copy.deepcopy(base.minimal_configs3[GENERIC_BASE_CONFIG])
+    generic_config["activation"] = ThresholdReLU(threshold=SOMA_ACTIVATION_THRESHOLD, hard=False)
     base.TRANSITIONS = transitions
     base.minimal_configs3 = {name: copy.deepcopy(generic_config) for name in transitions}
-    base.SHARED_LEARNING_RATES = dict(SHARED_LEARNING_RATES)
+    base.SHARED_LEARNING_RATES = _effective_learning_rates(n_steps_per_phase)
+    base.SCALAR_NOISE = {key: base.SCALAR_NOISE[key] for key in SCALAR_NOISE_KEYS}
     base._perturb_config = _perturb_config_factory()
+    base._flatten_config = _flatten_config_factory(base._flatten_config)
     # Center-panel traces (one panel per template) use the noise-free template
     # centers; there is no separate config_s canonical example, so both panel sets
     # show the same template centers.
@@ -362,8 +483,15 @@ def _write_metadata(args: argparse.Namespace) -> None:
         "description": "Mini model (only PyC plasticity) with a small width-keyed principled template set, generalized feedback, and emergent FF tuning via random per-cell permutation.",
         "disabled_plasticity": ["W_pv", "w_pv_lat"],
         "enabled_plasticity": ["w_ff", "w_fb", "w_lat"],
-        "shared_learning_rates": SHARED_LEARNING_RATES,
+        "shared_learning_rates": _effective_learning_rates(args.n_steps_per_phase),
+        "base_shared_learning_rates": SHARED_LEARNING_RATES,
+        "learning_rate_reference_steps": LEARNING_RATE_REFERENCE_STEPS,
+        "soma_activation_threshold": SOMA_ACTIVATION_THRESHOLD,
+        "scalar_noise_keys": list(SCALAR_NOISE_KEYS),
         "width_classes": WIDTH_CLASSES,
+        "ff_strengths": FF_STRENGTHS,
+        "fb_levels": FB_LEVELS,
+        "context_modes": CONTEXT_MODES,
         "templates": {name: {k: v for k, v in t.items()} for name, t in TEMPLATES.items()},
     }
     path.write_text(json.dumps(metadata, indent=2, default=repr))
@@ -373,9 +501,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pruned principled mini model-scatter variant.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--n-samples", type=int, default=250)
-    parser.add_argument("--n-steps-per-phase", type=int, default=200)
-    parser.add_argument("--test-trials", type=int, default=3)
-    parser.add_argument("--training-trials", type=int, default=5)
+    parser.add_argument("--n-steps-per-phase", type=int, default=300)
+    parser.add_argument("--test-trials", type=int, default=4)
+    parser.add_argument("--training-trials", type=int, default=7)
     parser.add_argument("--seed", type=int, default=20260604)
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument("--scalar-noise-multiplier", type=float, default=1.75)
@@ -399,7 +527,7 @@ def main() -> None:
     # Base runner skips the per-template trace panels when skip_center_panels is set;
     # expose the inverse opt-in flag here.
     args.skip_center_panels = not args.plot_center_panels
-    _configure_pruned_variant()
+    _configure_pruned_variant(args.n_steps_per_phase)
     base.run_model_scatter(args)
     _write_metadata(args)
 
