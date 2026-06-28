@@ -55,7 +55,7 @@ N_FEATURES = 3
 # rates are calibrated at 200 steps/phase; longer phase durations scale them down
 # so the accumulated plasticity stays close to the clearer 200-step scatter.
 LEARNING_RATE_REFERENCE_STEPS = 200
-SHARED_LEARNING_RATES = {"lr_ff": 0.0135, "lr_fb": 0.00062, "lr_lat": 0.0080, "lr_pv": 0.0}
+SHARED_LEARNING_RATES = {"lr_ff": 0.0135, "lr_fb": 0.00050, "lr_lat": 0.0240, "lr_pv": 0.0}
 SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
 SOMA_ACTIVATION_THRESHOLD = 0.08
 APICAL_DRIVE_SUBTRACTIVE = True
@@ -116,6 +116,7 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
 FF_STRENGTHS: dict[str, dict[str, Any]] = {
     "silent": dict(tuned=0.010, silent=0.010, rel=0.60, floor=0.012, lo=0.0, hi=0.050),
     "very_weak": dict(tuned=0.065, silent=0.005, rel=0.62, floor=0.014, lo=0.0, hi=0.180),
+    "diag_weak": dict(tuned=0.042, silent=0.004, rel=0.30, floor=0.006, lo=0.0, hi=0.075),
     # `hi` caps the FF upper-noise tail: gain amplification turns high FF draws into
     # naive NO outliers, so these clips keep naive (especially novel-naive) NO <~1.5.
     "weak": dict(tuned=0.090, silent=0.006, rel=0.50, floor=0.010, lo=0.0, hi=0.150),
@@ -197,7 +198,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # not show as the dominant broad population.
     "mid_broad_FFonly": dict(
         width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.155,
-        lat=0.080, pvlat=0.16, pv_tuned=0.40, pv_silent=0.40,
+        lat=0.050, pvlat=0.12, pv_tuned=0.28, pv_silent=0.28,
     ),
     # Weak broad FF + partial generalized FB: fills the missing weak O&NO bridge.
     # These start below the mid-broad rows, then move up-and-left into the lower
@@ -216,6 +217,16 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         gain=5.0, gain_clip=(3.0, 5.8),
         lat=0.19, pvlat=0.032, pv_tuned=0.28, pv_silent=0.28,
         baseline=0.15, baseline_clip=(0.11, 0.22),
+    ),
+    # Small weak-both bridge: modest broad FF plus generalized FB. It fills the
+    # familiar naive cloud around (NO~0.5, O~0.5), then uses the mover surround
+    # timing in the divisive variant to travel up-and-left into the expert O axis.
+    "weak_broad_FB_mixed_bridge": dict(
+        width="broad", ff="very_weak", fb="mid", tuning="all", context="all", weight=0.020,
+        drive=0.005, drive_clip=(0.0, 0.035),
+        gain=3.3, gain_clip=(2.8, 3.9),
+        lat=0.15, pvlat=0.032, pv_tuned=0.26, pv_silent=0.26,
+        baseline=0.16, baseline_clip=(0.11, 0.23),
     ),
 
     # Broad FF + generalized FB: the key medium NO/O -> expert O class. Familiar
@@ -263,11 +274,23 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         gain=6.8, gain_threshold=0.045,
         lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
+    # Novel diagonal bridge: novel-tuned weak FF plus generalized FB. These cells
+    # start near the silent/weak novel NO&O cloud and, after familiar training grows
+    # generalized FB, move into the modest novel expert NO&O interior with a
+    # +NO-dominant diagonal shift.
+    "novel_weak_FB_diagonal": dict(
+        width="broad", ff="diag_weak", fb="weak", tuning="novel", context="novel", weight=0.065,
+        drive=0.035, drive_clip=(0.015, 0.065),
+        gain=3.0, gain_clip=(2.6, 3.35),
+        gain_threshold=0.035, gain_k=7.0,
+        lat=0.08, pvlat=0.025, pv_tuned=0.20, pv_silent=0.06,
+        baseline=0.14, baseline_clip=(0.10, 0.20),
+    ),
     # Weak broad FF-only bridge: same -NO mechanism as mid_broad_FFonly, but with
     # weaker initial FF so the -NO population also fills the 0.3-0.5 naive NO band.
     "weak_broad_FFonly": dict(
         width="broad", ff="weak", fb="none", tuning="all", context="none", weight=0.105,
-        lat=0.055, pvlat=0.13, pv_tuned=0.34, pv_silent=0.34,
+        lat=0.035, pvlat=0.10, pv_tuned=0.24, pv_silent=0.24,
         baseline=0.14, baseline_clip=(0.10, 0.22),
     ),
     # Shared naive O responders. High initial generalized FB puts these cells in
