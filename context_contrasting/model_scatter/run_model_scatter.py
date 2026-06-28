@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,14 @@ from context_contrasting.minimal2.experiment_s import (
     _run_test_phase_variants,
     run_experimental_phase,
 )
-from context_contrasting.minimal2.minimal_s import CCNeuron
+# Model selection. Defaults to the subtractive `minimal_s` model (unchanged
+# behaviour); set CC_MODEL=divisive to use the divisive-inhibition `minimal_divisive`
+# variant. Gated at import so loky worker subprocesses (which re-import this module
+# and inherit the parent environment) also pick up the choice.
+if os.environ.get("CC_MODEL") == "divisive":
+    from context_contrasting.minimal2.minimal_divisive import CCNeuron
+else:
+    from context_contrasting.minimal2.minimal_s import CCNeuron
 from context_contrasting.minimal2.visualize_s import (
     format_transition_label,
     save_grouped_transition_panels,
