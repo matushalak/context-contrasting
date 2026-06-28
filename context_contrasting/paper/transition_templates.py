@@ -57,20 +57,15 @@ SHARED_LEARNING_RATES = {"lr_ff": 0.0135, "lr_fb": 0.00050, "lr_lat": 0.0240, "l
 SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
 SOMA_ACTIVATION_THRESHOLD = 0.08
 APICAL_DRIVE_SUBTRACTIVE = True
-PV_NOISE_SIGMA = 0.0
-DIVISIVE_GAIN = 10.0
+PV_NOISE_SIGMA = 0.075
+DIVISIVE_GAIN = 20.0
 BASELINE_STD_SCALE = 0.27
-GLOBAL_SCALAR_CLIP = {
-    "baseline_drive_sigma": (0.18, 0.55),
-    "pv_noise_sigma": (0.04, 0.16),
-}
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
-    "baseline_drive_sigma": ("log", 0.20, 0.0, 1.0, 0.0),
     "apical_drive_threshold": ("add", 0.12, 0.0, 3.0, 0.05),
 }
-UNIFORM_FF_NOISE = dict(rel=0.40, floor=0.010, lo=0.0, hi=0.20)
-UNIFORM_FB_NOISE = dict(rel=0.40, floor=0.012, lo=0.0, hi=0.40)
+UNIFORM_FF_NOISE = dict(rel=0.50, floor=0.012, lo=0.0, hi=0.20)
+UNIFORM_FB_NOISE = dict(rel=0.60, floor=0.012, lo=0.0, hi=0.40)
 UNIFORM_GAIN_CLIP = (1.5, 8.0)
 UNIFORM_DRIVE_CLIP = (0.0, 1.5)
 
@@ -95,7 +90,7 @@ BASE_CONFIG = {
     "apical_gain_k": 5.0,
     "apical_gain_threshold": 0.0,
     "baseline_drive_sigma": 0.08,
-    "pv_noise_sigma": 0.03,
+    "pv_noise_sigma": PV_NOISE_SIGMA,
     "alpha": 1.0,
     "weight_decay": 0.0,
     "seed": 42,
@@ -120,17 +115,17 @@ def _effective_learning_rates(n_steps_per_phase: int) -> dict[str, float]:
 # modeled as weak / already-adapted BROAD cells (a broad cell whose FF was depressed
 # by past adaptation), so they share the broad width class and merely carry a
 # near-silent feedforward weight -- there is no separate untuned regime. Each entry
-# gives the fixed center and post-noise clip for the jittered scalars
-# (apical_gain_strength, apical_drive_threshold, baseline_drive_sigma).
+# gives fixed centers and post-noise clips for the two jittered scalar parameters
+# (apical_gain_strength, apical_drive_threshold). Baseline sigma is a fixed center.
 WIDTH_CLASSES: dict[str, dict[str, Any]] = {
     "broad": dict(
         ff_plasticity_scale=8.0,
         # Broad cells need enough gain that intact novel FF drive can be amplified
         # alongside strengthened generalized FB; otherwise novel expert NO gets
         # suppressed even for mixed FF+FB responders.
-        gain=3.8, gain_clip=(2.8, 5.8),
-        drive=0.16, drive_clip=(0.10, 0.45),
-        baseline=0.16, baseline_clip=(0.12, 0.26),
+        gain=3.8, gain_clip=UNIFORM_GAIN_CLIP,
+        drive=0.16, drive_clip=UNIFORM_DRIVE_CLIP,
+        baseline=0.16,
     ),
     "narrow": dict(
         # Weak (not zero) FF plasticity: a narrow cell tuned to a *familiar* image
@@ -138,17 +133,17 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # small/-NO, while one tuned to the *novel* image keeps its FF intact and is
         # amplified to +NO -- so the familiar<novel +NO asymmetry emerges from the
         # protocol rather than being hand-assigned.
-        ff_plasticity_scale=0.55,
-        gain=5.6, gain_clip=(3.8, 7.0),
+        ff_plasticity_scale=0.8,
+        gain=5.6, gain_clip=UNIFORM_GAIN_CLIP,
         # Shift + steepen the gain sigmoid so the small feedback growth during
         # training moves the gain enough to turn the non-adapted FF drive into a
         # clear +NO shift at expert (suppressed naive -> amplified expert).
         gain_threshold=0.03, gain_k=7.0,
-        drive=1.25, drive_clip=(1.05, None),
+        drive=1.25, drive_clip=UNIFORM_DRIVE_CLIP,
         # Low baseline -> low adaptation current, so the occluded basal stays near 0
         # and the rising gain barely drags the occluded response negative: the +NO
         # cells stay centred at O~0 (their NO shift is FF-driven, baseline-independent).
-        baseline=0.07, baseline_clip=(0.050, 0.10),
+        baseline=0.07,
     ),
 }
 
@@ -157,33 +152,31 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
 # to non-preferred channels. Broad cells simply tune all channels, while narrow
 # cells tune the drawn preferred channel only.
 FF_STRENGTHS: dict[str, dict[str, Any]] = {
-    "silent": dict(tuned=0.010, silent=0.010, rel=0.60, floor=0.012, lo=0.0, hi=0.050),
-    "very_weak": dict(tuned=0.065, silent=0.005, rel=0.62, floor=0.014, lo=0.0, hi=0.180),
-    "diag_weak": dict(tuned=0.042, silent=0.004, rel=0.30, floor=0.006, lo=0.0, hi=0.075),
-    # `hi` caps the FF upper-noise tail: gain amplification turns high FF draws into
-    # naive NO outliers, so these clips keep naive (especially novel-naive) NO <~1.5.
-    "weak": dict(tuned=0.090, silent=0.006, rel=0.50, floor=0.010, lo=0.0, hi=0.150),
-    "mid": dict(tuned=0.120, silent=0.006, rel=0.46, floor=0.010, lo=0.0, hi=0.180),
-    "strong": dict(tuned=0.155, silent=0.008, rel=0.34, floor=0.014, lo=0.0, hi=0.235),
+    "silent": dict(tuned=0.010, silent=0.010, **UNIFORM_FF_NOISE),
+    "very_weak": dict(tuned=0.065, silent=0.005, **UNIFORM_FF_NOISE),
+    "diag_weak": dict(tuned=0.042, silent=0.004, **UNIFORM_FF_NOISE),
+    "weak": dict(tuned=0.090, silent=0.006, **UNIFORM_FF_NOISE),
+    "mid": dict(tuned=0.120, silent=0.006, **UNIFORM_FF_NOISE),
+    "strong": dict(tuned=0.155, silent=0.008, **UNIFORM_FF_NOISE),
     # Narrow-only FF levels keep the +NO mechanism graded while preventing rare
     # high FF draws from producing >3 SD novel NO outliers.
-    "narrow_weak": dict(tuned=0.080, silent=0.006, rel=0.38, floor=0.010, lo=0.0, hi=0.104),
-    "narrow_mid": dict(tuned=0.105, silent=0.006, rel=0.34, floor=0.010, lo=0.0, hi=0.104),
+    "narrow_weak": dict(tuned=0.080, silent=0.006, **UNIFORM_FF_NOISE),
+    "narrow_mid": dict(tuned=0.105, silent=0.006, **UNIFORM_FF_NOISE),
 }
 
 # Generalized feedback levels (equal across all three context channels):
 # (receives_context, center, rel_noise, noise_floor, lo, hi).
 FB_LEVELS: dict[str, dict[str, Any]] = {
-    "none": dict(receives=False, center=0.004, rel=0.60, floor=0.005, lo=0.0, hi=0.030),
-    "weak": dict(receives=True, center=0.040, rel=0.42, floor=0.010, lo=0.006, hi=0.120),
-    "mid": dict(receives=True, center=0.075, rel=0.40, floor=0.012, lo=0.012, hi=0.170),
-    "strong": dict(receives=True, center=0.110, rel=0.28, floor=0.016, lo=0.050, hi=0.300),
+    "none": dict(receives=False, center=0.004, **UNIFORM_FB_NOISE),
+    "weak": dict(receives=True, center=0.040, **UNIFORM_FB_NOISE),
+    "mid": dict(receives=True, center=0.075, **UNIFORM_FB_NOISE),
+    "strong": dict(receives=True, center=0.110, **UNIFORM_FB_NOISE),
     # High initial FB with limited plastic headroom: creates naive O responders
     # without making their post-training O shift dominate the novel scatter. Tight
     # rel-noise + raised lo keep the O spread (hence the NO spread = O - gain*Dy_lat)
     # narrow so the expert O cloud sits squarely at NO=0 rather than smearing into a
     # negative tail / the diagonal.
-    "strong_sat": dict(receives=True, center=0.300, rel=0.18, floor=0.020, lo=0.210, hi=0.500),
+    "strong_sat": dict(receives=True, center=0.300, **UNIFORM_FB_NOISE),
 }
 
 # Which feedforward channels each cell prefers (drawn per cell):
@@ -198,50 +191,45 @@ NOVEL_INDEX = 2
 CONTEXT_MODES = ("none", "all", "random1", "random2", "familiar", "novel")
 
 # The pruned population mixture. Each template = (width, FF strength, FB level,
-# tuning, context-receive mode) plus its coupled surround (w_lat, w_pv_lat, W_pv on
-# tuned/silent channels), optional baseline override, and optional per-template
-# scalar overrides (gain etc.). `weight` is its share of the population.
+# tuning, context-receive mode), optional baseline override, and optional
+# per-template scalar overrides (gain etc.). `weight` is its share of the
+# population. Coupled surround parameters live in SURROUND_SETTINGS below.
 TEMPLATES: dict[str, dict[str, Any]] = {
     # Silent / already-adapted broad cell, no feedback -> unresponsive (small dNO/dO).
     "silent_broad_FFonly": dict(
         width="broad", ff="silent", fb="none", tuning="all", context="none", weight=0.035,
-        lat=0.04, pvlat=0.08, pv_tuned=0.18, pv_silent=0.18,
     ),
     # Silent broad + weak generalized FB: starts close to the unresponsive cloud,
     # then shared FB/LAT plasticity moves it vertically into the O cloud while the
     # learned full-image surround keeps expert NO near 0.
     "silent_broad_FB_weak": dict(
         width="broad", ff="silent", fb="weak", tuning="all", context="all", weight=0.010,
-        drive=0.035, drive_clip=(0.0, 0.10),
-        gain=3.0, gain_clip=(1.4, 3.4),
-        lat=0.08, pvlat=0.030, pv_tuned=0.40, pv_silent=0.40,
-        baseline=0.18, baseline_clip=(0.13, 0.24),
+        drive=0.035,
+        gain=3.0,
+        baseline=0.18,
     ),
     # FB->FB-like: little FF and moderate generalized FB. This fills weaker O
     # responders; the stronger naive O plume comes from silent_broad_FB_strong.
     "silent_broad_FB_mid": dict(
         width="broad", ff="silent", fb="mid", tuning="all", context="all", weight=0.005,
-        drive=0.035, drive_clip=(0.0, 0.10),
-        gain=3.0, gain_clip=(1.4, 3.4),
-        lat=0.10, pvlat=0.035, pv_tuned=0.50, pv_silent=0.50,
-        baseline=0.18, baseline_clip=(0.13, 0.24),
+        drive=0.035,
+        gain=3.0,
+        baseline=0.18,
     ),
     # Partial-context silent broad cells: same generalized FB on received channels,
     # but only one or two context inputs exist. These fill the weak/intermediate O
     # band without forcing every stimulus from the cell into the strong O cloud.
     "silent_broad_FB_partial2": dict(
         width="broad", ff="silent", fb="mid", tuning="all", context="random2", weight=0.045,
-        drive=0.035, drive_clip=(0.0, 0.10),
-        gain=3.0, gain_clip=(1.4, 3.4),
-        lat=0.09, pvlat=0.035, pv_tuned=0.46, pv_silent=0.46,
-        baseline=0.18, baseline_clip=(0.13, 0.24),
+        drive=0.035,
+        gain=3.0,
+        baseline=0.18,
     ),
     # Mid broad FF, no feedback -> familiar FF adapts away -> pure -NO. Kept small:
     # on novel these are static NO cells (no FB -> no movement), which the data does
     # not show as the dominant broad population.
     "mid_broad_FFonly": dict(
         width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.155,
-        lat=0.050, pvlat=0.12, pv_tuned=0.28, pv_silent=0.28,
     ),
     # Weak broad FF + partial generalized FB: fills the missing weak O&NO bridge.
     # These start below the mid-broad rows, then move up-and-left into the lower
@@ -256,20 +244,18 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # ff_plasticity_scale (active-channel gated; novel channel untouched).
     "very_weak_broad_FB_partial2": dict(
         width="broad", ff="weak", fb="mid", tuning="all", context="random2", weight=0.040,
-        drive=0.035, drive_clip=(0.0, 0.12),
-        gain=5.0, gain_clip=(3.0, 5.8),
-        lat=0.19, pvlat=0.032, pv_tuned=0.28, pv_silent=0.28,
-        baseline=0.15, baseline_clip=(0.11, 0.22),
+        drive=0.035,
+        gain=5.0,
+        baseline=0.15,
     ),
     # Small weak-both bridge: modest broad FF plus generalized FB. It fills the
     # familiar naive cloud around (NO~0.5, O~0.5), then uses the mover surround
     # timing in the divisive variant to travel up-and-left into the expert O axis.
     "weak_broad_FB_mixed_bridge": dict(
         width="broad", ff="very_weak", fb="mid", tuning="all", context="all", weight=0.020,
-        drive=0.005, drive_clip=(0.0, 0.035),
-        gain=3.3, gain_clip=(2.8, 3.9),
-        lat=0.15, pvlat=0.032, pv_tuned=0.26, pv_silent=0.26,
-        baseline=0.16, baseline_clip=(0.11, 0.23),
+        drive=0.005,
+        gain=3.3,
+        baseline=0.16,
     ),
 
     # Broad FF + generalized FB: the key medium NO/O -> expert O class. Familiar
@@ -283,31 +269,29 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # novel -NO population, which should come only from mid_broad_FFonly).
     "mid_broad_FB_weak": dict(
         width="broad", ff="mid", fb="mid", tuning="all", context="all", weight=0.050,
-        drive=0.085, drive_clip=(0.060, 0.22),
-        gain=4.4, lat=0.18, pvlat=0.035, pv_tuned=0.30, pv_silent=0.30,
-        baseline=0.18, baseline_clip=(0.13, 0.26),
+        drive=0.085,
+        gain=4.4,
+        baseline=0.18,
     ),
     "mid_broad_FB_partial2": dict(
         width="broad", ff="mid", fb="mid", tuning="all", context="random2", weight=0.040,
-        drive=0.080, drive_clip=(0.055, 0.20),
-        gain=4.2, lat=0.18, pvlat=0.035, pv_tuned=0.30, pv_silent=0.30,
-        baseline=0.18, baseline_clip=(0.13, 0.26),
+        drive=0.080,
+        gain=4.2,
+        baseline=0.18,
     ),
     "strong_broad_FB_strong": dict(
         width="broad", ff="strong", fb="strong", tuning="all", context="all", weight=0.025,
-        drive=0.105, drive_clip=(0.070, 0.24),
-        gain=4.8, lat=0.20, pvlat=0.04, pv_tuned=0.32, pv_silent=0.32,
-        baseline=0.24, baseline_clip=(0.18, 0.34),
+        drive=0.105,
+        gain=4.8,
+        baseline=0.25,
     ),
     # Narrow, one random preferred image -> +NO via gain; the emergent familiar/novel
     # +NO asymmetry. Weak and mid FF variants give a range of +NO magnitudes.
     "narrow_weak": dict(
         width="narrow", ff="narrow_weak", fb="weak", tuning="permuted1", context="all", weight=0.13,
-        lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
     "narrow_mid": dict(
         width="narrow", ff="narrow_mid", fb="weak", tuning="permuted1", context="all", weight=0.120,
-        lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
     # Special case: a narrowly NOVEL-tuned cell. A weak novel FF seed plus strong
     # generalized FB keeps naive responses near silent while giving FB growth enough
@@ -315,7 +299,6 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     "narrow_novel": dict(
         width="narrow", ff="narrow_weak", fb="weak", tuning="novel", context="all", weight=0.225,
         gain=6.8, gain_threshold=0.045,
-        lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03,
     ),
     # Novel diagonal bridge: novel-tuned weak FF plus generalized FB. These cells
     # start near the silent/weak novel NO&O cloud and, after familiar training grows
@@ -323,62 +306,46 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # +NO-dominant diagonal shift.
     "novel_weak_FB_diagonal": dict(
         width="broad", ff="diag_weak", fb="weak", tuning="novel", context="novel", weight=0.065,
-        drive=0.035, drive_clip=(0.015, 0.065),
-        gain=3.0, gain_clip=(2.6, 3.35),
+        drive=0.035,
+        gain=3.0,
         gain_threshold=0.035, gain_k=7.0,
-        lat=0.08, pvlat=0.025, pv_tuned=0.20, pv_silent=0.06,
-        baseline=0.14, baseline_clip=(0.10, 0.20),
+        baseline=0.14,
     ),
     # Weak broad FF-only bridge: same -NO mechanism as mid_broad_FFonly, but with
     # weaker initial FF so the -NO population also fills the 0.3-0.5 naive NO band.
     "weak_broad_FFonly": dict(
         width="broad", ff="weak", fb="none", tuning="all", context="none", weight=0.105,
-        lat=0.035, pvlat=0.10, pv_tuned=0.24, pv_silent=0.24,
-        baseline=0.14, baseline_clip=(0.10, 0.22),
+        baseline=0.14,
     ),
     # Shared naive O responders. High initial generalized FB puts these cells in
     # the O cloud before training; limited FB headroom and strong fixed PV keep the
     # subtype from turning novel +O into the dominant transition.
     "silent_broad_FB_strong": dict(
         width="broad", ff="silent", fb="strong_sat", tuning="all", context="all", weight=0.055,
-        drive=0.180, drive_clip=(0.150, 0.250),
-        gain=2.2, gain_clip=(1.7, 2.6),
-        lat=0.26, pvlat=0.030, pv_tuned=0.26, pv_silent=0.26,
-        baseline=0.26, baseline_clip=(0.20, 0.36),
+        drive=0.180,
+        gain=2.2,
+        baseline=0.26,
     ),
 }
 
-FINAL_SURROUND_SETTINGS: dict[str, dict[str, float]] = {
+SURROUND_SETTINGS: dict[str, dict[str, float]] = {
+    "silent_broad_FFonly": dict(lat=0.04, pvlat=0.08, pv_tuned=0.18, pv_silent=0.18),
     "silent_broad_FB_strong": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
     "silent_broad_FB_weak": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
     "silent_broad_FB_mid": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
     "silent_broad_FB_partial2": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
+    "mid_broad_FFonly": dict(lat=0.050, pvlat=0.1, pv_tuned=0.28, pv_silent=0.28),
     "mid_broad_FB_weak": dict(lat=0.14, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
     "mid_broad_FB_partial2": dict(lat=0.14, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
     "strong_broad_FB_strong": dict(lat=0.14, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
     "very_weak_broad_FB_partial2": dict(lat=0.14, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
     "weak_broad_FB_mixed_bridge": dict(lat=0.20, pvlat=0.05, pv_tuned=0.62, pv_silent=0.62),
+    "narrow_weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
+    "narrow_mid": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
+    "narrow_novel": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
     "novel_weak_FB_diagonal": dict(lat=0.08, pvlat=0.025, pv_tuned=0.20, pv_silent=0.06),
+    "weak_broad_FFonly": dict(lat=0.035, pvlat=0.10, pv_tuned=0.24, pv_silent=0.24),
 }
-
-
-def _apply_final_publication_settings() -> None:
-    WIDTH_CLASSES["broad"]["ff_plasticity_scale"] = 8.0
-    WIDTH_CLASSES["narrow"]["ff_plasticity_scale"] = 0.9
-    for width_class in WIDTH_CLASSES.values():
-        width_class["gain_clip"] = UNIFORM_GAIN_CLIP
-        width_class["drive_clip"] = UNIFORM_DRIVE_CLIP
-    for level in FF_STRENGTHS.values():
-        level.update(UNIFORM_FF_NOISE)
-    for level in FB_LEVELS.values():
-        level.update(UNIFORM_FB_NOISE)
-    for template in TEMPLATES.values():
-        if "gain_clip" in template:
-            template["gain_clip"] = UNIFORM_GAIN_CLIP
-        if "drive_clip" in template:
-            template["drive_clip"] = UNIFORM_DRIVE_CLIP
-    for name, settings in FINAL_SURROUND_SETTINGS.items():
-        TEMPLATES[name].update(settings)
 
 
 # Per-template scalar overrides of the width-class defaults.
@@ -467,8 +434,9 @@ def _build_config(
     width_class = WIDTH_CLASSES[template["width"]]
     ff = FF_STRENGTHS[template["ff"]]
     fb = FB_LEVELS[template["fb"]]
+    surround = SURROUND_SETTINGS[name]
 
-    pv_vec = _vector(tuned_indices, template["pv_tuned"], template["pv_silent"])
+    pv_vec = _vector(tuned_indices, surround["pv_tuned"], surround["pv_silent"])
     config: dict[str, Any] = {
         "w_ff_init": base.weight_init(
             _vector(tuned_indices, ff["tuned"], ff["silent"]),
@@ -480,8 +448,8 @@ def _build_config(
             _general_vector(fb["center"]), fb["rel"], fb["floor"],
             _general_vector(fb["lo"]), _general_vector(fb["hi"]),
         ),
-        "w_lat_init": base.weight_init([template["lat"]]),
-        "w_pv_lat_init": base.weight_init([template["pvlat"]]),
+        "w_lat_init": base.weight_init([surround["lat"]]),
+        "w_pv_lat_init": base.weight_init([surround["pvlat"]]),
         "W_pv_init": base.weight_init(pv_vec),
     }
     fixed = {
@@ -499,8 +467,6 @@ def _build_config(
     clip = {
         "apical_gain_strength": template.get("gain_clip", width_class["gain_clip"]),
         "apical_drive_threshold": template.get("drive_clip", width_class["drive_clip"]),
-        "baseline_drive_sigma": template.get("baseline_clip", width_class["baseline_clip"]),
-        "pv_noise_sigma": (PV_NOISE_SIGMA, PV_NOISE_SIGMA),
     }
     return {"init": config, "fix": fixed, "clip": clip, "width": len(tuned_indices), "context_width": len(context_indices)}
 
@@ -615,7 +581,10 @@ def _flatten_config_factory(original_flatten):
 
 
 def configure_model_scatter(n_steps_per_phase: int = LEARNING_RATE_REFERENCE_STEPS) -> None:
-    _apply_final_publication_settings()
+    if set(SURROUND_SETTINGS) != set(TEMPLATES):
+        missing = sorted(set(TEMPLATES) - set(SURROUND_SETTINGS))
+        extra = sorted(set(SURROUND_SETTINGS) - set(TEMPLATES))
+        raise ValueError(f"SURROUND_SETTINGS must match TEMPLATES exactly; missing={missing}, extra={extra}")
     transitions = _build_transition_specs()
     generic_config = copy.deepcopy(BASE_CONFIG)
     generic_config["activation"] = ThresholdReLU(threshold=SOMA_ACTIVATION_THRESHOLD, subtractive=False, hasMax=True, maxValue=1.0)
@@ -626,7 +595,7 @@ def configure_model_scatter(n_steps_per_phase: int = LEARNING_RATE_REFERENCE_STE
     base.minimal_configs3 = {name: copy.deepcopy(generic_config) for name in transitions}
     base.SHARED_LEARNING_RATES = _effective_learning_rates(n_steps_per_phase)
     base.SCALAR_NOISE = {key: SCALAR_NOISE[key] for key in SCALAR_NOISE_KEYS}
-    base.GLOBAL_SCALAR_CLIP = dict(GLOBAL_SCALAR_CLIP)
+    base.GLOBAL_SCALAR_CLIP = {}
     base.BASELINE_STD_SCALE = BASELINE_STD_SCALE
     base._perturb_config = _perturb_config_factory()
     base._flatten_config = _flatten_config_factory(base._flatten_config)
@@ -659,6 +628,7 @@ def write_metadata(args) -> None:
         "ff_strengths": FF_STRENGTHS,
         "fb_levels": FB_LEVELS,
         "context_modes": CONTEXT_MODES,
+        "surround_settings": SURROUND_SETTINGS,
         "templates": {name: {k: v for k, v in t.items()} for name, t in TEMPLATES.items()},
     }
     path.write_text(json.dumps(metadata, indent=2, default=repr))

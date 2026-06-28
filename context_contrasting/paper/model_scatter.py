@@ -87,6 +87,22 @@ def _design_model_scatter_phase(
     return x, c
 
 
+def _training_trial_order(
+    familiar_names: list[str],
+    *,
+    n_trials: int,
+    order: str,
+    seed: int,
+) -> list[str]:
+    trial_order = [name for _ in range(n_trials) for name in familiar_names]
+    if order == "fixed":
+        return trial_order
+    if order != "randomized":
+        raise ValueError("training_stimulus_order must be 'fixed' or 'randomized'.")
+    rng = np.random.default_rng(seed)
+    return rng.permutation(trial_order).tolist()
+
+
 def _build_model_scatter_test_stimuli(
     *,
     n_steps_per_phase: int,
@@ -107,9 +123,11 @@ def _build_model_scatter_training_stimuli(
     *,
     n_steps_per_phase: int,
     n_trials: int,
+    order: str,
+    seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    phases = [
-        _design_model_scatter_phase(
+    familiar_phases = {
+        name: _design_model_scatter_phase(
             input_mean=input_mean,
             context_mean=context_mean,
             n_steps=n_steps_per_phase,
@@ -117,10 +135,11 @@ def _build_model_scatter_training_stimuli(
         )
         for name, (input_mean, context_mean) in STIMULUS_SPECS.items()
         if name.startswith("familiar")
-    ]
+    }
+    phases = [familiar_phases[name] for name in _training_trial_order(list(familiar_phases), n_trials=n_trials, order=order, seed=seed)]
     x = torch.cat([phase[0] for phase in phases], dim=0)
     c = torch.cat([phase[1] for phase in phases], dim=0)
-    return x.repeat((n_trials, 1)), c.repeat((n_trials, 1))
+    return x, c
 
 
 INIT_KEYS = ("w_ff_init", "w_fb_init", "w_lat_init", "w_pv_lat_init", "W_pv_init")
@@ -565,6 +584,8 @@ def _run_panel_config(
     n_steps_per_phase: int,
     test_trials: int,
     training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
 ) -> tuple[str, pd.DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
     """Lightweight naive->train->expert run for ONE config, including the same
     no-feedback and no-LAT variants used by the grouped minimal2 panels."""
@@ -573,7 +594,12 @@ def _run_panel_config(
         _build_model_scatter_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials),
         n_steps_per_phase=n_steps_per_phase,
     )
-    training = _build_model_scatter_training_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=training_trials)
+    training = _build_model_scatter_training_stimuli(
+        n_steps_per_phase=n_steps_per_phase,
+        n_trials=training_trials,
+        order=training_stimulus_order,
+        seed=seed,
+    )
 
     frames = _run_test_phase_variants(model, stimuli, phase_label="naive")
     run_experimental_phase(model, training[0], training[1], "full_familiar_training", update=True)
@@ -593,6 +619,8 @@ def _save_panels(
     n_steps_per_phase: int,
     test_trials: int,
     training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
     image_format: str,
     n_jobs: int,
 ) -> None:
@@ -608,6 +636,8 @@ def _save_panels(
             n_steps_per_phase=n_steps_per_phase,
             test_trials=test_trials,
             training_trials=training_trials,
+            training_stimulus_order=training_stimulus_order,
+            seed=seed,
         )
         for t in order
     )
@@ -635,6 +665,8 @@ def _save_center_panels(
     n_steps_per_phase: int,
     test_trials: int,
     training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
     image_format: str = "png",
     n_jobs: int = -1,
 ) -> None:
@@ -645,18 +677,11 @@ def _save_center_panels(
         n_steps_per_phase=n_steps_per_phase,
         test_trials=test_trials,
         training_trials=training_trials,
+        training_stimulus_order=training_stimulus_order,
+        seed=seed,
         image_format=image_format,
         n_jobs=n_jobs,
     )
-    # _save_panels(
-    #     {t: _canonical_config(t) for t in transition_order},
-    #     out_dir=output_dir / "canonical_panels",
-    #     n_steps_per_phase=n_steps_per_phase,
-    #     test_trials=test_trials,
-    #     training_trials=training_trials,
-    #     image_format=image_format,
-    #     n_jobs=n_jobs,
-    # )
 
 
 def _robust_response_limits(summaries: list[pd.DataFrame], *, hi_percentile: float, pad: float = 0.4) -> list[float]:
@@ -794,6 +819,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         raise ValueError("test_trials and training_trials must be >= 1.")
     if not 0.0 < args.response_tail_fraction <= 1.0:
         raise ValueError("response_tail_fraction must be in (0, 1].")
+    if args.training_stimulus_order not in {"fixed", "randomized"}:
+        raise ValueError("training_stimulus_order must be 'fixed' or 'randomized'.")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     transition_order = list(minimal_configs3)
@@ -801,7 +828,12 @@ def run_model_scatter(args: argparse.Namespace) -> None:
 
     torch.manual_seed(args.seed)
     test_stimuli = _build_model_scatter_test_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.test_trials)
-    training_stimuli = _build_model_scatter_training_stimuli(n_steps_per_phase=args.n_steps_per_phase, n_trials=args.training_trials)
+    training_stimuli = _build_model_scatter_training_stimuli(
+        n_steps_per_phase=args.n_steps_per_phase,
+        n_trials=args.training_trials,
+        order=args.training_stimulus_order,
+        seed=args.seed,
+    )
     response_frames = Parallel(n_jobs=args.n_jobs, verbose=10 if args.n_jobs != 1 else 0)(
         delayed(_run_sample)(
             sample,
@@ -835,7 +867,15 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "seed": args.seed,
         "n_steps_per_phase": args.n_steps_per_phase,
         "test_trials": args.test_trials,
+        "test_condition_order": list(STIMULUS_SPECS),
         "training_trials": args.training_trials,
+        "training_stimulus_order": args.training_stimulus_order,
+        "training_trial_order": _training_trial_order(
+            [name for name in STIMULUS_SPECS if name.startswith("familiar")],
+            n_trials=args.training_trials,
+            order=args.training_stimulus_order,
+            seed=args.seed,
+        ),
         "fixed_scalars": list(FIXED_SCALARS),
         "sampled_init_keys": ["w_ff_init", "w_fb_init"],
         "fixed_template_init_keys": ["w_lat_init", "w_pv_lat_init", "W_pv_init"],
@@ -866,6 +906,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
             n_steps_per_phase=args.n_steps_per_phase,
             test_trials=args.test_trials,
             training_trials=args.training_trials,
+            training_stimulus_order=args.training_stimulus_order,
+            seed=args.seed,
             image_format=args.image_format,
             n_jobs=args.n_jobs,
         )
