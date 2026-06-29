@@ -11,7 +11,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=transition_templates.DEFAULT_OUTPUT_DIR)
     parser.add_argument("--n-samples", type=int, default=250)
     parser.add_argument("--n-steps-per-phase", type=int, default=300)
-    parser.add_argument("--test-trials", type=int, default=4)
+    parser.add_argument("--test-trials", type=int, default=5)
     parser.add_argument("--training-trials", type=int, default=7)
     parser.add_argument("--training-stimulus-order", choices=("randomized", "fixed"), default="randomized")
     parser.add_argument("--seed", type=int, default=7151)

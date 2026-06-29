@@ -17,16 +17,18 @@ hand-tuned, partly ad-hoc transition templates with a small set keyed entirely b
     asymmetry **emerges** from the protocol (only the familiar images are shown
     during the plastic phase, so their FF adapts while the novel image's does not)
     rather than being hand-assigned to separate familiar/novel templates.
-  * ``broad`` (width 3): strong FF plasticity + a low apical drive threshold, so
+  * ``broad`` (width 2): strong FF plasticity + a low apical drive threshold, so
     familiar FF adapts away (``-NO``) and the strengthened, generalized feedback
-    drives the occluded response (``+O``).
+    drives the occluded response (``+O``). Each sampled broad cell is tuned to a
+    random pair of the three images rather than all inputs.
 
 Two principled choices distinguish this from the legacy templates: feedback is
 always **generalized over the context channels a cell receives** (no hand-painted
 per-channel weight asymmetry), and narrow/broad tuning is the *only* thing that
 sets the FF-plasticity scale and the feedback drive-vs-gain regime. Surround
 weights (``w_lat``, ``W_pv``, ``w_pv_lat``) are coupled per template; only
-``w_lat`` is plastic.
+``w_lat`` is plastic. PV feedforward tuning is sampled independently of PyC
+tuning; every sampled PV is tuned to two images and less tuned to the third.
 
 The width-class scalars and the mixture weights at the top of this file are the
 tuning levers; everything downstream reuses ``run_model_scatter.py``.
@@ -150,8 +152,8 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
 
 # Shared feedforward initial-weight levels. These are independent of tuning width:
 # the tuned value is assigned to preferred stimulus channels and the silent value
-# to non-preferred channels. Broad cells simply tune all channels, while narrow
-# cells tune the drawn preferred channel only.
+# to non-preferred channels. Broad PyCs tune two randomly sampled image channels,
+# while narrow PyCs tune one channel.
 FF_STRENGTHS: dict[str, dict[str, Any]] = {
     "silent": dict(tuned=0.010, silent=0.010, **UNIFORM_FF_NOISE),
     "diag_weak": dict(tuned=0.042, silent=0.004, **UNIFORM_FF_NOISE),
@@ -176,11 +178,15 @@ FB_LEVELS: dict[str, dict[str, Any]] = {
     "very_strong": dict(receives=True, center=0.300, **UNIFORM_FB_NOISE),
 }
 
-# Which feedforward channels each cell prefers (drawn per cell):
-#   "all"       -> tuned to every image (broad)
+# Which PyC feedforward channels each cell prefers (drawn per cell):
+#   "all"       -> two random preferred images for broad cells
 #   "permuted1" -> one random preferred image (narrow; emergent fam/novel asymmetry)
 #   "novel"     -> the novel image, index 2 (the narrow_novel special case)
 NOVEL_INDEX = 2
+BROAD_TUNING_WIDTH = 2
+PV_TUNING_WIDTH = 2
+CANONICAL_BROAD_TUNED_INDICES = (0, NOVEL_INDEX)
+CANONICAL_PV_TUNED_INDICES = (0, 1)
 
 # Which context channels each feedback-receiving cell receives. The FB weights are
 # still drawn from the shared generalized FB levels; this only masks whether a
@@ -348,24 +354,24 @@ TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 SURROUND_SETTINGS: dict[str, dict[str, float]] = {
-    "silent_broad_FFonly": dict(lat=0.04, pvlat=0.08, pv_tuned=0.18, pv_silent=0.18),
-    "silent_broad_FB_strong": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
-    "silent_broad_FB_weak": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
-    "silent_broad_FB_mid": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
-    "silent_broad_FB_partial2": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.60),
-    "mid_broad_FFonly": dict(lat=0.050, pvlat=0.1, pv_tuned=0.28, pv_silent=0.28),
-    "mid_broad_FB_weak": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
-    "mid_broad_FB_partial2": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
-    "strong_broad_FB_strong": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
-    "very_weak_broad_FB_partial2": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
-    "weak_broad_FB_mixed_bridge": dict(lat=0.20, pvlat=0.05, pv_tuned=0.62, pv_silent=0.62),
-    "very_weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
-    "weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
-    "narrow_novel": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
+    "silent_broad_FFonly": dict(lat=0.04, pvlat=0.08, pv_tuned=0.18, pv_silent=0.04),
+    "silent_broad_FB_strong": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.12),
+    "silent_broad_FB_weak": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.12),
+    "silent_broad_FB_mid": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.12),
+    "silent_broad_FB_partial2": dict(lat=0.85, pvlat=0.05, pv_tuned=0.60, pv_silent=0.12),
+    "mid_broad_FFonly": dict(lat=0.050, pvlat=0.1, pv_tuned=0.28, pv_silent=0.06),
+    "mid_broad_FB_weak": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.11),
+    "mid_broad_FB_partial2": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.11),
+    "strong_broad_FB_strong": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.11),
+    "very_weak_broad_FB_partial2": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.11),
+    "weak_broad_FB_mixed_bridge": dict(lat=0.20, pvlat=0.05, pv_tuned=0.62, pv_silent=0.12),
+    "very_weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.010),
+    "weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.010),
+    "narrow_novel": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.010),
     "novel_weak_FB_diagonal": dict(lat=0.24, pvlat=0.025, pv_tuned=0.20, pv_silent=0.06),
     "novel_mid_FB_diagonal": dict(lat=0.24, pvlat=0.025, pv_tuned=0.20, pv_silent=0.06),
-    "weak_broad_FFonly": dict(lat=0.035, pvlat=0.10, pv_tuned=0.24, pv_silent=0.24),
-    "strong_broad_FFonly": dict(lat=0.050, pvlat=0.1, pv_tuned=0.28, pv_silent=0.28),
+    "weak_broad_FFonly": dict(lat=0.035, pvlat=0.10, pv_tuned=0.24, pv_silent=0.05),
+    "strong_broad_FFonly": dict(lat=0.050, pvlat=0.1, pv_tuned=0.28, pv_silent=0.06),
 }
 
 
@@ -379,7 +385,15 @@ _SCALAR_OVERRIDES = {
 }
 
 
-def _draw_tuned_indices(tuning: str, rng: np.random.Generator) -> tuple[int, ...]:
+def _random_indices(width: int, rng: np.random.Generator) -> tuple[int, ...]:
+    if width <= 0 or width > N_FEATURES:
+        raise ValueError(f"width must be in [1, {N_FEATURES}], got {width}.")
+    return tuple(sorted(int(idx) for idx in rng.choice(N_FEATURES, size=width, replace=False)))
+
+
+def _draw_tuned_indices(tuning: str, width: str, rng: np.random.Generator) -> tuple[int, ...]:
+    if width == "broad":
+        return _random_indices(BROAD_TUNING_WIDTH, rng)
     if tuning == "all":
         return tuple(range(N_FEATURES))
     if tuning == "novel":
@@ -387,6 +401,10 @@ def _draw_tuned_indices(tuning: str, rng: np.random.Generator) -> tuple[int, ...
     if tuning == "permuted1":
         return (int(rng.integers(0, N_FEATURES)),)
     raise ValueError(f"unknown tuning mode: {tuning}")
+
+
+def _draw_pv_tuned_indices(rng: np.random.Generator) -> tuple[int, ...]:
+    return _random_indices(PV_TUNING_WIDTH, rng)
 
 
 def _draw_context_indices(mode: str, rng: np.random.Generator) -> tuple[int, ...]:
@@ -447,6 +465,7 @@ def _build_transition_specs() -> dict[str, dict[str, Any]]:
 def _build_config(
     name: str,
     tuned_indices: tuple[int, ...],
+    pv_tuned_indices: tuple[int, ...],
     context_indices: tuple[int, ...],
 ) -> dict[str, Any]:
     """Assemble the (noise-free) config for one cell of a template, given the drawn
@@ -457,7 +476,7 @@ def _build_config(
     fb = FB_LEVELS[template["fb"]]
     surround = SURROUND_SETTINGS[name]
 
-    pv_vec = _vector(tuned_indices, surround["pv_tuned"], surround["pv_silent"])
+    pv_vec = _vector(pv_tuned_indices, surround["pv_tuned"], surround["pv_silent"])
     config: dict[str, Any] = {
         "w_ff_init": base.weight_init(
             _vector(tuned_indices, ff["tuned"], ff["silent"]),
@@ -489,7 +508,14 @@ def _build_config(
         "apical_gain_strength": template.get("gain_clip", width_class["gain_clip"]),
         "apical_drive_threshold": template.get("drive_clip", width_class["drive_clip"]),
     }
-    return {"init": config, "fix": fixed, "clip": clip, "width": len(tuned_indices), "context_width": len(context_indices)}
+    return {
+        "init": config,
+        "fix": fixed,
+        "clip": clip,
+        "width": len(tuned_indices),
+        "pv_width": len(pv_tuned_indices),
+        "context_width": len(context_indices),
+    }
 
 
 def _perturb_config_factory():
@@ -508,9 +534,10 @@ def _perturb_config_factory():
         scalar_noise_multiplier: float,
     ) -> dict[str, Any]:
         template = TEMPLATES[transition]
-        tuned_indices = _draw_tuned_indices(template["tuning"], rng)
+        tuned_indices = _draw_tuned_indices(template["tuning"], template["width"], rng)
+        pv_tuned_indices = _draw_pv_tuned_indices(rng)
         context_indices = _draw_context_indices(template.get("context", "all"), rng)
-        spec = _build_config(transition, tuned_indices, context_indices)
+        spec = _build_config(transition, tuned_indices, pv_tuned_indices, context_indices)
         config = copy.deepcopy(base_config)
         for key, init_spec in spec["init"].items():
             if key in {"w_ff_init", "w_fb_init"}:
@@ -537,6 +564,7 @@ def _perturb_config_factory():
             _ff_strength=template["ff"],
             _fb_level=template["fb"],
             _tuned_indices=list(tuned_indices),
+            _pv_tuned_indices=list(pv_tuned_indices),
             _context_indices=list(context_indices),
         )
         return config
@@ -556,14 +584,25 @@ def _canonical_tuned_indices(tuning: str) -> tuple[int, ...]:
     raise ValueError(f"unknown tuning mode: {tuning}")
 
 
+def _canonical_pyc_tuned_indices(template: dict[str, Any]) -> tuple[int, ...]:
+    if template["width"] == "broad":
+        return CANONICAL_BROAD_TUNED_INDICES
+    return _canonical_tuned_indices(template["tuning"])
+
+
+def _canonical_pv_tuned_indices() -> tuple[int, ...]:
+    return CANONICAL_PV_TUNED_INDICES
+
+
 def _center_config(name: str) -> dict[str, Any]:
     """Noise-free config at the template centers (no weight/scalar jitter), for the
     center-panel trace plots. Replaces ``base._center_config`` so each pruned
     template renders correctly."""
     template = TEMPLATES[name]
-    tuned_indices = _canonical_tuned_indices(template["tuning"])
+    tuned_indices = _canonical_pyc_tuned_indices(template)
+    pv_tuned_indices = _canonical_pv_tuned_indices()
     context_indices = _canonical_context_indices(template.get("context", "all"))
-    spec = _build_config(name, tuned_indices, context_indices)
+    spec = _build_config(name, tuned_indices, pv_tuned_indices, context_indices)
     config = copy.deepcopy(base.minimal_configs3[name])
     for key, init_spec in spec["init"].items():
         base._set_init(config, key, base._center_init_values(init_spec))
@@ -580,6 +619,7 @@ def _center_config(name: str) -> dict[str, Any]:
         _ff_strength=template["ff"],
         _fb_level=template["fb"],
         _tuned_indices=list(tuned_indices),
+        _pv_tuned_indices=list(pv_tuned_indices),
         _context_indices=list(context_indices),
     )
     return config
@@ -589,12 +629,15 @@ def _flatten_config_factory(original_flatten):
     def _flatten_config(config: dict[str, Any]) -> dict[str, Any]:
         flat = original_flatten(config)
         flat["ff_tuning_width"] = config.get("_ff_tuning_width")
+        flat["pv_tuning_width"] = len(config.get("_pv_tuned_indices", []))
         flat["ff_strength"] = config.get("_ff_strength")
         flat["fb_level"] = config.get("_fb_level")
         tuned = config.get("_tuned_indices", [])
+        pv_tuned = config.get("_pv_tuned_indices", [])
         context = config.get("_context_indices", [])
         for idx in range(N_FEATURES):
             flat[f"tuned_index_{idx}"] = int(idx in tuned)
+            flat[f"pv_tuned_index_{idx}"] = int(idx in pv_tuned)
             flat[f"receives_context_{idx}"] = int(idx in context)
         return flat
 
@@ -649,6 +692,10 @@ def write_metadata(args) -> None:
         "ff_strengths": FF_STRENGTHS,
         "fb_levels": FB_LEVELS,
         "context_modes": CONTEXT_MODES,
+        "broad_tuning_width": BROAD_TUNING_WIDTH,
+        "pv_tuning_width": PV_TUNING_WIDTH,
+        "canonical_broad_tuned_indices": list(CANONICAL_BROAD_TUNED_INDICES),
+        "canonical_pv_tuned_indices": list(CANONICAL_PV_TUNED_INDICES),
         "surround_settings": SURROUND_SETTINGS,
         "templates": {name: {k: v for k, v in t.items()} for name, t in TEMPLATES.items()},
     }

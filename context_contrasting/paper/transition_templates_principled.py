@@ -26,7 +26,7 @@ N_FEATURES = 3
 NOVEL_INDEX = 2
 
 LEARNING_RATE_REFERENCE_STEPS = 200
-SHARED_LEARNING_RATES = {"lr_ff": 0.0135, "lr_fb": 0.00220, "lr_lat": 0.0220, "lr_pv": 0.0}
+SHARED_LEARNING_RATES = {"lr_ff": 0.0135, "lr_fb": 0.0018, "lr_lat": 0.0100, "lr_pv": 0.0}
 SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
 SOMA_ACTIVATION_THRESHOLD = 0.08
 APICAL_DRIVE_SUBTRACTIVE = True
@@ -35,10 +35,10 @@ DIVISIVE_GAIN = 10.0
 BASELINE_STD_SCALE = 0.27
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.20, 0.1, 50.0, 0.0),
-    "apical_drive_threshold": ("add", 0.12, 0.0, 3.0, 0.05),
+    "apical_drive_threshold": ("add", 0.07, 0.0, 3.0, 0.05),
 }
-UNIFORM_FF_NOISE = dict(rel=0.40, floor=0.016, lo=0.0, hi=0.16)
-UNIFORM_FB_NOISE = dict(rel=0.50, floor=0.016, lo=0.0, hi=0.45)
+UNIFORM_FF_NOISE = dict(rel=0.40, floor=0.016, lo=0.0, hi=0.145)
+UNIFORM_FB_NOISE = dict(rel=0.50, floor=0.016, lo=0.0, hi=0.36)
 UNIFORM_GAIN_CLIP = (1.5, 8.0)
 NARROW_GAIN_CLIP = (1.5, 6.8)
 UNIFORM_DRIVE_CLIP = (0.0, 1.5)
@@ -125,34 +125,35 @@ CONTEXT_MODES = ("none", "all", "matched", "random2", "familiar")
 
 TEMPLATES: dict[str, dict[str, Any]] = {
     # Silent / weak broad cells preserve the familiar +O and unresponsive clouds.
-    "silent_broad_FFonly": dict(width="broad", ff="silent", fb="none", tuning="all", context="none", weight=0.015),
-    "silent_broad_FB_weak": dict(width="broad", ff="silent", fb="weak", tuning="all", context="all", weight=0.005, drive=0.035, gain=3.0, baseline=0.18),
-    "silent_broad_FB_mid": dict(width="broad", ff="silent", fb="mid", tuning="all", context="all", weight=0.005, drive=0.035, gain=3.0, baseline=0.18),
-    "silent_broad_FB_partial2": dict(width="broad", ff="silent", fb="mid", tuning="all", context="random2", weight=0.025, drive=0.035, gain=3.0, baseline=0.18),
-    "silent_broad_FB_strong": dict(width="broad", ff="silent", fb="very_strong", tuning="all", context="all", weight=0.040, drive=0.18, gain=2.2, baseline=0.26),
+    "silent_broad_FFonly": dict(width="broad", ff="silent", fb="none", tuning="all", context="none", weight=0.010),
+    "silent_broad_FB_weak": dict(width="broad", ff="silent", fb="weak", tuning="all", context="all", weight=0.002, drive=0.120, gain=2.6, baseline=0.17),
+    "silent_broad_FB_mid": dict(width="broad", ff="silent", fb="mid", tuning="all", context="all", weight=0.002, drive=0.120, gain=2.6, baseline=0.17),
+    "silent_broad_FB_partial2": dict(width="broad", ff="silent", fb="mid", tuning="all", context="random2", weight=0.006, drive=0.120, gain=2.6, baseline=0.17),
+    "silent_broad_FB_strong": dict(width="broad", ff="silent", fb="very_strong", tuning="all", context="all", weight=0.010, drive=0.260, gain=2.0, baseline=0.23),
 
     # Broad FF-only cells adapt familiar FF and learn LAT; novel FF remains intact
     # but can be reduced by learned LAT.
-    "weak_broad_FFonly": dict(width="broad", ff="weak", fb="none", tuning="all", context="none", weight=0.130, baseline=0.22),
-    "mid_broad_FFonly": dict(width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.100, baseline=0.22),
-    "strong_broad_FFonly": dict(width="broad", ff="strong", fb="none", tuning="all", context="none", weight=0.055, baseline=0.22),
+    "weak_broad_FFonly": dict(width="broad", ff="weak", fb="none", tuning="all", context="none", weight=0.170, baseline=0.22),
+    "mid_broad_FFonly": dict(width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.135, baseline=0.22),
+    "strong_broad_FFonly": dict(width="broad", ff="strong", fb="none", tuning="all", context="none", weight=0.080, baseline=0.22),
 
-    # FF-bearing broad FB cells are the main novel +NO / +NO+O source because
-    # familiar training strengthens broad FB while novel FF is not adapted.
-    "weak_broad_FB_broad": dict(width="broad", ff="weak", fb="mid", tuning="all", context="all", weight=0.180, drive=0.430, gain=8.0, baseline=0.20),
-    "mid_broad_FB_broad": dict(width="broad", ff="weak", fb="mid", tuning="all", context="all", weight=0.080, drive=0.430, gain=8.0, baseline=0.20),
-    "strong_broad_FB_broad": dict(width="broad", ff="weak", fb="strong", tuning="all", context="all", weight=0.040, drive=0.410, gain=7.5, baseline=0.20),
-    "weak_broad_FB_partial2": dict(width="broad", ff="weak", fb="mid", tuning="all", context="random2", weight=0.100, drive=0.400, gain=8.0, baseline=0.18),
-    "weak_broad_FB_familiar": dict(width="broad", ff="weak", fb="mid", tuning="all", context="familiar", weight=0.030, drive=0.430, gain=7.5, baseline=0.18),
+    # FF-bearing broad FB cells carry the familiar NO->O diagonal. The same cells
+    # move rightward for novel because novel FF is unadapted while broad FB gain
+    # has strengthened through familiar training.
+    "weak_broad_FB_broad": dict(width="broad", ff="weak", fb="mid", tuning="all", context="all", weight=0.085, drive=0.260, gain=7.5, baseline=0.20, ff_plasticity_scale=14.0),
+    "mid_broad_FB_broad": dict(width="broad", ff="weak", fb="mid", tuning="all", context="all", weight=0.035, drive=0.260, gain=7.5, baseline=0.20, ff_plasticity_scale=14.0),
+    "strong_broad_FB_broad": dict(width="broad", ff="weak", fb="strong", tuning="all", context="all", weight=0.020, drive=0.280, gain=7.5, baseline=0.20, ff_plasticity_scale=14.0),
+    "weak_broad_FB_partial2": dict(width="broad", ff="diag_weak", fb="very_strong", tuning="all", context="random2", weight=0.120, drive=0.250, gain=4.0, baseline=0.18),
+    "weak_broad_FB_familiar": dict(width="broad", ff="weak", fb="mid", tuning="all", context="familiar", weight=0.025, drive=0.260, gain=7.5, baseline=0.18, ff_plasticity_scale=14.0),
 
     # Narrow classes draw preferred image at random, so fam1/fam2/novel proportions
     # are matched by construction. Most FB-receiving narrow cells receive broad FB;
     # a smaller matched class exists and only trains if tuned to a familiar image.
-    "narrow_FFonly": dict(width="narrow", ff="very_weak", fb="none", tuning="permuted1", context="none", weight=0.080, gain=6.4),
-    "narrow_FB_broad_very_weak": dict(width="narrow", ff="diag_weak", fb="weak", tuning="permuted1", context="all", weight=0.250, gain=6.4),
-    "narrow_FB_broad_weak": dict(width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.180, gain=6.4),
-    "narrow_FB_matched": dict(width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="matched", weight=0.060, gain=6.4),
-    "narrow_FB_partial2": dict(width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="random2", weight=0.110, gain=6.4),
+    "narrow_FFonly": dict(width="narrow", ff="very_weak", fb="none", tuning="permuted1", context="none", weight=0.045, gain=6.4),
+    "narrow_FB_broad_very_weak": dict(width="narrow", ff="diag_weak", fb="weak", tuning="permuted1", context="all", weight=0.200, gain=6.4),
+    "narrow_FB_broad_weak": dict(width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.260, gain=6.4),
+    "narrow_FB_matched": dict(width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="matched", weight=0.055, gain=6.4),
+    "narrow_FB_partial2": dict(width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="random2", weight=0.080, gain=6.4),
 }
 
 SURROUND_SETTINGS: dict[str, dict[str, float]] = {
@@ -164,11 +165,11 @@ SURROUND_SETTINGS: dict[str, dict[str, float]] = {
     "weak_broad_FFonly": dict(lat=0.035, pvlat=0.10, pv_tuned=0.24, pv_silent=0.24),
     "mid_broad_FFonly": dict(lat=0.050, pvlat=0.10, pv_tuned=0.28, pv_silent=0.28),
     "strong_broad_FFonly": dict(lat=0.050, pvlat=0.10, pv_tuned=0.28, pv_silent=0.28),
-    "weak_broad_FB_broad": dict(lat=0.24, pvlat=0.05, pv_tuned=0.52, pv_silent=0.52),
-    "mid_broad_FB_broad": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
-    "strong_broad_FB_broad": dict(lat=0.24, pvlat=0.05, pv_tuned=0.55, pv_silent=0.55),
-    "weak_broad_FB_partial2": dict(lat=0.24, pvlat=0.05, pv_tuned=0.52, pv_silent=0.52),
-    "weak_broad_FB_familiar": dict(lat=0.24, pvlat=0.05, pv_tuned=0.52, pv_silent=0.52),
+    "weak_broad_FB_broad": dict(lat=0.06, pvlat=0.05, pv_tuned=0.35, pv_silent=0.35),
+    "mid_broad_FB_broad": dict(lat=0.06, pvlat=0.05, pv_tuned=0.35, pv_silent=0.35),
+    "strong_broad_FB_broad": dict(lat=0.06, pvlat=0.05, pv_tuned=0.35, pv_silent=0.35),
+    "weak_broad_FB_partial2": dict(lat=0.20, pvlat=0.05, pv_tuned=0.52, pv_silent=0.52),
+    "weak_broad_FB_familiar": dict(lat=0.06, pvlat=0.05, pv_tuned=0.35, pv_silent=0.35),
     "narrow_FFonly": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
     "narrow_FB_broad_very_weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
     "narrow_FB_broad_weak": dict(lat=0.03, pvlat=0.03, pv_tuned=0.045, pv_silent=0.03),
@@ -314,9 +315,8 @@ def _canonical_tuned_indices(tuning: str) -> tuple[int, ...]:
     raise ValueError(f"unknown tuning mode: {tuning}")
 
 
-def _center_config(name: str) -> dict[str, Any]:
+def _center_config_for_indices(name: str, tuned_indices: tuple[int, ...]) -> dict[str, Any]:
     template = TEMPLATES[name]
-    tuned_indices = _canonical_tuned_indices(template["tuning"])
     context_indices = _canonical_context_indices(template.get("context", "all"), tuned_indices)
     spec = _build_config(name, tuned_indices, context_indices)
     config = copy.deepcopy(base.minimal_configs3[name])
@@ -329,6 +329,46 @@ def _center_config(name: str) -> dict[str, Any]:
     base._apply_shared_learning_rates(config)
     config.update(_canonical_transition=name, _sample_idx=0, _sample_global_idx=0, _ff_tuning_width=int(spec["width"]), _ff_strength=template["ff"], _fb_level=template["fb"], _fb_context_mode=template.get("context", "all"), _tuned_indices=list(tuned_indices), _context_indices=list(context_indices))
     return config
+
+
+def _center_config(name: str) -> dict[str, Any]:
+    template = TEMPLATES[name]
+    return _center_config_for_indices(name, _canonical_tuned_indices(template["tuning"]))
+
+
+def _center_panel_configs(transition_order: list[str]) -> dict[str, dict[str, Any]]:
+    configs = {name: _center_config(name) for name in transition_order}
+    for name in transition_order:
+        template = TEMPLATES[name]
+        if template["tuning"] != "permuted1":
+            continue
+        configs[f"{name}__novel_tuned"] = _center_config_for_indices(name, (NOVEL_INDEX,))
+    return configs
+
+
+def _save_center_panels(
+    transition_order: list[str],
+    *,
+    output_dir: Path,
+    n_steps_per_phase: int,
+    test_trials: int,
+    training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
+    image_format: str = "png",
+    n_jobs: int = -1,
+) -> None:
+    base._save_panels(
+        _center_panel_configs(transition_order),
+        out_dir=output_dir / "center_panels",
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
+        training_trials=training_trials,
+        training_stimulus_order=training_stimulus_order,
+        seed=seed,
+        image_format=image_format,
+        n_jobs=n_jobs,
+    )
 
 
 def _flatten_config_factory(original_flatten):
@@ -368,6 +408,7 @@ def configure_model_scatter(n_steps_per_phase: int = LEARNING_RATE_REFERENCE_STE
     base._perturb_config = _perturb_config_factory()
     base._flatten_config = _flatten_config_factory(base._flatten_config)
     base._center_config = _center_config
+    base._save_center_panels = _save_center_panels
 
 
 def write_metadata(args) -> None:
