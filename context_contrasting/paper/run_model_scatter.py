@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
         "--fam-examples",
         type=int,
         nargs="*",
-        default=[],
+        default=[16, 3, 4, 11, 5, 8],
         metavar="TEMPLATE_NUM",
         help="Template numbers to highlight in the aggregate familiar scatter and example trace panel.",
     )
@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
         "--nov-examples",
         type=int,
         nargs="*",
-        default=[],
+        default=[13, 14, 5, 3],
         metavar="TEMPLATE_NUM",
         help="Template numbers to highlight in the aggregate novel scatter and example trace panel.",
     )

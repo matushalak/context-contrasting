@@ -1041,14 +1041,63 @@ def _export_sector_response_panels(
     dpi: int = 300,
     pad_inches: float = 0.035,
 ) -> list[Path]:
+    def axis_points(ax: plt.Axes) -> np.ndarray:
+        offsets = []
+        for collection in ax.collections:
+            if not hasattr(collection, "get_offsets"):
+                continue
+            arr = np.asarray(collection.get_offsets(), dtype=float)
+            if arr.ndim == 2 and arr.shape[1] >= 2:
+                offsets.append(arr[:, :2])
+        if not offsets:
+            return np.empty((0, 2), dtype=float)
+        points = np.concatenate(offsets, axis=0)
+        return points[np.isfinite(points).all(axis=1)]
+
+    def apply_shared_square_limits(axes: list[plt.Axes], margin: float = 0.5) -> None:
+        points = [axis_points(ax) for ax in axes]
+        points = [arr for arr in points if arr.size]
+        if not points:
+            return
+        combined = np.concatenate(points, axis=0)
+        low = min(
+            *(ax.get_xlim()[0] for ax in axes),
+            *(ax.get_ylim()[0] for ax in axes),
+            float(combined.min()) - margin,
+        )
+        high = max(
+            *(ax.get_xlim()[1] for ax in axes),
+            *(ax.get_ylim()[1] for ax in axes),
+            float(combined.max()) + margin,
+        )
+        for ax in axes:
+            ax.set_xlim(low, high)
+            ax.set_ylim(low, high)
+            ax.set_aspect("equal", adjustable="box")
+
+    def square_bbox(bbox: Bbox) -> Bbox:
+        width = bbox.x1 - bbox.x0
+        height = bbox.y1 - bbox.y0
+        side = max(width, height)
+        cx = 0.5 * (bbox.x0 + bbox.x1)
+        cy = 0.5 * (bbox.y0 + bbox.y1)
+        return Bbox.from_extents(cx - side / 2.0, cy - side / 2.0, cx + side / 2.0, cy + side / 2.0)
+
     output_dir.mkdir(parents=True, exist_ok=True)
+    formats = tuple(dict.fromkeys((image_format, "eps")))
     saved: list[Path] = []
     # Middle row, columns 2 and 3: Naive and Expert scatterplots colored by transition sector.
+    axes_to_export = [fig.axes[idx] for idx in (4, 5)]
+    apply_shared_square_limits(axes_to_export)
     for suffix, ax_idx in (("naive_sector_scatter", 4), ("expert_sector_scatter", 5)):
         ax = fig.axes[ax_idx]
         ax.set_xlabel("")
         ax.set_ylabel("")
         ax.set_title("")
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+        ax.set_xticks(np.arange(np.ceil(x0), np.floor(x1) + 1.0, 1.0))
+        ax.set_yticks(np.arange(np.ceil(y0), np.floor(y1) + 1.0, 1.0))
         ax.tick_params(axis="both", labelsize=24, width=1.4, length=5)
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
@@ -1062,9 +1111,11 @@ def _export_sector_response_panels(
             bbox.x1 + pad_inches,
             bbox.y1 + pad_inches,
         )
-        path = output_dir / f"{basename}_{suffix}.{image_format}"
-        fig.savefig(path, bbox_inches=bbox, dpi=dpi)
-        saved.append(path)
+        bbox = square_bbox(bbox)
+        for fmt in formats:
+            path = output_dir / f"{basename}_{suffix}.{fmt}"
+            fig.savefig(path, bbox_inches=bbox, dpi=dpi)
+            saved.append(path)
     return saved
 
 
