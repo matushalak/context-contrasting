@@ -73,21 +73,21 @@ TRANSITION_RESPONSE_COLUMN_SPECS = (
     },
     {
         "key": "expert_no_fb",
-        "label": "Expert no FB",
+        "label": TRACE_LABELS["no_context"],
         "phase": "expert",
         "no_trace": "no_context",
         "o_trace": "occlusion_no_context",
     },
     {
         "key": "expert_no_lat",
-        "label": "Expert no LAT",
+        "label": TRACE_LABELS["nolat"],
         "phase": "expert",
         "no_trace": "nolat",
         "o_trace": "occlusion_nolat",
     },
     {
         "key": "expert_no_fb_no_lat",
-        "label": "Expert no FB/no LAT",
+        "label": TRACE_LABELS["no_context_nolat"],
         "phase": "expert",
         "no_trace": "no_context_nolat",
         "o_trace": "occlusion_no_context_nolat",
@@ -230,6 +230,33 @@ def _display_condition_label(condition: str) -> str:
     if text in IMAGE_LABELS:
         return IMAGE_LABELS[text]
     return text.replace("_", " ").title()
+
+
+def _add_row_scale_bar(
+    axes_row: np.ndarray,
+    *,
+    length: float = 1.0,
+    color: str = "0.15",
+    linewidth: float = 2.2,
+) -> None:
+    visible_axes = [ax for ax in axes_row if ax.get_visible()]
+    if not visible_axes:
+        return
+    ax = visible_axes[0]
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    x = x0 + 0.06 * (x1 - x0)
+    y_start = y0 + 0.18 * (y1 - y0)
+    y_end = min(y_start + length, y1 - 0.08 * (y1 - y0))
+    if y_end <= y_start:
+        return
+    ax.plot([x, x], [y_start, y_end], color=color, lw=linewidth, solid_capstyle="butt", zorder=20)
+
+
+def _matrix_header_fontsizes(n_cols: int) -> tuple[int, int]:
+    condition_size = int(np.clip(220.0 / max(n_cols, 1), 18, 32))
+    group_size = int(np.clip(240.0 / max(n_cols, 1), 20, 32))
+    return condition_size, group_size
 
 
 def _add_plot_condition_labels(df: DataFrame) -> DataFrame:
@@ -1080,7 +1107,8 @@ def visualize_transition_response_matrix(
     ]
     n_rows = len(ordered_transitions)
     n_cols = len(column_condition_specs)
-    fig_width = max(12.0, 2.8 * n_cols + 3.2)
+    condition_title_size, column_group_size = _matrix_header_fontsizes(n_cols)
+    fig_width = max(12.0, 3.4 * n_cols + 3.2)
     fig_height = max(6.0, 2.15 * n_rows + 1.9)
     fig, axes = plt.subplots(
         n_rows,
@@ -1091,7 +1119,7 @@ def visualize_transition_response_matrix(
         sharey=False,
         constrained_layout=False,
     )
-    fig.subplots_adjust(left=0.19, right=0.99, top=0.9, bottom=0.055, wspace=0.12, hspace=0.2)
+    fig.subplots_adjust(left=0.19, right=0.99, top=0.8, bottom=0.055, wspace=0.12, hspace=0.2)
 
     legend_handles = [
         Line2D([0], [0], color="red", lw=4.0, label="O"),
@@ -1100,7 +1128,7 @@ def visualize_transition_response_matrix(
     fig.legend(
         handles=legend_handles,
         loc="upper right",
-        bbox_to_anchor=(0.99, 0.988),
+        bbox_to_anchor=(0.99, 1.035),
         frameon=False,
         ncol=2,
         handlelength=2.0,
@@ -1109,7 +1137,7 @@ def visualize_transition_response_matrix(
     )
 
     for col_idx, (_, condition) in enumerate(column_condition_specs):
-        axes[0, col_idx].set_title(_display_condition_label(condition), fontsize=20, pad=8)
+        axes[0, col_idx].set_title(_display_condition_label(condition), fontsize=condition_title_size, pad=10)
 
     for group_idx, column_spec in enumerate(column_specs):
         start_col = group_idx * len(selected_conditions)
@@ -1121,7 +1149,7 @@ def visualize_transition_response_matrix(
             column_spec["label"],
             ha="center",
             va="center",
-            fontsize=21,
+            fontsize=column_group_size,
         )
 
     for row_idx, transition_name in enumerate(ordered_transitions):
@@ -1213,6 +1241,8 @@ def visualize_transition_response_matrix(
             for ax in axes[row_idx, :]:
                 if ax.get_visible():
                     ax.set_ylim(row_min - pad, row_max + pad)
+            if zscore_activity:
+                _add_row_scale_bar(axes[row_idx, :])
 
     if save_in_transition_subdir:
         plot_dirs = _resolve_plot_dirs(save_path)
@@ -1668,6 +1698,8 @@ def visualize_transition_panel(
             for ax in axes[row_idx, :]:
                 if ax.get_visible():
                     ax.set_ylim(row_min - pad, row_max + pad)
+            if zscore_activity:
+                _add_row_scale_bar(axes[row_idx, :])
 
     if save_in_transition_subdir:
         plot_dirs = _resolve_plot_dirs(save_path)

@@ -27,6 +27,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plot-center-panels", action="store_true")
     parser.add_argument("--plot-by-transition", action="store_true")
     parser.add_argument("--export-panels", action="store_true")
+    
+    """
+    1  silent_broad_FFonly
+    2  silent_broad_FB_weak
+    3  silent_broad_FB_mid
+    4  silent_broad_FB_partial2
+    5  mid_broad_FFonly
+    6  very_weak_broad_FB_partial2
+    7  weak_broad_FB_mixed_bridge
+    8  mid_broad_FB_weak
+    9  mid_broad_FB_partial2
+    10 strong_broad_FB_strong
+    11 narrow_weak
+    12 narrow_mid
+    13 narrow_novel
+    14 novel_weak_FB_diagonal
+    15 weak_broad_FFonly
+    16 silent_broad_FB_strong
+    """
+    
+    parser.add_argument(
+        "--fam-examples",
+        type=int,
+        nargs="*",
+        default=[],
+        metavar="TEMPLATE_NUM",
+        help="Template numbers to highlight in the aggregate familiar scatter and example trace panel.",
+    )
+    parser.add_argument(
+        "--nov-examples",
+        type=int,
+        nargs="*",
+        default=[],
+        metavar="TEMPLATE_NUM",
+        help="Template numbers to highlight in the aggregate novel scatter and example trace panel.",
+    )
+    parser.add_argument(
+        "--use-center-examples",
+        action="store_true",
+        help="Highlight and plot noise-free template centers instead of sampled cells for the requested examples.",
+    )
     return parser.parse_args()
 
 

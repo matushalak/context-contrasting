@@ -38,6 +38,7 @@ import numpy as np
 import pandas as pd
 import torch
 from joblib import Parallel, delayed
+from matplotlib.transforms import Bbox
 
 from . import transitions_helpers as th
 from .experiment_s import (
@@ -50,6 +51,7 @@ from .minimal_divisive import CCNeuron
 from .visualize_s import (
     format_transition_label,
     save_grouped_transition_panels,
+    visualize_transition_response_matrix,
     wide_to_long,
 )
 
@@ -101,6 +103,50 @@ def _training_trial_order(
         raise ValueError("training_stimulus_order must be 'fixed' or 'randomized'.")
     rng = np.random.default_rng(seed)
     return rng.permutation(trial_order).tolist()
+
+
+def _template_number_map(transition_order: list[str]) -> dict[int, str]:
+    return {idx: name for idx, name in enumerate(transition_order, start=1)}
+
+
+def _parse_highlight_numbers(args: argparse.Namespace) -> dict[str, list[int]]:
+    return {
+        "familiar": list(getattr(args, "fam_examples", []) or []),
+        "novel": list(getattr(args, "nov_examples", []) or []),
+    }
+
+
+def _validate_highlight_numbers(highlights: dict[str, list[int]], transition_order: list[str]) -> None:
+    valid = set(range(1, len(transition_order) + 1))
+    requested = [num for numbers in highlights.values() for num in numbers]
+    invalid = sorted(set(requested) - valid)
+    if invalid:
+        raise ValueError(
+            f"highlight template numbers must be between 1 and {len(transition_order)}; invalid={invalid}"
+        )
+
+
+def _highlight_requested(highlights: dict[str, list[int]]) -> bool:
+    return any(bool(numbers) for numbers in highlights.values())
+
+
+def _center_samples_for_highlights(
+    highlights: dict[str, list[int]],
+    template_numbers: dict[int, str],
+) -> list[dict[str, Any]]:
+    numbers = list(dict.fromkeys(number for group_numbers in highlights.values() for number in group_numbers))
+    samples: list[dict[str, Any]] = []
+    for number in numbers:
+        transition = template_numbers[number]
+        sample = copy.deepcopy(_center_config(transition))
+        sample.update(
+            _canonical_transition=transition,
+            _sample_idx=0,
+            _sample_global_idx=-int(number),
+            _center_template_number=int(number),
+        )
+        samples.append(sample)
+    return samples
 
 
 def _build_model_scatter_test_stimuli(
@@ -612,22 +658,16 @@ def _run_panel_config(
     return transition, long_df, stimuli
 
 
-def _save_panels(
+def _run_panel_configs(
     configs_by_transition: dict[str, dict[str, Any]],
     *,
-    out_dir: Path,
     n_steps_per_phase: int,
     test_trials: int,
     training_trials: int,
     training_stimulus_order: str,
     seed: int,
-    image_format: str,
     n_jobs: int,
-) -> None:
-    """Render a transition panel (full+occlusion traces) for the given configs,
-    parallelised across configs. No per-config CSV (it is huge and not needed for
-    the figure)."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+) -> tuple[dict[str, pd.DataFrame], dict[str, tuple[torch.Tensor, torch.Tensor]] | None]:
     order = list(configs_by_transition)
     results = Parallel(n_jobs=n_jobs)(
         delayed(_run_panel_config)(
@@ -643,18 +683,90 @@ def _save_panels(
     )
     long_dfs = {t: long_df for t, long_df, _ in results}
     stimuli = results[0][2] if results else None
+    return long_dfs, stimuli
+
+
+def _render_panels(
+    long_dfs: dict[str, pd.DataFrame],
+    stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None,
+    *,
+    out_dir: Path,
+    n_steps_per_phase: int,
+    test_trials: int,
+    image_format: str,
+    image_mode: str | None = None,
+    transition_labels: dict[str, str] | None = None,
+    name: str = "transition_panel",
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
     if stimuli is None:
         return
-    save_grouped_transition_panels(
+    order = list(long_dfs)
+    labels = transition_labels or {t: format_transition_label(t) for t in order}
+    if image_mode is None:
+        save_grouped_transition_panels(
+            long_dfs,
+            stimuli=stimuli,
+            save_path=str(out_dir),
+            transition_order=order,
+            transition_labels=labels,
+            step_window=_panel_step_window(n_steps_per_phase, test_trials),
+            save_in_transition_subdir=False,
+            zscore_activity=True,
+            image_format=image_format,
+        )
+    else:
+        visualize_transition_response_matrix(
+            long_dfs,
+            STIMULI=stimuli,
+            save_path=str(out_dir),
+            name=name,
+            image_mode=image_mode,
+            transition_order=order,
+            transition_labels=labels,
+            step_window=_panel_step_window(n_steps_per_phase, test_trials),
+            save_in_transition_subdir=False,
+            save_csv=True,
+            zscore_activity=True,
+            image_format=image_format,
+        )
+
+
+def _save_panels(
+    configs_by_transition: dict[str, dict[str, Any]],
+    *,
+    out_dir: Path,
+    n_steps_per_phase: int,
+    test_trials: int,
+    training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
+    image_format: str,
+    n_jobs: int,
+    image_mode: str | None = None,
+    transition_labels: dict[str, str] | None = None,
+    name: str = "transition_panel",
+) -> None:
+    """Render a transition panel for the given configs, parallelised across configs."""
+    long_dfs, stimuli = _run_panel_configs(
+        configs_by_transition,
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
+        training_trials=training_trials,
+        training_stimulus_order=training_stimulus_order,
+        seed=seed,
+        n_jobs=n_jobs,
+    )
+    _render_panels(
         long_dfs,
-        stimuli=stimuli,
-        save_path=str(out_dir),
-        transition_order=order,
-        transition_labels={t: format_transition_label(t) for t in order},
-        step_window=_panel_step_window(n_steps_per_phase, test_trials),
-        save_in_transition_subdir=False,
-        zscore_activity=True,
+        stimuli,
+        out_dir=out_dir,
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
         image_format=image_format,
+        image_mode=image_mode,
+        transition_labels=transition_labels,
+        name=name,
     )
 
 
@@ -684,6 +796,115 @@ def _save_center_panels(
     )
 
 
+def _save_highlight_example_panels(
+    selected_examples: dict[str, list[dict[str, Any]]],
+    *,
+    output_dir: Path,
+    n_steps_per_phase: int,
+    test_trials: int,
+    training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
+    image_format: str,
+    n_jobs: int,
+    precomputed_long_dfs: dict[str, pd.DataFrame] | None = None,
+    precomputed_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None,
+) -> None:
+    for group, examples in selected_examples.items():
+        if not examples:
+            continue
+        configs_by_label: dict[str, dict[str, Any]] = {}
+        transition_labels: dict[str, str] = {}
+        for example in examples:
+            key = f"example_{example['number']:02d}"
+            configs_by_label[key] = copy.deepcopy(example["sample"])
+            transition_labels[key] = str(example["number"])
+        if precomputed_long_dfs is None:
+            _save_panels(
+                configs_by_label,
+                out_dir=output_dir / "highlight_examples" / group,
+                n_steps_per_phase=n_steps_per_phase,
+                test_trials=test_trials,
+                training_trials=training_trials,
+                training_stimulus_order=training_stimulus_order,
+                seed=seed,
+                image_format=image_format,
+                n_jobs=n_jobs,
+                image_mode=group,
+                transition_labels=transition_labels,
+                name=f"highlighted_{group}_examples",
+            )
+        else:
+            long_dfs = {key: precomputed_long_dfs[key] for key in configs_by_label if key in precomputed_long_dfs}
+            _render_panels(
+                long_dfs,
+                precomputed_stimuli,
+                out_dir=output_dir / "highlight_examples" / group,
+                n_steps_per_phase=n_steps_per_phase,
+                test_trials=test_trials,
+                image_format=image_format,
+                image_mode=group,
+                transition_labels=transition_labels,
+                name=f"highlighted_{group}_examples",
+            )
+
+
+def _single_y_frame(long_df: pd.DataFrame, *, condition: str, phase: str, image_type: str) -> pd.DataFrame:
+    frame = long_df.loc[
+        long_df["condition"].eq(condition)
+        & long_df["experiment_phase"].eq(phase)
+        & long_df["image_type"].eq(image_type),
+        ["step", "y"],
+    ].copy()
+    return frame.drop_duplicates("step").sort_values("step").reset_index(drop=True)
+
+
+def _response_df_from_panel_long_dfs(
+    long_dfs: dict[str, pd.DataFrame],
+    samples_by_key: dict[str, dict[str, Any]],
+    *,
+    n_steps_per_phase: int,
+    response_tail_fraction: float,
+    zscore_std_floor: float,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for key, long_df in long_dfs.items():
+        sample = samples_by_key[key]
+        cell_floor = max(zscore_std_floor, BASELINE_STD_SCALE * float(sample.get("baseline_drive_sigma", 0.0)))
+        naive_frames = [
+            _single_y_frame(long_df, condition=condition, phase="naive", image_type=image_type)
+            for condition in IMAGE_INFO
+            for image_type in TRACE_TYPES
+        ]
+        naive_baseline = _baseline(naive_frames, n_steps_per_phase)
+        for phase in ("naive", "expert"):
+            for condition in IMAGE_INFO:
+                for trace, image_type in TRACE_TYPES.items():
+                    frame = _single_y_frame(long_df, condition=condition, phase=phase, image_type=trace)
+                    rows.append(
+                        dict(
+                            condition=condition,
+                            phase=phase,
+                            stage=STAGES[phase],
+                            trace=trace,
+                            image_type=image_type,
+                            response=_response_from_frame(
+                                frame,
+                                n_steps_per_phase=n_steps_per_phase,
+                                response_tail_fraction=response_tail_fraction,
+                                baseline=naive_baseline,
+                                zscore_std_floor=cell_floor,
+                            ),
+                            transition=sample["_canonical_transition"],
+                            sample_idx=sample["_sample_idx"],
+                            sample_global_idx=sample["_sample_global_idx"],
+                            seed=sample["seed"],
+                            experiment_series=PRIMARY_EXPERIMENT_SERIES,
+                        )
+                    )
+    return pd.DataFrame(rows)
+
+
 def _robust_response_limits(summaries: list[pd.DataFrame], *, hi_percentile: float, pad: float = 0.4) -> list[float]:
     """Response axis limits that ignore a few extreme outliers (point 6): scale to
     the bulk so a handful of very strong responders fall outside rather than
@@ -711,6 +932,142 @@ def _robust_shift_limits(summaries: list[pd.DataFrame], *, hi_percentile: float,
     return [-extent, extent]
 
 
+def _summary_with_transition(summary: pd.DataFrame, samples: list[dict[str, Any]]) -> pd.DataFrame:
+    transition_by_neuron = {
+        int(sample["_sample_global_idx"]): sample["_canonical_transition"]
+        for sample in samples
+    }
+    enriched = summary.copy()
+    enriched["transition"] = enriched["neuron_idx"].map(transition_by_neuron)
+    return enriched
+
+
+def _select_highlight_examples(
+    summaries: dict[str, pd.DataFrame],
+    *,
+    samples: list[dict[str, Any]],
+    highlights: dict[str, list[int]],
+    template_numbers: dict[int, str],
+) -> dict[str, list[dict[str, Any]]]:
+    sample_by_neuron = {
+        int(sample["_sample_global_idx"]): sample
+        for sample in samples
+    }
+    selected: dict[str, list[dict[str, Any]]] = {"familiar": [], "novel": []}
+    for group, numbers in highlights.items():
+        if not numbers:
+            continue
+        summary = summaries[group]
+        for number in numbers:
+            transition = template_numbers[number]
+            rows = summary.loc[summary["transition"] == transition].sort_values("neuron_idx")
+            if rows.empty:
+                raise ValueError(
+                    f"No sampled cell from template {number} ({transition}) is present in the {group} summary. "
+                    "Increase --n-samples or use --transition-sampling equal."
+                )
+            row = rows.iloc[0]
+            sector = str(row["RotatedSector"])
+            color = th.ROTATED_SECTOR_PALETTE.get(sector, "0.35")
+            selected[group].append(
+                {
+                    "number": int(number),
+                    "transition": transition,
+                    "neuron_idx": int(row["neuron_idx"]),
+                    "sector": sector,
+                    "color": color,
+                    "NO_Pre": float(row["NO_Pre"]),
+                    "O_Pre": float(row["O_Pre"]),
+                    "NO_Target": float(row["NO_Target"]),
+                    "O_Target": float(row["O_Target"]),
+                    "dNO": float(row["dNO"]),
+                    "dO": float(row["dO"]),
+                    "sample": sample_by_neuron[int(row["neuron_idx"])],
+                }
+            )
+    return selected
+
+
+def _annotate_highlights(fig: plt.Figure, examples: list[dict[str, Any]]) -> None:
+    if not examples:
+        return
+    axis_specs = (
+        (0, "dNO", "dO"),
+        (1, "NO_Pre", "O_Pre"),
+        (2, "NO_Target", "O_Target"),
+        (3, "dNO", "dO"),
+        (4, "NO_Pre", "O_Pre"),
+        (5, "NO_Target", "O_Target"),
+        (6, "dNO", "dO"),
+        (7, "NO_Pre", "O_Pre"),
+        (8, "NO_Target", "O_Target"),
+    )
+    for ax_idx, x_key, y_key in axis_specs:
+        if ax_idx >= len(fig.axes):
+            continue
+        ax = fig.axes[ax_idx]
+        for order_idx, example in enumerate(examples):
+            offset_x = -24 if order_idx % 2 else 24
+            offset_y = 18 + 5 * (order_idx % 3)
+            ax.scatter(
+                [example[x_key]],
+                [example[y_key]],
+                s=42,
+                facecolors=example["color"],
+                edgecolors="black",
+                linewidths=0.4,
+                zorder=20,
+            )
+            ax.annotate(
+                str(example["number"]),
+                xy=(example[x_key], example[y_key]),
+                xytext=(offset_x, offset_y),
+                textcoords="offset points",
+                ha="center",
+                va="center",
+                fontsize=13,
+                color="0.15",
+                arrowprops=dict(arrowstyle="-", color="0.25", lw=1.0, shrinkA=1, shrinkB=4),
+                zorder=21,
+            )
+
+
+def _export_sector_response_panels(
+    fig: plt.Figure,
+    output_dir: Path,
+    basename: str,
+    *,
+    image_format: str,
+    dpi: int = 300,
+    pad_inches: float = 0.035,
+) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    # Middle row, columns 2 and 3: Naive and Expert scatterplots colored by transition sector.
+    for suffix, ax_idx in (("naive_sector_scatter", 4), ("expert_sector_scatter", 5)):
+        ax = fig.axes[ax_idx]
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.set_title("")
+        ax.tick_params(axis="both", labelsize=24, width=1.4, length=5)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        bbox = ax.get_tightbbox(renderer)
+        if bbox is None:
+            bbox = ax.get_window_extent(renderer)
+        bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
+        bbox = Bbox.from_extents(
+            bbox.x0 - pad_inches,
+            bbox.y0 - pad_inches,
+            bbox.x1 + pad_inches,
+            bbox.y1 + pad_inches,
+        )
+        path = output_dir / f"{basename}_{suffix}.{image_format}"
+        fig.savefig(path, bbox_inches=bbox, dpi=dpi)
+        saved.append(path)
+    return saved
+
+
 def _save_summary(
     summary: pd.DataFrame,
     path: Path,
@@ -719,6 +1076,8 @@ def _save_summary(
     shift_lims: list[float],
     export_panels: bool,
     image_format: str,
+    highlights: list[dict[str, Any]] | None = None,
+    export_sector_response_panels: bool = False,
 ) -> None:
     """Render and save one rotated-sector scatter figure (plus its sector legend)
     via the shared real-data plotting helper, using a fixed Naive->Expert frame."""
@@ -731,11 +1090,15 @@ def _save_summary(
         shift_lims=shift_lims,
         style=PLOT_STYLE,
     )
+    _annotate_highlights(fig, highlights or [])
     path = path.with_suffix(f".{image_format}")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=300, bbox_inches="tight")
     if export_panels:
-        th.export_figure_panels(fig, path.parent / f"{path.stem}_panels", path.stem, formats=(image_format,))
+        if export_sector_response_panels:
+            _export_sector_response_panels(fig, path.parent / f"{path.stem}_panels", path.stem, image_format=image_format)
+        else:
+            th.export_figure_panels(fig, path.parent / f"{path.stem}_panels", path.stem, formats=(image_format,))
     plt.close(fig)
     th.save_rotated_sector_unit_legend(summary, path.with_name(f"{path.stem}_sector_legend.{image_format}"), title=None, formats=(image_format,))
 
@@ -745,12 +1108,18 @@ def _save_plots(
     *,
     output_dir: Path,
     transition_order: list[str],
+    samples: list[dict[str, Any]],
+    highlights: dict[str, list[int]],
+    template_numbers: dict[int, str],
+    example_transition_table: pd.DataFrame | None = None,
+    example_samples: list[dict[str, Any]] | None = None,
+    example_source: str = "sample",
     threshold: float,
     plot_by_transition: bool,
     export_panels: bool,
     image_format: str,
     axis_clip_percentile: float,
-) -> None:
+) -> dict[str, list[dict[str, Any]]]:
     """Aggregate the per-cell responses into familiar/novel rotated-sector
     summaries, save their figures and sector-fraction tables (and optionally a
     per-transition breakdown)."""
@@ -760,14 +1129,34 @@ def _save_plots(
 
     wide = _wide_table(transition_table)
     aggregate = {
-        group: th.build_mean_summary(wide, image_group=group, pre_stage="Naive", target_stage="Expert", threshold=threshold)
+        group: _summary_with_transition(
+            th.build_mean_summary(wide, image_group=group, pre_stage="Naive", target_stage="Expert", threshold=threshold),
+            samples,
+        )
         for group in ("familiar", "novel")
     }
+    example_wide = _wide_table(example_transition_table) if example_transition_table is not None else wide
+    example_sample_list = example_samples if example_samples is not None else samples
+    example_summaries = {
+        group: _summary_with_transition(
+            th.build_mean_summary(example_wide, image_group=group, pre_stage="Naive", target_stage="Expert", threshold=threshold),
+            example_sample_list,
+        )
+        for group in ("familiar", "novel")
+    }
+    selected_examples = _select_highlight_examples(
+        example_summaries,
+        samples=example_sample_list,
+        highlights=highlights,
+        template_numbers=template_numbers,
+    )
     # A single shared response/shift frame across the familiar and novel panels
     # (like the transitions>threshold notebook), but scaled to the bulk so a few
     # extreme outliers fall outside the panel instead of compressing it
     # (axis_clip_percentile=100 reproduces the notebook's exact min/max framing).
     summaries = list(aggregate.values())
+    if example_transition_table is not None:
+        summaries.extend(example_summaries.values())
     response_lims = _robust_response_limits(summaries, hi_percentile=axis_clip_percentile)
     shift_lims = _robust_shift_limits(summaries, hi_percentile=axis_clip_percentile)
 
@@ -783,6 +1172,8 @@ def _save_plots(
             shift_lims,
             export_panels,
             image_format,
+            highlights=selected_examples[group],
+            export_sector_response_panels=True,
         )
 
     if plot_by_transition:
@@ -805,6 +1196,27 @@ def _save_plots(
                 )
 
     pd.concat(fraction_frames, ignore_index=True).to_csv(summaries_dir / "sector_fractions.csv", index=False)
+    rows = [
+        {
+            "image_group": group,
+            "template_number": example["number"],
+            "transition": example["transition"],
+            "neuron_idx": example["neuron_idx"],
+            "sector": example["sector"],
+            "source": example_source,
+            "NO_Pre": example["NO_Pre"],
+            "O_Pre": example["O_Pre"],
+            "NO_Target": example["NO_Target"],
+            "O_Target": example["O_Target"],
+            "dNO": example["dNO"],
+            "dO": example["dO"],
+        }
+        for group, examples in selected_examples.items()
+        for example in examples
+    ]
+    if rows:
+        pd.DataFrame(rows).to_csv(summaries_dir / "highlighted_examples.csv", index=False)
+    return selected_examples
 
 
 def run_model_scatter(args: argparse.Namespace) -> None:
@@ -824,6 +1236,9 @@ def run_model_scatter(args: argparse.Namespace) -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     transition_order = list(minimal_configs3)
+    template_numbers = _template_number_map(transition_order)
+    highlights = _parse_highlight_numbers(args)
+    _validate_highlight_numbers(highlights, transition_order)
     samples = _sample_configs(args, transition_order)
 
     torch.manual_seed(args.seed)
@@ -845,6 +1260,33 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         )
         for sample in samples
     )
+    center_example_samples: list[dict[str, Any]] = []
+    center_example_transition_table: pd.DataFrame | None = None
+    center_example_long_dfs: dict[str, pd.DataFrame] | None = None
+    center_example_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
+    if getattr(args, "use_center_examples", False) and _highlight_requested(highlights):
+        center_example_samples = _center_samples_for_highlights(highlights, template_numbers)
+        center_examples_by_key = {
+            f"example_{sample['_center_template_number']:02d}": sample
+            for sample in center_example_samples
+        }
+        center_example_long_dfs, center_example_stimuli = _run_panel_configs(
+            center_examples_by_key,
+            n_steps_per_phase=args.n_steps_per_phase,
+            test_trials=args.test_trials,
+            training_trials=args.training_trials,
+            training_stimulus_order=args.training_stimulus_order,
+            seed=args.seed,
+            n_jobs=args.n_jobs,
+        )
+        center_response_df = _response_df_from_panel_long_dfs(
+            center_example_long_dfs,
+            center_examples_by_key,
+            n_steps_per_phase=args.n_steps_per_phase,
+            response_tail_fraction=args.response_tail_fraction,
+            zscore_std_floor=args.zscore_std_floor,
+        )
+        center_example_transition_table = _transition_table(center_response_df)
 
     response_df = pd.concat(response_frames, ignore_index=True)
     transition_table = _transition_table(response_df)
@@ -864,6 +1306,9 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "transition_sampling": "canonical" if args.canonical_only else args.transition_sampling,
         "transition_sample_counts": counts,
         "transition_weights": {name: TRANSITIONS[name]["weight"] for name in transition_order},
+        "template_numbers": template_numbers,
+        "highlight_requested_examples": highlights,
+        "highlight_example_source": "center" if getattr(args, "use_center_examples", False) else "sample",
         "seed": args.seed,
         "n_steps_per_phase": args.n_steps_per_phase,
         "test_trials": args.test_trials,
@@ -888,15 +1333,34 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     }
     (args.output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, default=repr))
 
-    _save_plots(
+    selected_examples = _save_plots(
         transition_table,
         output_dir=args.output_dir,
         transition_order=transition_order,
+        samples=samples,
+        highlights=highlights,
+        template_numbers=template_numbers,
+        example_transition_table=center_example_transition_table,
+        example_samples=center_example_samples or None,
+        example_source="center" if center_example_transition_table is not None else "sample",
         threshold=args.threshold,
         plot_by_transition=args.plot_by_transition,
         export_panels=args.export_panels,
         image_format=args.image_format,
         axis_clip_percentile=args.axis_clip_percentile,
+    )
+    _save_highlight_example_panels(
+        selected_examples,
+        output_dir=args.output_dir,
+        n_steps_per_phase=args.n_steps_per_phase,
+        test_trials=args.test_trials,
+        training_trials=args.training_trials,
+        training_stimulus_order=args.training_stimulus_order,
+        seed=args.seed,
+        image_format=args.image_format,
+        n_jobs=args.n_jobs,
+        precomputed_long_dfs=center_example_long_dfs,
+        precomputed_stimuli=center_example_stimuli,
     )
 
     if not args.skip_center_panels and not args.canonical_only:

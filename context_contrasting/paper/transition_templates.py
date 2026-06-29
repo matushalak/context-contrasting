@@ -58,14 +58,14 @@ SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
 SOMA_ACTIVATION_THRESHOLD = 0.08
 APICAL_DRIVE_SUBTRACTIVE = True
 PV_NOISE_SIGMA = 0.075
-DIVISIVE_GAIN = 20.0
+DIVISIVE_GAIN = 10.0
 BASELINE_STD_SCALE = 0.27
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
     "apical_drive_threshold": ("add", 0.12, 0.0, 3.0, 0.05),
 }
-UNIFORM_FF_NOISE = dict(rel=0.50, floor=0.012, lo=0.0, hi=0.20)
-UNIFORM_FB_NOISE = dict(rel=0.60, floor=0.012, lo=0.0, hi=0.40)
+UNIFORM_FF_NOISE = dict(rel=0.50, floor=0.016, lo=0.0, hi=0.40)
+UNIFORM_FB_NOISE = dict(rel=0.50, floor=0.016, lo=0.0, hi=0.40)
 UNIFORM_GAIN_CLIP = (1.5, 8.0)
 UNIFORM_DRIVE_CLIP = (0.0, 1.5)
 
