@@ -64,9 +64,9 @@ SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
     "apical_drive_threshold": ("add", 0.12, 0.0, 3.0, 0.05),
 }
-UNIFORM_FF_NOISE = dict(rel=0.40, floor=0.016, lo=0.0, hi=0.20)
+UNIFORM_FF_NOISE = dict(rel=0.40, floor=0.016, lo=0.0, hi=0.15)
 UNIFORM_FB_NOISE = dict(rel=0.50, floor=0.016, lo=0.0, hi=0.40)
-UNIFORM_GAIN_CLIP = (1.5, 8.0)
+UNIFORM_GAIN_CLIP = (1.5, 6.4)
 UNIFORM_DRIVE_CLIP = (0.0, 1.5)
 
 BASE_CONFIG = {
@@ -125,6 +125,7 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # suppressed even for mixed FF+FB responders.
         gain=3.8, gain_clip=UNIFORM_GAIN_CLIP,
         drive=0.16, drive_clip=UNIFORM_DRIVE_CLIP,
+        gain_threshold=0.0,
         baseline=0.16,
     ),
     "narrow": dict(
@@ -138,7 +139,7 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # Shift + steepen the gain sigmoid so the small feedback growth during
         # training moves the gain enough to turn the non-adapted FF drive into a
         # clear +NO shift at expert (suppressed naive -> amplified expert).
-        gain_threshold=0.03, gain_k=7.0,
+        gain_threshold=0.0, gain_k=7.0,
         drive=1.25, drive_clip=UNIFORM_DRIVE_CLIP,
         # Low baseline -> low adaptation current, so the occluded basal stays near 0
         # and the rising gain barely drags the occluded response negative: the +NO
@@ -225,7 +226,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # Weak broad FF-only bridge: same -NO mechanism as mid_broad_FFonly, but with
     # weaker initial FF so the -NO population also fills the 0.3-0.5 naive NO band.
     "weak_broad_FFonly": dict(
-        width="broad", ff="weak", fb="none", tuning="all", context="none", weight=0.12,
+        width="broad", ff="weak", fb="none", tuning="all", context="none", weight=0.125,
         baseline=0.22,
     ),
 
@@ -233,7 +234,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # on novel these are static NO cells (no FB -> no movement), which the data does
     # not show as the dominant broad population.
     "mid_broad_FFonly": dict(
-        width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.09,
+        width="broad", ff="mid", fb="none", tuning="all", context="none", weight=0.095,
         baseline=0.22,
     ),
 
@@ -257,18 +258,18 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # the mixed (+NO,+O) mover. Familiar FF adapts via the shared broad
     # ff_plasticity_scale (active-channel gated; novel channel untouched).
     "very_weak_broad_FB_partial2": dict(
-        width="broad", ff="weak", fb="mid", tuning="all", context="random2", weight=0.0250,
-        drive=0.035,
-        gain=5.0,
+        width="broad", ff="weak", fb="mid", tuning="all", context="random2", weight=0.0300,
+        drive=0.030,
+        gain=5.6,
         baseline=0.15,
     ),
     # Small weak-both bridge: modest broad FF plus generalized FB. It fills the
     # familiar naive cloud around (NO~0.5, O~0.5), then uses the mover surround
     # timing in the divisive variant to travel up-and-left into the expert O axis.
     "weak_broad_FB_mixed_bridge": dict(
-        width="broad", ff="very_weak", fb="mid", tuning="all", context="all", weight=0.0250,
+        width="broad", ff="very_weak", fb="mid", tuning="all", context="all", weight=0.0300,
         drive=0.005,
-        gain=3.3,
+        gain=4.2,
         baseline=0.16,
     ),
 
@@ -282,53 +283,54 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # W_pv kept moderate (~0.40) -> novel NO stays roughly flat (these do NOT feed the
     # novel -NO population, which should come only from mid_broad_FFonly).
     "mid_broad_FB_weak": dict(
-        width="broad", ff="mid", fb="mid", tuning="all", context="all", weight=0.075,
-        drive=0.080,
-        gain=4.2,
+        width="broad", ff="weak", fb="mid", tuning="all", context="all", weight=0.080,
+        drive=0.065,
+        gain=6.0,
         baseline=0.2,
     ),
     "mid_broad_FB_partial2": dict(
-        width="broad", ff="mid", fb="mid", tuning="all", context="random2", weight=0.1,
-        drive=0.080,
-        gain=4.2,
+        width="broad", ff="weak", fb="mid", tuning="all", context="random2", weight=0.100,
+        drive=0.065,
+        gain=6.0,
         baseline=0.2,
     ),
     "strong_broad_FB_strong": dict(
-        width="broad", ff="strong", fb="strong", tuning="all", context="all", weight=0.05,
-        drive=0.08,
-        gain=4.2,
+        width="broad", ff="mid", fb="strong", tuning="all", context="all", weight=0.07,
+        drive=0.065,
+        gain=6.0,
         baseline=0.2,
     ),
     # Narrow, one random preferred image -> +NO via gain; the emergent familiar/novel
     # +NO asymmetry. Weak and mid FF variants give a range of +NO magnitudes.
     "very_weak": dict(
-        width="narrow", ff="diag_weak", fb="weak", tuning="permuted1", context="all", weight=0.08,
-        gain=8.0, 
+        width="narrow", ff="diag_weak", fb="weak", tuning="permuted1", context="all", weight=0.125,
+        gain=6.4,
+        gain_clip=(1.5, 6.4),
     ),
     "weak": dict(
-        width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.05,
-        gain=8.0, 
+        width="narrow", ff="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.085,
+        gain=6.4,
     ),
     # Special case: a narrowly NOVEL-tuned cell. A weak novel FF seed plus strong
     # generalized FB keeps naive responses near silent while giving FB growth enough
     # leverage to produce a qualitative silent -> novel-NO transition.
     "narrow_novel": dict(
-        width="narrow", ff="very_weak", fb="weak", tuning="novel", context="all", weight=0.3,
-        gain=8.0, 
+        width="narrow", ff="very_weak", fb="weak", tuning="novel", context="all", weight=0.225,
+        gain=6.4,
     ),
     # Novel diagonal bridge: novel-tuned weak FF plus generalized FB. These cells
     # start near the silent/weak novel NO&O cloud and, after familiar training grows
     # generalized FB, move into the modest novel expert NO&O interior with a
     # +NO-dominant diagonal shift.
     "novel_weak_FB_diagonal": dict(
-        width="broad", ff="diag_weak", fb="weak", tuning="novel", context="novel", weight=0.1,
+        width="broad", ff="diag_weak", fb="weak", tuning="novel", context="novel", weight=0.055,
         drive=0.090,
         gain=4.5,
         baseline=0.2,
     ),
     
     "novel_mid_FB_diagonal": dict(
-        width="broad", ff="weak", fb="weak", tuning="novel", context="novel", weight=0.08,
+        width="broad", ff="weak", fb="weak", tuning="novel", context="novel", weight=0.035,
         drive=0.090,
         gain=4.5,
         baseline=0.2,
@@ -338,7 +340,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # the O cloud before training; limited FB headroom and strong fixed PV keep the
     # subtype from turning novel +O into the dominant transition.
     "silent_broad_FB_strong": dict(
-        width="broad", ff="silent", fb="very_strong", tuning="all", context="all", weight=0.08,
+        width="broad", ff="silent", fb="very_strong", tuning="all", context="all", weight=0.080,
         drive=0.18,
         gain=2.2,
         baseline=0.26,
