@@ -30,28 +30,25 @@ def parse_args() -> argparse.Namespace:
     
     """
     1  silent_broad_FFonly
-    2  silent_broad_FB_weak
-    3  silent_broad_FB_mid
-    4  silent_broad_FB_partial2
+    2  silent_broad_FB_mid
+    3  silent_broad_FB_strong
+    4  weak_broad_FFonly
     5  mid_broad_FFonly
-    6  very_weak_broad_FB_partial2
-    7  weak_broad_FB_mixed_bridge
-    8  mid_broad_FB_weak
-    9  mid_broad_FB_partial2
-    10 strong_broad_FB_strong
-    11 narrow_weak
-    12 narrow_mid
-    13 narrow_novel
-    14 novel_weak_FB_diagonal
-    15 weak_broad_FFonly
-    16 silent_broad_FB_strong
+    6  strong_broad_FFonly
+    7  weak_broad_FB_all
+    8  mid_broad_FB_all
+    9  strong_broad_FB_all
+    10 mixed_broad_FB_all
+    11 narrow_diag_FB_all
+    12 narrow_weak_FB_all
+    13 narrow_weak_FFonly
     """
     
     parser.add_argument(
         "--fam-examples",
         type=int,
         nargs="*",
-        default=[16, 3, 4, 11, 5, 8],
+        default=[3, 7, 8, 11, 5, 4],
         metavar="TEMPLATE_NUM",
         help="Template numbers to highlight in the aggregate familiar scatter and example trace panel.",
     )
@@ -59,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--nov-examples",
         type=int,
         nargs="*",
-        default=[13, 14, 5, 3],
+        default=[11, 12, 7, 8, 10],
         metavar="TEMPLATE_NUM",
         help="Template numbers to highlight in the aggregate novel scatter and example trace panel.",
     )
