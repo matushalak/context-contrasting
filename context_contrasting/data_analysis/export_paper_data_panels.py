@@ -22,6 +22,8 @@ PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
     "mean_arrow_width": 3.1,
     "mean_arrow_mutation_scale": 16.5,
 }
+RESPONSE_X_LABEL = "Non-occluded response z-scored $\\Delta$F/F"
+RESPONSE_Y_LABEL = "Occluded response z-scored $\\Delta$F/F"
 
 
 def _robust_response_limits(summaries: list[pd.DataFrame], *, hi_percentile: float, pad: float = 0.4) -> list[float]:
@@ -60,6 +62,7 @@ def _export_sector_response_panels(
     basename: str,
     *,
     formats: tuple[str, ...],
+    target_label: str = "Expert",
     dpi: int = 300,
 ) -> list[Path]:
     def shared_limits(margin: float = 0.5) -> list[float]:
@@ -95,33 +98,48 @@ def _export_sector_response_panels(
                 zorder=th._sector_scatter_zorder(sector),
             )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    formats = tuple(dict.fromkeys((*formats, "eps")))
-    lims = shared_limits()
-    ticks = np.arange(np.ceil(lims[0]), np.floor(lims[1]) + 1.0, 1.0)
-    saved: list[Path] = []
-    for suffix, x_col, y_col in (
-        ("naive_sector_scatter", "NO_Pre", "O_Pre"),
-        ("expert_sector_scatter", "NO_Target", "O_Target"),
-    ):
-        panel_fig, ax = plt.subplots(figsize=(4.0, 4.0))
-        panel_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.16, top=0.96)
-        draw_panel(ax, x_col=x_col, y_col=y_col)
+    def style_axis(ax: plt.Axes, *, title: str) -> None:
         th._draw_diagonal(ax, lims)
+        ax.axhline(0.0, color="0.85", lw=1.0, zorder=0)
+        ax.axvline(0.0, color="0.85", lw=1.0, zorder=0)
         ax.set_xlim(lims)
         ax.set_ylim(lims)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
-        ax.set_xlabel("")
-        ax.set_ylabel("")
-        ax.set_title("")
-        ax.tick_params(axis="both", labelsize=24, width=1.4, length=5)
-        for fmt in formats:
-            path = output_dir / f"{basename}_{suffix}.{fmt}"
-            panel_fig.savefig(path, dpi=dpi)
-            saved.append(path)
-        plt.close(panel_fig)
+        ax.set_title(title, fontsize=28, pad=14)
+        ax.tick_params(axis="both", labelsize=22, width=1.4, length=5)
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.4)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    formats = tuple(dict.fromkeys((*formats, "eps")))
+    lims = shared_limits()
+    ticks = np.arange(np.ceil(lims[0]), np.floor(lims[1]) + 1.0, 1.0)
+    fig, axes = plt.subplots(1, 2, figsize=(8.2, 4.8), sharex=True, sharey=True)
+    fig.subplots_adjust(left=0.15, right=0.985, bottom=0.22, top=0.82, wspace=0.18)
+
+    draw_panel(axes[0], x_col="NO_Pre", y_col="O_Pre")
+    style_axis(axes[0], title="Naive")
+    draw_panel(axes[1], x_col="NO_Target", y_col="O_Target")
+    style_axis(axes[1], title=target_label)
+    fig.supxlabel(RESPONSE_X_LABEL, fontsize=24, y=0.055)
+    fig.supylabel(RESPONSE_Y_LABEL, fontsize=24, x=0.04)
+
+    saved: list[Path] = []
+    for fmt in formats:
+        path = output_dir / f"{basename}_naive_expert_sector_scatter.{fmt}"
+        fig.savefig(path, dpi=dpi)
+        saved.append(path)
+    plt.close(fig)
+
+    legend_paths = th.save_rotated_sector_unit_legend(
+        summary,
+        output_dir / f"{basename}_sector_legend.{formats[0]}",
+        title=None,
+        formats=formats,
+    )
+    saved.extend(legend_paths)
     return saved
 
 
@@ -139,29 +157,36 @@ def export_paper_data_panels(
     post_table = th.load_transition_table(data_dir / "transitions_post.csv")
 
     summaries = {
-        "task": th.build_mean_summary(
-            act_table,
-            image_group="all",
-            pre_stage="Pre",
-            target_stage="Task",
-            threshold=threshold,
+        "task": (
+            th.build_mean_summary(
+                act_table,
+                image_group="all",
+                pre_stage="Pre",
+                target_stage="Task",
+                threshold=threshold,
+            ),
+            "Task",
         ),
-        "novel": th.build_mean_summary(
-            post_table,
-            image_group="novel",
-            pre_stage="Pre",
-            target_stage="Post",
-            threshold=threshold,
+        "novel": (
+            th.build_mean_summary(
+                post_table,
+                image_group="novel",
+                pre_stage="Pre",
+                target_stage="Post",
+                threshold=threshold,
+            ),
+            "Expert",
         ),
     }
     saved_paths: list[Path] = []
-    for name, summary in summaries.items():
+    for name, (summary, target_label) in summaries.items():
         saved_paths.extend(
             _export_sector_response_panels(
                 summary,
                 output_dir,
                 f"ground_truth_{name}_summary",
                 formats=formats,
+                target_label=target_label,
             )
         )
     return saved_paths
