@@ -1050,6 +1050,7 @@ def visualize_transition_response_matrix(
     save_csv: bool = True,
     zscore_activity: bool = True,
     image_format: str = "png",
+    figure_size_inches: tuple[float, float] | None = None,
 ) -> list[str]:
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
@@ -1174,10 +1175,22 @@ def visualize_transition_response_matrix(
     condition_title_size, column_group_size = _matrix_header_fontsizes(n_cols)
     fig_width = max(12.0, 3.4 * n_cols + 3.2)
     fig_height = max(6.0, 2.15 * n_rows + 1.9)
+    figsize = figure_size_inches or (fig_width, fig_height)
+    size_scale = min(figsize[0] / fig_width, figsize[1] / fig_height)
+    compact = figure_size_inches is not None
+    condition_title_size = max(condition_title_size * size_scale, 3.5) if compact else condition_title_size
+    column_group_size = max(column_group_size * size_scale, 3.5) if compact else column_group_size
+    legend_fontsize = max(18 * size_scale, 3.5) if compact else 18
+    legend_linewidth = max(4.0 * size_scale, 0.7) if compact else 4.0
+    trace_linewidth = max(4.0 * size_scale, 0.7) if compact else 4.0
+    guide_linewidth = max(0.6 * size_scale, 0.2) if compact else 0.6
+    row_label_fontsize = max(20 * size_scale, 6.0) if compact else 20
+    scale_bar_linewidth = max(2.2 * size_scale, 0.5) if compact else 2.2
+    title_pad = max(10 * size_scale, 1.0) if compact else 10
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
-        figsize=(fig_width, fig_height),
+        figsize=figsize,
         squeeze=False,
         sharex=True,
         sharey=False,
@@ -1186,8 +1199,8 @@ def visualize_transition_response_matrix(
     fig.subplots_adjust(left=0.19, right=0.99, top=0.8, bottom=0.055, wspace=0.12, hspace=0.2)
 
     legend_handles = [
-        Line2D([0], [0], color="red", lw=4.0, label="O"),
-        Line2D([0], [0], color="black", lw=4.0, label="NO"),
+        Line2D([0], [0], color="red", lw=legend_linewidth, label="O"),
+        Line2D([0], [0], color="black", lw=legend_linewidth, label="NO"),
     ]
     fig.legend(
         handles=legend_handles,
@@ -1195,22 +1208,24 @@ def visualize_transition_response_matrix(
         bbox_to_anchor=(0.99, 0.985),
         frameon=False,
         ncol=2,
-        handlelength=2.0,
-        columnspacing=1.2,
-        fontsize=18,
+        handlelength=2.0 * size_scale,
+        columnspacing=1.2 * size_scale,
+        fontsize=legend_fontsize,
     )
 
     for col_idx, title in title_specs:
-        axes[0, col_idx].set_title(title, fontsize=condition_title_size, pad=10)
+        axes[0, col_idx].set_title(title, fontsize=condition_title_size, pad=title_pad)
     for col_idx in hidden_slot_indices:
         axes[0, col_idx].set_title("")
     for row_idx in range(n_rows):
         for col_idx in hidden_slot_indices:
             axes[row_idx, col_idx].set_visible(False)
 
-    for col_idx in visible_slot_indices if center_single_condition_slots else []:
-        group_start, group_end = group_spans[col_idx // n_slots_per_group]
-        _span_axis_across(axes[0, col_idx], [axes[0, idx] for idx in range(group_start, group_end + 1)])
+    # Previously, when image_mode="novel" was rendered onto a 2-slot familiar
+    # layout, the single novel axis was stretched across both Fam1 and Fam2 slots
+    # via `_span_axis_across`. We now leave the novel response in its slot (Fam1)
+    # and the Fam2 slot stays empty rather than being absorbed into a wide axis.
+    pass
 
     for group_idx, column_spec in enumerate(column_specs):
         start_col, end_col = group_spans[group_idx]
@@ -1253,9 +1268,8 @@ def visualize_transition_response_matrix(
             ax = axes[row_idx, col_idx]
             if condition is None:
                 continue
-            if center_single_condition_slots and row_idx > 0:
-                group_start, group_end = group_spans[col_idx // n_slots_per_group]
-                _span_axis_across(ax, [axes[row_idx, idx] for idx in range(group_start, group_end + 1)])
+            # Stretching of the novel axis across the Fam1+Fam2 slots intentionally
+            # removed: novel sits in slot 0 (Fam1) and slot 1 (Fam2) stays empty.
             stim_interval = stim_windows.get(condition)
             if condition not in STIMULI:
                 ax.set_visible(False)
@@ -1263,7 +1277,7 @@ def visualize_transition_response_matrix(
 
             if stim_interval is not None:
                 ax.axvspan(stim_interval[0], stim_interval[1], color="0.92", zorder=0)
-            ax.axhline(0.0, color="0.85", lw=0.6, zorder=0)
+            ax.axhline(0.0, color="0.85", lw=guide_linewidth, zorder=0)
 
             for response_type, trace_type, color in (
                 ("O", column_spec["o_trace"], "red"),
@@ -1287,7 +1301,7 @@ def visualize_transition_response_matrix(
                     np.asarray(summary["x_seconds"], dtype=float),
                     y_mean,
                     color=color,
-                    lw=4.0,
+                    lw=trace_linewidth,
                     label=response_type,
                 )
                 row_bounds.append((float(np.min(y_mean)), float(np.max(y_mean))))
@@ -1306,7 +1320,7 @@ def visualize_transition_response_matrix(
             transform=label_ax.transAxes,
             ha="right",
             va="center",
-            fontsize=20,
+            fontsize=row_label_fontsize,
         )
         if row_bounds:
             row_min = min(bound[0] for bound in row_bounds)
@@ -1319,7 +1333,7 @@ def visualize_transition_response_matrix(
                 if ax.get_visible():
                     ax.set_ylim(row_min - pad, row_max + pad)
             if zscore_activity:
-                _add_row_scale_bar(axes[row_idx, :])
+                _add_row_scale_bar(axes[row_idx, :], linewidth=scale_bar_linewidth)
 
     if save_in_transition_subdir:
         plot_dirs = _resolve_plot_dirs(save_path)

@@ -133,18 +133,28 @@ def _center_samples_for_highlights(
     highlights: dict[str, list[int]],
     template_numbers: dict[int, str],
 ) -> list[dict[str, Any]]:
-    numbers = list(dict.fromkeys(number for group_numbers in highlights.values() for number in group_numbers))
     samples: list[dict[str, Any]] = []
-    for number in numbers:
-        transition = template_numbers[number]
-        sample = copy.deepcopy(_center_config(transition))
-        sample.update(
-            _canonical_transition=transition,
-            _sample_idx=0,
-            _sample_global_idx=-int(number),
-            _center_template_number=int(number),
-        )
-        samples.append(sample)
+    group_offsets = {"familiar": 1000, "novel": 2000}
+    for group, numbers in highlights.items():
+        if group not in group_offsets:
+            raise ValueError(f"unknown highlight group: {group!r}")
+        for display_idx, number in enumerate(numbers, start=1):
+            transition = template_numbers[number]
+            tuned_indices = None
+            if "narrow" in transition:
+                tuned_indices = (0,) if group == "familiar" else (2,)
+            sample = copy.deepcopy(_center_config_with_tuning(transition, tuned_indices))
+            sample_global_idx = -(group_offsets[group] + int(number))
+            sample.update(
+                _canonical_transition=transition,
+                _sample_idx=display_idx - 1,
+                _sample_global_idx=sample_global_idx,
+                _center_template_number=int(number),
+                _highlight_group=group,
+                _highlight_display_number=int(display_idx),
+                _highlight_example_key=f"example_{group}_{int(number):02d}",
+            )
+            samples.append(sample)
     return samples
 
 
@@ -211,6 +221,7 @@ PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
     "mean_arrow_width": 3.1,
     "mean_arrow_mutation_scale": 16.5,
 }
+HIGHLIGHT_EXAMPLE_FIGSIZE_INCHES = (7.0 / 2.54, 7.0 / 2.54)
 RESPONSE_X_LABEL = "Non-occluded response z-scored $\\Delta$F/F"
 RESPONSE_Y_LABEL = "Occluded response z-scored $\\Delta$F/F"
 
@@ -698,6 +709,7 @@ def _render_panels(
     image_mode: str | None = None,
     transition_labels: dict[str, str] | None = None,
     name: str = "transition_panel",
+    figure_size_inches: tuple[float, float] | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     if stimuli is None:
@@ -730,6 +742,7 @@ def _render_panels(
             save_csv=True,
             zscore_activity=True,
             image_format=image_format,
+            figure_size_inches=figure_size_inches,
         )
 
 
@@ -747,6 +760,7 @@ def _save_panels(
     image_mode: str | None = None,
     transition_labels: dict[str, str] | None = None,
     name: str = "transition_panel",
+    figure_size_inches: tuple[float, float] | None = None,
 ) -> None:
     """Render a transition panel for the given configs, parallelised across configs."""
     long_dfs, stimuli = _run_panel_configs(
@@ -768,6 +782,7 @@ def _save_panels(
         image_mode=image_mode,
         transition_labels=transition_labels,
         name=name,
+        figure_size_inches=figure_size_inches,
     )
 
 
@@ -880,9 +895,9 @@ def _save_highlight_example_panels(
         configs_by_label: dict[str, dict[str, Any]] = {}
         transition_labels: dict[str, str] = {}
         for example in examples:
-            key = f"example_{example['number']:02d}"
+            key = str(example.get("example_key", f"example_{example['number']:02d}"))
             configs_by_label[key] = copy.deepcopy(example["sample"])
-            transition_labels[key] = str(example["number"])
+            transition_labels[key] = str(example.get("display_number", example["number"]))
         if precomputed_long_dfs is None:
             _save_panels(
                 configs_by_label,
@@ -897,6 +912,7 @@ def _save_highlight_example_panels(
                 image_mode=group,
                 transition_labels=transition_labels,
                 name=f"highlighted_{group}_examples",
+                figure_size_inches=HIGHLIGHT_EXAMPLE_FIGSIZE_INCHES,
             )
         else:
             long_dfs = {key: precomputed_long_dfs[key] for key in configs_by_label if key in precomputed_long_dfs}
@@ -910,6 +926,7 @@ def _save_highlight_example_panels(
                 image_mode=group,
                 transition_labels=transition_labels,
                 name=f"highlighted_{group}_examples",
+                figure_size_inches=HIGHLIGHT_EXAMPLE_FIGSIZE_INCHES,
             )
 
 
@@ -1022,9 +1039,14 @@ def _select_highlight_examples(
         if not numbers:
             continue
         summary = summaries[group]
-        for number in numbers:
+        for display_idx, number in enumerate(numbers, start=1):
             transition = template_numbers[number]
             rows = summary.loc[summary["transition"] == transition].sort_values("neuron_idx")
+            rows = rows.loc[
+                rows["neuron_idx"].map(
+                    lambda neuron_idx: sample_by_neuron[int(neuron_idx)].get("_highlight_group", group) == group
+                )
+            ]
             if rows.empty:
                 raise ValueError(
                     f"No sampled cell from template {number} ({transition}) is present in the {group} summary. "
@@ -1035,7 +1057,13 @@ def _select_highlight_examples(
             color = th.ROTATED_SECTOR_PALETTE.get(sector, "0.35")
             selected[group].append(
                 {
+                    # `number` keeps the global template index (1..len(transition_order))
+                    # for CSV bookkeeping; `display_number` is the per-group rank in the
+                    # --fam-examples / --nov-examples list (1..n) used for the
+                    # scatterplot label, so labels read 1..n independently per group.
                     "number": int(number),
+                    "display_number": int(display_idx),
+                    "example_key": sample_by_neuron[int(row["neuron_idx"])].get("_highlight_example_key"),
                     "transition": transition,
                     "neuron_idx": int(row["neuron_idx"]),
                     "sector": sector,
@@ -1066,6 +1094,10 @@ def _annotate_highlights(fig: plt.Figure, examples: list[dict[str, Any]]) -> Non
         (7, "NO_Pre", "O_Pre"),
         (8, "NO_Target", "O_Target"),
     )
+    # Match the regular scatter style so the highlighted center is just another
+    # point of its sector colour and size -- only the leader-line + numeric label
+    # tells the reader it's a highlighted example.
+    point_size = th.DEFAULT_PLOT_STYLE.get("point_size", 28)
     for ax_idx, x_key, y_key in axis_specs:
         if ax_idx >= len(fig.axes):
             continue
@@ -1076,14 +1108,17 @@ def _annotate_highlights(fig: plt.Figure, examples: list[dict[str, Any]]) -> Non
             ax.scatter(
                 [example[x_key]],
                 [example[y_key]],
-                s=42,
+                s=point_size,
                 facecolors=example["color"],
-                edgecolors="black",
-                linewidths=0.4,
+                edgecolors="none",
+                linewidths=0,
                 zorder=20,
             )
+            # Per-group 1..n label (the position in --fam-examples / --nov-examples);
+            # falls back to the global template number if `display_number` isn't set.
+            label = str(example.get("display_number", example["number"]))
             ax.annotate(
-                str(example["number"]),
+                label,
                 xy=(example[x_key], example[y_key]),
                 xytext=(offset_x, offset_y),
                 textcoords="offset points",
@@ -1101,25 +1136,11 @@ def _export_sector_response_panels(
     output_dir: Path,
     basename: str,
     *,
+    response_lims: list[float],
     image_format: str,
     highlights: list[dict[str, Any]] | None = None,
     dpi: int = 300,
 ) -> list[Path]:
-    def shared_limits(margin: float = 0.5) -> list[float]:
-        cols = ["NO_Pre", "O_Pre", "NO_Target", "O_Target"]
-        values = summary[cols].to_numpy(dtype=float).reshape(-1)
-        if highlights:
-            highlight_values = [
-                value
-                for example in highlights
-                for value in (example["NO_Pre"], example["O_Pre"], example["NO_Target"], example["O_Target"])
-            ]
-            values = np.concatenate([values, np.asarray(highlight_values, dtype=float)])
-        values = values[np.isfinite(values)]
-        if values.size == 0:
-            return [-1.0, 1.0]
-        return [float(values.min()) - margin, float(values.max()) + margin]
-
     def draw_panel(ax: plt.Axes, *, x_col: str, y_col: str, x_key: str, y_key: str) -> None:
         log_norms = (
             summary["log_dNorm"].to_numpy(dtype=float)
@@ -1158,7 +1179,7 @@ def _export_sector_response_panels(
                     zorder=20,
                 )
                 ax.annotate(
-                    str(example["number"]),
+                    str(example.get("display_number", example["number"])),
                     xy=(example[x_key], example[y_key]),
                     xytext=(offset_x, offset_y),
                     textcoords="offset points",
@@ -1186,7 +1207,7 @@ def _export_sector_response_panels(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     formats = tuple(dict.fromkeys((image_format, "eps")))
-    lims = shared_limits()
+    lims = response_lims
     ticks = np.arange(np.ceil(lims[0]), np.floor(lims[1]) + 1.0, 1.0)
     fig, axes = plt.subplots(1, 2, figsize=(8.2, 4.8), sharex=True, sharey=True)
     fig.subplots_adjust(left=0.15, right=0.985, bottom=0.22, top=0.82, wspace=0.18)
@@ -1247,6 +1268,7 @@ def _save_summary(
                 summary,
                 path.parent / f"{path.stem}_panels",
                 path.stem,
+                response_lims=response_lims,
                 image_format=image_format,
                 highlights=highlights,
             )
@@ -1353,6 +1375,7 @@ def _save_plots(
         {
             "image_group": group,
             "template_number": example["number"],
+            "display_number": example["display_number"],
             "transition": example["transition"],
             "neuron_idx": example["neuron_idx"],
             "sector": example["sector"],
@@ -1420,7 +1443,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     if getattr(args, "use_center_examples", False) and _highlight_requested(highlights):
         center_example_samples = _center_samples_for_highlights(highlights, template_numbers)
         center_examples_by_key = {
-            f"example_{sample['_center_template_number']:02d}": sample
+            sample["_highlight_example_key"]: sample
             for sample in center_example_samples
         }
         center_example_long_dfs, center_example_stimuli = _run_panel_configs(

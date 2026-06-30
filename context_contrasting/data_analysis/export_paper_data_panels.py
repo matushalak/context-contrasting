@@ -65,13 +65,16 @@ def _export_sector_response_panels(
     target_label: str = "Expert",
     dpi: int = 300,
 ) -> list[Path]:
-    def shared_limits(margin: float = 0.5) -> list[float]:
+    def shared_limits(low_margin: float = 0.25, high_margin: float = 0.75) -> list[float]:
+        # Asymmetric padding: tight on the low end (no wasted whitespace below the
+        # zero-response cloud) and generous on the high end (room for the legend
+        # without it overlapping the cloud).
         cols = ["NO_Pre", "O_Pre", "NO_Target", "O_Target"]
         values = summary[cols].to_numpy(dtype=float).reshape(-1)
         values = values[np.isfinite(values)]
         if values.size == 0:
             return [-1.0, 1.0]
-        return [float(values.min()) - margin, float(values.max()) + margin]
+        return [float(values.min()) - low_margin, float(values.max()) + high_margin]
 
     def draw_panel(ax: plt.Axes, *, x_col: str, y_col: str) -> None:
         log_norms = (
