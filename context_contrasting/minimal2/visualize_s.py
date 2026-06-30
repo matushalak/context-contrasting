@@ -235,6 +235,32 @@ def _display_condition_label(condition: str) -> str:
     return text.replace("_", " ").title()
 
 
+def _transition_response_layout_conditions(
+    *,
+    image_mode: Literal["familiar", "novel"],
+    available_conditions: list[str],
+    selected_conditions: list[str],
+) -> list[str]:
+    if image_mode != "novel":
+        return selected_conditions
+
+    familiar_conditions = [
+        condition
+        for condition in _resolve_condition_sequence(available_conditions)
+        if _is_familiar_condition(condition)
+    ]
+    return familiar_conditions if len(familiar_conditions) > len(selected_conditions) else selected_conditions
+
+
+def _span_axis_across(ax: plt.Axes, span_axes: list[plt.Axes]) -> None:
+    if len(span_axes) <= 1:
+        return
+    position = ax.get_position()
+    span_left = min(span_ax.get_position().x0 for span_ax in span_axes)
+    span_right = max(span_ax.get_position().x1 for span_ax in span_axes)
+    ax.set_position([span_left, position.y0, span_right - span_left, position.height])
+
+
 def _add_plot_condition_labels(df: DataFrame) -> DataFrame:
     styled = df.copy()
     if "image_type" in styled.columns:
@@ -1031,6 +1057,11 @@ def visualize_transition_response_matrix(
         image_mode=image_mode,
         include_novel_image=(image_mode == "novel"),
     )
+    layout_conditions = _transition_response_layout_conditions(
+        image_mode=image_mode,
+        available_conditions=available_conditions or list(STIMULI),
+        selected_conditions=selected_conditions,
+    )
 
     display_windows = [
         _expand_window_to_event_bounds(STIMULI[condition], focus_window=step_window)
@@ -1076,13 +1107,46 @@ def visualize_transition_response_matrix(
         max(float(summary["xlim_seconds"][1]) for summary in condition_summaries.values()),
     )
 
+    center_condition_by_group = {
+        group_idx: selected_conditions[0]
+        for group_idx in range(len(column_specs))
+        if image_mode == "novel" and len(layout_conditions) > len(selected_conditions) and selected_conditions
+    }
+    center_single_condition_slots = bool(center_condition_by_group)
+    center_slot = len(layout_conditions) // 2 - 1 if len(layout_conditions) % 2 == 0 else len(layout_conditions) // 2
     column_condition_specs = [
-        (column_spec, condition)
-        for column_spec in column_specs
-        for condition in selected_conditions
+        (
+            column_spec,
+            layout_condition,
+            center_condition_by_group.get(group_idx) if slot_idx == center_slot else None,
+        )
+        if group_idx in center_condition_by_group
+        else (column_spec, layout_condition, layout_condition)
+        for group_idx, column_spec in enumerate(column_specs)
+        for slot_idx, layout_condition in enumerate(layout_conditions)
     ]
     n_rows = len(ordered_transitions)
     n_cols = len(column_condition_specs)
+    n_slots_per_group = len(layout_conditions)
+    visible_slot_indices = [
+        idx
+        for idx, (_, _, plot_condition) in enumerate(column_condition_specs)
+        if plot_condition is not None
+    ]
+    title_specs = [
+        (idx, _display_condition_label(plot_condition))
+        for idx, (_, _, plot_condition) in enumerate(column_condition_specs)
+        if plot_condition is not None
+    ]
+    hidden_slot_indices = [
+        idx
+        for idx, (_, _, plot_condition) in enumerate(column_condition_specs)
+        if plot_condition is None
+    ]
+    group_spans = [
+        (group_idx * n_slots_per_group, group_idx * n_slots_per_group + n_slots_per_group - 1)
+        for group_idx in range(len(column_specs))
+    ]
     fig_width = max(12.0, 2.8 * n_cols + 3.2)
     fig_height = max(6.0, 2.15 * n_rows + 1.9)
     fig, axes = plt.subplots(
@@ -1111,12 +1175,20 @@ def visualize_transition_response_matrix(
         fontsize=18,
     )
 
-    for col_idx, (_, condition) in enumerate(column_condition_specs):
-        axes[0, col_idx].set_title(_display_condition_label(condition), fontsize=20, pad=8)
+    for col_idx, title in title_specs:
+        axes[0, col_idx].set_title(title, fontsize=20, pad=8)
+    for col_idx in hidden_slot_indices:
+        axes[0, col_idx].set_title("")
+    for row_idx in range(n_rows):
+        for col_idx in hidden_slot_indices:
+            axes[row_idx, col_idx].set_visible(False)
+
+    for col_idx in visible_slot_indices if center_single_condition_slots else []:
+        group_start, group_end = group_spans[col_idx // n_slots_per_group]
+        _span_axis_across(axes[0, col_idx], [axes[0, idx] for idx in range(group_start, group_end + 1)])
 
     for group_idx, column_spec in enumerate(column_specs):
-        start_col = group_idx * len(selected_conditions)
-        end_col = start_col + len(selected_conditions) - 1
+        start_col, end_col = group_spans[group_idx]
         x_center = 0.5 * (axes[0, start_col].get_position().x0 + axes[0, end_col].get_position().x1)
         fig.text(
             x_center,
@@ -1152,8 +1224,13 @@ def visualize_transition_response_matrix(
                 transition_name=transition_name,
             )
 
-        for col_idx, (column_spec, condition) in enumerate(column_condition_specs):
+        for col_idx, (column_spec, _, condition) in enumerate(column_condition_specs):
             ax = axes[row_idx, col_idx]
+            if condition is None:
+                continue
+            if center_single_condition_slots and row_idx > 0:
+                group_start, group_end = group_spans[col_idx // n_slots_per_group]
+                _span_axis_across(ax, [axes[row_idx, idx] for idx in range(group_start, group_end + 1)])
             stim_interval = stim_windows.get(condition)
             if condition not in STIMULI:
                 ax.set_visible(False)
@@ -1228,7 +1305,7 @@ def visualize_transition_response_matrix(
     saved_paths: list[str] = []
     for ext in (image_format,):
         out_path = f"{base_path}.{ext}"
-        fig.savefig(out_path, bbox_inches="tight")
+        fig.savefig(out_path)
         saved_paths.append(out_path)
     plt.close(fig)
 

@@ -135,7 +135,7 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # small/-NO, while one tuned to the *novel* image keeps its FF intact and is
         # amplified to +NO -- so the familiar<novel +NO asymmetry emerges from the
         # protocol rather than being hand-assigned.
-        ff_plasticity_scale=0.8,
+        ff_plasticity_scale=1.0,
         gain=6.4, gain_clip=UNIFORM_GAIN_CLIP,
         # Shift + steepen the gain sigmoid so the small feedback growth during
         # training moves the gain enough to turn the non-adapted FF drive into a
@@ -169,8 +169,8 @@ PV_STRENGTHS: dict[str, dict[str, float]] = {
     "narrow_low": dict(tuned=0.045, silent=0.010),
     "weak": dict(tuned=0.24, silent=0.050),
     "mid": dict(tuned=0.34, silent=0.070),
-    "strong": dict(tuned=0.55, silent=0.110),
-    "very_strong": dict(tuned=0.62, silent=0.120),
+    "strong": dict(tuned=0.58, silent=0.130),
+    "very_strong": dict(tuned=0.76, silent=0.210),
 }
 
 # Generalized feedback levels (equal across all three context channels):
@@ -207,30 +207,30 @@ CONTEXT_MODES = ("none", "all")
 # and PV tuned/untuned FF plus feedback level; the sampled PyC/PV tuning overlap
 # determines which image gets which member of each tuned/untuned pair.
 TEMPLATES: dict[str, dict[str, Any]] = {
-    "silent_broad_FFonly": dict(width="broad", ff="silent", pv="weak", fb="none", tuning="all", context="none", weight=0.025, baseline=0.18),
-    "silent_broad_FB_mid": dict(width="broad", ff="silent", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.020, drive=0.050, gain=3.0, baseline=0.18),
-    "silent_broad_FB_strong": dict(width="broad", ff="silent", pv="very_strong", fb="very_strong", tuning="all", context="all", weight=0.025, drive=0.180, gain=2.2, baseline=0.26),
+    "silent_broad_FFonly": dict(width="broad", ff="silent", pv="weak", fb="none", tuning="all", context="none", weight=0.020, baseline=0.18),
+    "silent_broad_FB_mid": dict(width="broad", ff="silent", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.004, drive=0.050, gain=3.0, baseline=0.18),
+    "silent_broad_FB_strong": dict(width="broad", ff="silent", pv="very_strong", fb="very_strong", tuning="all", context="all", weight=0.004, drive=0.180, gain=2.2, baseline=0.26),
 
     # Broad no-FB cells are the main pure -NO source. Independent PV tuning makes
     # the same template sometimes more strongly shunted on familiar or novel.
-    "weak_broad_FFonly": dict(width="broad", ff="weak", pv="weak", fb="none", tuning="all", context="none", weight=0.105, baseline=0.22),
-    "mid_broad_FFonly": dict(width="broad", ff="mid", pv="mid", fb="none", tuning="all", context="none", weight=0.140, baseline=0.22),
-    "strong_broad_FFonly": dict(width="broad", ff="strong", pv="mid", fb="none", tuning="all", context="none", weight=0.070, baseline=0.22),
+    "weak_broad_FFonly": dict(width="broad", ff="weak", pv="weak", fb="none", tuning="all", context="none", weight=0.060, baseline=0.22),
+    "mid_broad_FFonly": dict(width="broad", ff="mid", pv="strong", fb="none", tuning="all", context="none", weight=0.170, baseline=0.22),
+    "strong_broad_FFonly": dict(width="broad", ff="strong", pv="strong", fb="none", tuning="all", context="none", weight=0.360, baseline=0.22),
 
     # Broad FB cells are the desired overlap-dependent movers. In the canonical
     # center example PyC={familiar_1, novel} and PV={familiar_1, familiar_2}, so
     # familiar_1 can adapt toward -NO/+O while novel keeps FF drive with weak PV
     # surround and can move +NO/+O after generalized FB growth.
-    "weak_broad_FB_all": dict(width="broad", ff="weak", pv="strong", fb="very_weak", tuning="all", context="all", weight=0.095, drive=0.060, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "mid_broad_FB_all": dict(width="broad", ff="mid", pv="strong", fb="very_weak", tuning="all", context="all", weight=0.100, drive=0.060, gain=9.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "strong_broad_FB_all": dict(width="broad", ff="mid", pv="strong", fb="weak", tuning="all", context="all", weight=0.035, drive=0.065, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "mixed_broad_FB_all": dict(width="broad", ff="very_weak", pv="very_strong", fb="weak", tuning="all", context="all", weight=0.030, drive=0.020, gain=4.4, baseline=0.16),
+    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="weak", fb="very_weak", tuning="all", context="all", weight=0.090, drive=0.060, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
+    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="weak", fb="very_weak", tuning="all", context="all", weight=0.160, drive=0.060, gain=9.0, gain_clip=(1.5, 9.0), baseline=0.20),
+    "strong_broad_FB_all": dict(width="broad", ff="strong", pv="strong", fb="mid", tuning="all", context="all", weight=0.060, drive=0.065, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
+    "mixed_broad_FB_all": dict(width="broad", ff="very_weak", pv="very_strong", fb="weak", tuning="all", context="all", weight=0.002, drive=0.020, gain=4.4, baseline=0.16),
 
     # Narrow cells sample their one preferred image uniformly; no template is
     # explicitly novel-tuned. Their share controls the +NO source size.
-    "narrow_diag_FB_all": dict(width="narrow", ff="very_weak", pv="narrow_low", fb="weak", tuning="permuted1", context="all", weight=0.110, gain=6.8, gain_clip=(1.5, 7.5)),
-    "narrow_weak_FB_all": dict(width="narrow", ff="weak", pv="narrow_low", fb="weak", tuning="permuted1", context="all", weight=0.180, gain=7.5, gain_clip=(1.5, 8.0)),
-    "narrow_weak_FFonly": dict(width="narrow", ff="weak", pv="narrow_low", fb="none", tuning="permuted1", context="none", weight=0.035, gain=7.5, gain_clip=(1.5, 8.0)),
+    "narrow_diag_FB_all": dict(width="narrow", ff="very_weak", pv="narrow_low", fb="weak", tuning="permuted1", context="all", weight=0.240, gain=6.8, gain_clip=(1.5, 7.5)),
+    "narrow_weak_FB_all": dict(width="narrow", ff="weak", pv="narrow_low", fb="weak", tuning="permuted1", context="all", weight=0.500, gain=7.2, gain_clip=(1.5, 8.0)),
+    "narrow_weak_FFonly": dict(width="narrow", ff="weak", pv="narrow_low", fb="none", tuning="permuted1", context="none", weight=0.008, gain=7.5, gain_clip=(1.5, 8.0)),
 }
 
 SURROUND_SETTINGS: dict[str, dict[str, float]] = {
