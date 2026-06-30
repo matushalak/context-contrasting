@@ -168,7 +168,7 @@ FF_STRENGTHS: dict[str, dict[str, Any]] = {
 PV_STRENGTHS: dict[str, dict[str, float]] = {
     "very_weak": dict(tuned=0.045, silent=0.010),
     "weak": dict(tuned=0.24, silent=0.050),
-    "mid": dict(tuned=0.34, silent=0.070),
+    "mid": dict(tuned=0.34, silent=0.095),
     "strong": dict(tuned=0.66, silent=0.170),
     "very_strong": dict(tuned=0.88, silent=0.280),
 }
@@ -178,7 +178,7 @@ PV_STRENGTHS: dict[str, dict[str, float]] = {
 FB_LEVELS: dict[str, dict[str, Any]] = {
     "none": dict(receives=False, center=0.004, **UNIFORM_FB_NOISE),
     "very_weak": dict(receives=True, center=0.015, **UNIFORM_FB_NOISE),
-    "weak": dict(receives=True, center=0.040, **UNIFORM_FB_NOISE),
+    "weak": dict(receives=True, center=0.046, **UNIFORM_FB_NOISE),
     "mid": dict(receives=True, center=0.075, **UNIFORM_FB_NOISE),
     "strong": dict(receives=True, center=0.110, **UNIFORM_FB_NOISE),
     # High initial FB with limited plastic headroom: creates naive O responders
@@ -208,28 +208,28 @@ CONTEXT_MODES = ("none", "all")
 # determines which image gets which member of each tuned/untuned pair.
 TEMPLATES: dict[str, dict[str, Any]] = {
     "silent_broad_FFonly": dict(width="broad", ff="silent", pv="weak", fb="none", tuning="all", context="none", weight=0.012, baseline=0.18),
-    "silent_broad_FB_mid": dict(width="broad", ff="silent", pv="very_strong", fb="strong", tuning="all", context="all", weight=0.030, drive=0.040, gain=2.8, baseline=0.18),
-    "silent_broad_FB_strong": dict(width="broad", ff="silent", pv="very_strong", fb="very_strong", tuning="all", context="all", weight=0.025, drive=0.160, gain=2.0, baseline=0.26),
+    "silent_broad_FB_mid": dict(width="broad", ff="silent", pv="very_strong", fb="strong", tuning="all", context="all", weight=0.025, drive=0.040, gain=2.8, baseline=0.18),
+    "silent_broad_FB_strong": dict(width="broad", ff="silent", pv="very_strong", fb="very_strong", tuning="all", context="all", weight=0.020, drive=0.160, gain=2.0, baseline=0.26),
 
     # Broad no-FB cells are the main pure -NO source. Independent PV tuning makes
     # the same template sometimes more strongly shunted on familiar or novel.
     "weak_broad_FFonly": dict(width="broad", ff="weak", pv="weak", fb="none", tuning="all", context="none", weight=0.060, baseline=0.22),
     "mid_broad_FFonly": dict(width="broad", ff="mid", pv="strong", fb="none", tuning="all", context="none", weight=0.170, baseline=0.22),
-    "strong_broad_FFonly": dict(width="broad", ff="strong", pv="strong", fb="none", tuning="all", context="none", weight=0.440, baseline=0.22),
+    "strong_broad_FFonly": dict(width="broad", ff="strong", pv="strong", fb="none", tuning="all", context="none", weight=0.430, baseline=0.22),
 
     # Broad FB cells are the desired overlap-dependent movers. In the canonical
     # center example PyC={familiar_1, novel} and PV={familiar_1, familiar_2}, so
     # familiar_1 can adapt toward -NO/+O while novel keeps FF drive with weak PV
     # surround and can move +NO/+O after generalized FB growth.
-    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="mid", fb="very_weak", tuning="all", context="all", weight=0.020, drive=0.060, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="very_weak", tuning="all", context="all", weight=0.025, drive=0.060, gain=9.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "strong_broad_FB_all": dict(width="broad", ff="strong", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.180, drive=0.055, gain=7.2, gain_clip=(1.5, 9.0), baseline=0.20),
-    "mixed_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="very_weak", tuning="all", context="all", weight=0.150, drive=0.115, gain=9.0, gain_clip=(1.5, 9.5), baseline=0.20),
+    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="mid", fb="weak", tuning="all", context="all", weight=0.050, drive=0.075, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
+    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="weak", tuning="all", context="all", weight=0.055, drive=0.080, gain=8.5, gain_clip=(1.5, 9.0), baseline=0.20),
+    "strong_broad_FB_all": dict(width="broad", ff="strong", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.165, drive=0.055, gain=7.2, gain_clip=(1.5, 9.0), baseline=0.20),
+    "mixed_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="weak", tuning="all", context="all", weight=0.260, drive=0.095, gain=9.0, gain_clip=(1.5, 9.5), baseline=0.20),
 
     # Narrow cells sample their one preferred image uniformly; no template is
     # explicitly novel-tuned. Their share controls the +NO source size.
     "narrow_super_weak_FB_all": dict(width="narrow", ff="super_weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.240, gain=6.8, gain_clip=(1.5, 7.5)),
-    "narrow_very_weak_FB_all": dict(width="narrow", ff="very_weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.500, gain=7.2, gain_clip=(1.5, 8.0)),
+    "narrow_very_weak_FB_all": dict(width="narrow", ff="very_weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.490, gain=7.2, gain_clip=(1.5, 8.0)),
     "narrow_very_weak_FFonly": dict(width="narrow", ff="very_weak", pv="very_weak", fb="none", tuning="permuted1", context="none", weight=0.008, gain=7.5, gain_clip=(1.5, 8.0)),
 }
 
