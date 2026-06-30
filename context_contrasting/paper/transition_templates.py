@@ -155,7 +155,7 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
 # while narrow PyCs tune one channel.
 FF_STRENGTHS: dict[str, dict[str, Any]] = {
     "silent": dict(tuned=0.010, silent=0.010, **UNIFORM_FF_NOISE),
-    "diag_weak": dict(tuned=0.042, silent=0.004, **UNIFORM_FF_NOISE),
+    "super_weak": dict(tuned=0.050, silent=0.004, **UNIFORM_FF_NOISE),
     "very_weak": dict(tuned=0.065, silent=0.005, **UNIFORM_FF_NOISE),
     "weak": dict(tuned=0.085, silent=0.006, **UNIFORM_FF_NOISE),
     "mid": dict(tuned=0.120, silent=0.006, **UNIFORM_FF_NOISE),
@@ -166,7 +166,7 @@ FF_STRENGTHS: dict[str, dict[str, Any]] = {
 # same template can create different full-image surround regimes depending on the
 # overlap state described in pyc_pv_independent_tuning_probability_math.md.
 PV_STRENGTHS: dict[str, dict[str, float]] = {
-    "narrow_low": dict(tuned=0.045, silent=0.010),
+    "very_weak": dict(tuned=0.045, silent=0.010),
     "weak": dict(tuned=0.24, silent=0.050),
     "mid": dict(tuned=0.34, silent=0.070),
     "strong": dict(tuned=0.66, silent=0.170),
@@ -221,16 +221,16 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # center example PyC={familiar_1, novel} and PV={familiar_1, familiar_2}, so
     # familiar_1 can adapt toward -NO/+O while novel keeps FF drive with weak PV
     # surround and can move +NO/+O after generalized FB growth.
-    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="weak", fb="very_weak", tuning="all", context="all", weight=0.025, drive=0.060, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="weak", fb="very_weak", tuning="all", context="all", weight=0.035, drive=0.060, gain=9.0, gain_clip=(1.5, 9.0), baseline=0.20),
-    "strong_broad_FB_all": dict(width="broad", ff="strong", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.120, drive=0.055, gain=7.2, gain_clip=(1.5, 9.0), baseline=0.20),
+    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="mid", fb="very_weak", tuning="all", context="all", weight=0.020, drive=0.060, gain=8.0, gain_clip=(1.5, 9.0), baseline=0.20),
+    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="very_weak", tuning="all", context="all", weight=0.025, drive=0.060, gain=9.0, gain_clip=(1.5, 9.0), baseline=0.20),
+    "strong_broad_FB_all": dict(width="broad", ff="strong", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.180, drive=0.055, gain=7.2, gain_clip=(1.5, 9.0), baseline=0.20),
     "mixed_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="very_weak", tuning="all", context="all", weight=0.150, drive=0.115, gain=9.0, gain_clip=(1.5, 9.5), baseline=0.20),
 
     # Narrow cells sample their one preferred image uniformly; no template is
     # explicitly novel-tuned. Their share controls the +NO source size.
-    "narrow_diag_FB_all": dict(width="narrow", ff="very_weak", pv="narrow_low", fb="weak", tuning="permuted1", context="all", weight=0.240, gain=6.8, gain_clip=(1.5, 7.5)),
-    "narrow_weak_FB_all": dict(width="narrow", ff="weak", pv="narrow_low", fb="weak", tuning="permuted1", context="all", weight=0.500, gain=7.2, gain_clip=(1.5, 8.0)),
-    "narrow_weak_FFonly": dict(width="narrow", ff="weak", pv="narrow_low", fb="none", tuning="permuted1", context="none", weight=0.008, gain=7.5, gain_clip=(1.5, 8.0)),
+    "narrow_super_weak_FB_all": dict(width="narrow", ff="super_weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.240, gain=6.8, gain_clip=(1.5, 7.5)),
+    "narrow_very_weak_FB_all": dict(width="narrow", ff="very_weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.500, gain=7.2, gain_clip=(1.5, 8.0)),
+    "narrow_very_weak_FFonly": dict(width="narrow", ff="very_weak", pv="very_weak", fb="none", tuning="permuted1", context="none", weight=0.008, gain=7.5, gain_clip=(1.5, 8.0)),
 }
 
 SURROUND_SETTINGS: dict[str, dict[str, float]] = {
@@ -244,9 +244,9 @@ SURROUND_SETTINGS: dict[str, dict[str, float]] = {
     "mid_broad_FB_all": dict(lat=0.24, pvlat=0.05),
     "strong_broad_FB_all": dict(lat=0.24, pvlat=0.05),
     "mixed_broad_FB_all": dict(lat=0.36, pvlat=0.05),
-    "narrow_diag_FB_all": dict(lat=0.03, pvlat=0.03),
-    "narrow_weak_FB_all": dict(lat=0.03, pvlat=0.03),
-    "narrow_weak_FFonly": dict(lat=0.03, pvlat=0.03),
+    "narrow_super_weak_FB_all": dict(lat=0.03, pvlat=0.03),
+    "narrow_very_weak_FB_all": dict(lat=0.03, pvlat=0.03),
+    "narrow_very_weak_FFonly": dict(lat=0.03, pvlat=0.03),
 }
 
 
@@ -451,14 +451,20 @@ def _canonical_pv_tuned_indices() -> tuple[int, ...]:
     return CANONICAL_PV_TUNED_INDICES
 
 
-def _center_config(name: str) -> dict[str, Any]:
+def _center_config(
+    name: str,
+    *,
+    tuned_indices: tuple[int, ...] | None = None,
+    pv_tuned_indices: tuple[int, ...] | None = None,
+    context_indices: tuple[int, ...] | None = None,
+) -> dict[str, Any]:
     """Noise-free config at the template centers (no weight/scalar jitter), for the
     center-panel trace plots. Replaces ``base._center_config`` so each pruned
     template renders correctly."""
     template = TEMPLATES[name]
-    tuned_indices = _canonical_pyc_tuned_indices(template)
-    pv_tuned_indices = _canonical_pv_tuned_indices()
-    context_indices = _canonical_context_indices(template.get("context", "all"))
+    tuned_indices = tuned_indices or _canonical_pyc_tuned_indices(template)
+    pv_tuned_indices = pv_tuned_indices or _canonical_pv_tuned_indices()
+    context_indices = context_indices or _canonical_context_indices(template.get("context", "all"))
     spec = _build_config(name, tuned_indices, pv_tuned_indices, context_indices)
     config = copy.deepcopy(base.minimal_configs3[name])
     for key, init_spec in spec["init"].items():

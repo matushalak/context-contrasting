@@ -769,6 +769,39 @@ def _save_panels(
     )
 
 
+def _center_config_with_tuning(transition: str, tuned_indices: tuple[int, ...] | None = None) -> dict[str, Any]:
+    if tuned_indices is None:
+        return _center_config(transition)
+    try:
+        return _center_config(transition, tuned_indices=tuned_indices)
+    except TypeError:
+        return _center_config(transition)
+
+
+def _center_panel_configs(
+    transition_order: list[str],
+    *,
+    narrow_mode: str,
+) -> dict[str, dict[str, Any]]:
+    narrow_cycle = [(0,), (1,), (2,)]
+    narrow_seen = 0
+    configs: dict[str, dict[str, Any]] = {}
+    for transition in transition_order:
+        tuned_indices = None
+        if "narrow" in transition:
+            if narrow_mode == "familiar":
+                tuned_indices = (0,)
+            elif narrow_mode == "novel":
+                tuned_indices = (2,)
+            elif narrow_mode == "cycle":
+                tuned_indices = narrow_cycle[narrow_seen % len(narrow_cycle)]
+                narrow_seen += 1
+            else:
+                raise ValueError("narrow_mode must be 'familiar', 'novel', or 'cycle'.")
+        configs[transition] = _center_config_with_tuning(transition, tuned_indices)
+    return configs
+
+
 def _save_center_panels(
     transition_order: list[str],
     *,
@@ -782,9 +815,10 @@ def _save_center_panels(
     n_jobs: int = -1,
 ) -> None:
     """Sanity check: transition panels for the exact noise-free sampler centers."""
+    center_dir = output_dir / "center_panels"
     _save_panels(
-        {t: _center_config(t) for t in transition_order},
-        out_dir=output_dir / "center_panels",
+        _center_panel_configs(transition_order, narrow_mode="cycle"),
+        out_dir=center_dir,
         n_steps_per_phase=n_steps_per_phase,
         test_trials=test_trials,
         training_trials=training_trials,
@@ -792,6 +826,35 @@ def _save_center_panels(
         seed=seed,
         image_format=image_format,
         n_jobs=n_jobs,
+    )
+    labels = {transition: format_transition_label(transition) for transition in transition_order}
+    _save_panels(
+        _center_panel_configs(transition_order, narrow_mode="familiar"),
+        out_dir=center_dir,
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
+        training_trials=training_trials,
+        training_stimulus_order=training_stimulus_order,
+        seed=seed,
+        image_format=image_format,
+        n_jobs=n_jobs,
+        image_mode="familiar",
+        transition_labels=labels,
+        name="transitions_FAM",
+    )
+    _save_panels(
+        _center_panel_configs(transition_order, narrow_mode="novel"),
+        out_dir=center_dir,
+        n_steps_per_phase=n_steps_per_phase,
+        test_trials=test_trials,
+        training_trials=training_trials,
+        training_stimulus_order=training_stimulus_order,
+        seed=seed,
+        image_format=image_format,
+        n_jobs=n_jobs,
+        image_mode="novel",
+        transition_labels=labels,
+        name="transitions_NOV",
     )
 
 
