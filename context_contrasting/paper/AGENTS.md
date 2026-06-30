@@ -52,7 +52,7 @@ Soft targets (±a few points). Shape requirements (§3–4) take priority on con
 
 ---
 
-## 2. What the current version already does RIGHT — KEEP THESE
+## 2. Key points — KEEP THESE at all cost!
 
 These were hard-won and must be preserved through any further tuning:
 

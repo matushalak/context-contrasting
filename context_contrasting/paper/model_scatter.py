@@ -211,6 +211,8 @@ PLOT_STYLE = th.DEFAULT_PLOT_STYLE | {
     "mean_arrow_width": 3.1,
     "mean_arrow_mutation_scale": 16.5,
 }
+RESPONSE_X_LABEL = "Non-occluded response z-scored $\\Delta$F/F"
+RESPONSE_Y_LABEL = "Occluded response z-scored $\\Delta$F/F"
 
 
 def weight_init(
@@ -1168,33 +1170,48 @@ def _export_sector_response_panels(
                     zorder=21,
                 )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    formats = tuple(dict.fromkeys((image_format, "eps")))
-    lims = shared_limits()
-    ticks = np.arange(np.ceil(lims[0]), np.floor(lims[1]) + 1.0, 1.0)
-    saved: list[Path] = []
-    for suffix, x_col, y_col, x_key, y_key in (
-        ("naive_sector_scatter", "NO_Pre", "O_Pre", "NO_Pre", "O_Pre"),
-        ("expert_sector_scatter", "NO_Target", "O_Target", "NO_Target", "O_Target"),
-    ):
-        panel_fig, ax = plt.subplots(figsize=(4.0, 4.0))
-        panel_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.16, top=0.96)
-        draw_panel(ax, x_col=x_col, y_col=y_col, x_key=x_key, y_key=y_key)
+    def style_axis(ax: plt.Axes, *, title: str) -> None:
         th._draw_diagonal(ax, lims)
+        ax.axhline(0.0, color="0.85", lw=1.0, zorder=0)
+        ax.axvline(0.0, color="0.85", lw=1.0, zorder=0)
         ax.set_xlim(lims)
         ax.set_ylim(lims)
         ax.set_aspect("equal", adjustable="box")
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
-        ax.set_xlabel("")
-        ax.set_ylabel("")
-        ax.set_title("")
-        ax.tick_params(axis="both", labelsize=24, width=1.4, length=5)
-        for fmt in formats:
-            path = output_dir / f"{basename}_{suffix}.{fmt}"
-            panel_fig.savefig(path, dpi=dpi)
-            saved.append(path)
-        plt.close(panel_fig)
+        ax.set_title(title, fontsize=28, pad=14)
+        ax.tick_params(axis="both", labelsize=22, width=1.4, length=5)
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.4)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    formats = tuple(dict.fromkeys((image_format, "eps")))
+    lims = shared_limits()
+    ticks = np.arange(np.ceil(lims[0]), np.floor(lims[1]) + 1.0, 1.0)
+    fig, axes = plt.subplots(1, 2, figsize=(8.2, 4.8), sharex=True, sharey=True)
+    fig.subplots_adjust(left=0.15, right=0.985, bottom=0.22, top=0.82, wspace=0.18)
+
+    draw_panel(axes[0], x_col="NO_Pre", y_col="O_Pre", x_key="NO_Pre", y_key="O_Pre")
+    style_axis(axes[0], title="Naive")
+    draw_panel(axes[1], x_col="NO_Target", y_col="O_Target", x_key="NO_Target", y_key="O_Target")
+    style_axis(axes[1], title="Expert")
+    fig.supxlabel(RESPONSE_X_LABEL, fontsize=24, y=0.055)
+    fig.supylabel(RESPONSE_Y_LABEL, fontsize=24, x=0.04)
+
+    saved: list[Path] = []
+    for fmt in formats:
+        path = output_dir / f"{basename}_naive_expert_sector_scatter.{fmt}"
+        fig.savefig(path, dpi=dpi)
+        saved.append(path)
+    plt.close(fig)
+
+    legend_paths = th.save_rotated_sector_unit_legend(
+        summary,
+        output_dir / f"{basename}_sector_legend.{formats[0]}",
+        title=None,
+        formats=formats,
+    )
+    saved.extend(legend_paths)
     return saved
 
 

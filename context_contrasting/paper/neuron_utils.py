@@ -102,18 +102,24 @@ class ThresholdReLU(torch.nn.Module):
 
 class GainSigmoid(torch.nn.Module):
     '''
-    Gain modulation by sigmoid function: f(x) = 1 + gain * sigmoid(k * (x - threshold)) - g/2
+    Gain modulation by sigmoid function: f(x) = clip_min(1, 1 + gain * sigmoid(k*(x-threshold)) - gain/2).
 
-    As a results, with 0 input, the output is always 1; while with high input, the output is controlled by gain
+    The raw form gives f(x) < 1 whenever the sigmoid argument is negative -- i.e.
+    when x < threshold (including x=0 whenever threshold>0). That would let the
+    apical compartment SUPPRESS somatic firing, which is biophysically wrong:
+    apical drive can only AMPLIFY (or be neutral, factor 1). The clip to >=1
+    enforces that invariant for any (threshold, k, gain) choice. Above threshold
+    the function is unchanged (>=1 anyway), so this is a one-sided floor, not a
+    re-shape.
     '''
     def __init__(self, gain:float = 1.0, k:float = 1.0, threshold:float = 0.0):
         super().__init__()
         self.gain = gain
         self.k = k
         self.threshold = threshold
-    
+
     def forward(self, x:torch.Tensor) -> torch.Tensor:
-        return 1 + self.gain * torch.sigmoid(self.k * (x - self.threshold)) - self.gain / 2
+        return torch.clip(1 + self.gain * torch.sigmoid(self.k * (x - self.threshold)) - self.gain / 2, min=1.0)
 
 
 def nonnegative(x:torch.Tensor)->torch.Tensor:
