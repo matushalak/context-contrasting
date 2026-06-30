@@ -61,6 +61,13 @@ APICAL_DRIVE_SUBTRACTIVE = True
 PV_NOISE_SIGMA = 0.075
 DIVISIVE_GAIN = 10.0
 BASELINE_STD_SCALE = 0.27
+# Shared apical gain-sigmoid threshold for every neuron. The clipped GainSigmoid
+# (see neuron_utils.GainSigmoid) returns max(1, ...) regardless of (gain, k,
+# threshold), so a positive threshold here only DELAYS the onset of
+# amplification (gain factor sits at 1.0 below threshold and rises >1 above)
+# and never suppresses the soma below the FF-only baseline -- the apical
+# compartment stays strictly amplify-only.
+SHARED_GAIN_THRESHOLD = 0.07
 SCALAR_NOISE = {
     "apical_gain_strength": ("log", 0.18, 0.1, 50.0, 0.0),
     "apical_drive_threshold": ("add", 0.12, 0.0, 3.0, 0.05),
@@ -130,7 +137,6 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # suppressed even for mixed FF+FB responders.
         gain=3.8, gain_clip=UNIFORM_GAIN_CLIP,
         drive=0.16, drive_clip=UNIFORM_DRIVE_CLIP,
-        gain_threshold=0.0,
         baseline=0.16,
     ),
     "narrow": dict(
@@ -145,14 +151,11 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         # ride the smaller expert-gain growth into +NO.
         ff_plasticity_scale=2.2,
         gain=6.4, gain_clip=UNIFORM_GAIN_CLIP,
-        # Shift + steepen the gain sigmoid so the small feedback growth during
-        # training moves the gain enough to turn the non-adapted FF drive into a
-        # clear +NO shift at expert. GainSigmoid is now clipped at >=1 in
-        # neuron_utils, so threshold>0 only DELAYS amplification (output sits at
-        # 1.0 for y_fb < threshold and rises >1 above); it can no longer suppress
-        # the soma below the FF-only baseline -- the apical compartment is now
-        # strictly amplify-only.
-        gain_threshold=0.07, gain_k=9.0,
+        # Sharper sigmoid (gain_k=9 vs the broad default 5) so the small naive->
+        # expert w_fb growth produces a visible amplification step around the
+        # shared SHARED_GAIN_THRESHOLD; below the threshold the clipped
+        # GainSigmoid pins the factor at 1.0 (no suppression).
+        gain_k=9.0,
         drive=1.08, drive_clip=UNIFORM_DRIVE_CLIP,
         # Low baseline -> low adaptation current, so the occluded basal stays near 0
         # and the rising gain barely drags the occluded response negative: the +NO
@@ -233,10 +236,10 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # center example PyC={familiar_1, novel} and PV={familiar_1, familiar_2}, so
     # familiar_1 can adapt toward -NO/+O while novel keeps FF drive with weak PV
     # surround and can move +NO/+O after generalized FB growth.
-    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="mid", fb="weak", tuning="all", context="all", weight=0.080, drive=0.200, gain=9.2, gain_clip=(1.5, 11.0), gain_threshold=0.07, gain_k=8.0, baseline=0.20),
-    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="weak", tuning="all", context="all", weight=0.110, drive=0.220, gain=9.4, gain_clip=(1.5, 11.0), gain_threshold=0.07, gain_k=8.0, baseline=0.20),
+    "weak_broad_FB_all": dict(width="broad", ff="mid", pv="mid", fb="weak", tuning="all", context="all", weight=0.080, drive=0.200, gain=9.2, gain_clip=(1.5, 11.0), gain_k=8.0, baseline=0.20),
+    "mid_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="weak", tuning="all", context="all", weight=0.110, drive=0.220, gain=9.4, gain_clip=(1.5, 11.0), gain_k=8.0, baseline=0.20),
     "strong_broad_FB_all": dict(width="broad", ff="strong", pv="very_strong", fb="mid", tuning="all", context="all", weight=0.140, drive=0.080, gain=7.2, gain_clip=(1.5, 9.0), baseline=0.20),
-    "mixed_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="weak", tuning="all", context="all", weight=0.330, drive=0.240, gain=9.6, gain_clip=(1.5, 11.5), gain_threshold=0.07, gain_k=8.0, baseline=0.20),
+    "mixed_broad_FB_all": dict(width="broad", ff="strong", pv="mid", fb="weak", tuning="all", context="all", weight=0.330, drive=0.240, gain=9.6, gain_clip=(1.5, 11.5), gain_k=8.0, baseline=0.20),
 
     # Narrow cells sample their one preferred image uniformly; no template is
     # explicitly novel-tuned. Their share controls the +NO source size.
@@ -532,6 +535,7 @@ def configure_model_scatter(n_steps_per_phase: int = LEARNING_RATE_REFERENCE_STE
     generic_config["apical_drive_subtractive"] = APICAL_DRIVE_SUBTRACTIVE
     generic_config["pv_noise_sigma"] = PV_NOISE_SIGMA
     generic_config["divisive_gain"] = DIVISIVE_GAIN
+    generic_config["apical_gain_threshold"] = SHARED_GAIN_THRESHOLD
     base.TRANSITIONS = transitions
     base.minimal_configs3 = {name: copy.deepcopy(generic_config) for name in transitions}
     base.SHARED_LEARNING_RATES = _effective_learning_rates(n_steps_per_phase)
