@@ -253,7 +253,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # explicitly novel-tuned. Their share controls the +NO source size.
     "narrow_super_weak_FB_all": dict(width="narrow", ff="super_weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.220, gain=8.0, gain_clip=(1.5, 9.5)),
     "narrow_very_weak_FB_all": dict(width="narrow", ff="weak", pv="very_weak", fb="weak", tuning="permuted1", context="all", weight=0.540, gain=8.4, gain_clip=(1.5, 10.0)),
-    "narrow_very_weak_FFonly": dict(width="narrow", ff="very_weak", pv="very_weak", fb="none", tuning="permuted1", context="none", weight=0.008, gain=7.5, gain_clip=(1.5, 8.0)),
+    "narrow_mid_FFonly": dict(width="narrow", ff="mid", pv="weak", fb="none", tuning="permuted1", context="none", weight=0.01, gain=7.5, gain_clip=(1.5, 8.0)),
 }
 
 SURROUND_SETTINGS: dict[str, dict[str, float]] = {
@@ -269,7 +269,7 @@ SURROUND_SETTINGS: dict[str, dict[str, float]] = {
     "mixed_broad_FB_all": dict(lat=0.36, pvlat=0.05),
     "narrow_super_weak_FB_all": dict(lat=0.03, pvlat=0.03),
     "narrow_very_weak_FB_all": dict(lat=0.03, pvlat=0.03),
-    "narrow_very_weak_FFonly": dict(lat=0.03, pvlat=0.03),
+    "narrow_mid_FFonly": dict(lat=0.03, pvlat=0.03),
 }
 
 

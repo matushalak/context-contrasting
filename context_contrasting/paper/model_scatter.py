@@ -39,6 +39,7 @@ import pandas as pd
 import torch
 from joblib import Parallel, delayed
 
+from . import example_selection as exs
 from . import transitions_helpers as th
 from .experiment_s import (
     PRIMARY_EXPERIMENT_SERIES,
@@ -106,56 +107,6 @@ def _training_trial_order(
 
 def _template_number_map(transition_order: list[str]) -> dict[int, str]:
     return {idx: name for idx, name in enumerate(transition_order, start=1)}
-
-
-def _parse_highlight_numbers(args: argparse.Namespace) -> dict[str, list[int]]:
-    return {
-        "familiar": list(getattr(args, "fam_examples", []) or []),
-        "novel": list(getattr(args, "nov_examples", []) or []),
-    }
-
-
-def _validate_highlight_numbers(highlights: dict[str, list[int]], transition_order: list[str]) -> None:
-    valid = set(range(1, len(transition_order) + 1))
-    requested = [num for numbers in highlights.values() for num in numbers]
-    invalid = sorted(set(requested) - valid)
-    if invalid:
-        raise ValueError(
-            f"highlight template numbers must be between 1 and {len(transition_order)}; invalid={invalid}"
-        )
-
-
-def _highlight_requested(highlights: dict[str, list[int]]) -> bool:
-    return any(bool(numbers) for numbers in highlights.values())
-
-
-def _center_samples_for_highlights(
-    highlights: dict[str, list[int]],
-    template_numbers: dict[int, str],
-) -> list[dict[str, Any]]:
-    samples: list[dict[str, Any]] = []
-    group_offsets = {"familiar": 1000, "novel": 2000}
-    for group, numbers in highlights.items():
-        if group not in group_offsets:
-            raise ValueError(f"unknown highlight group: {group!r}")
-        for display_idx, number in enumerate(numbers, start=1):
-            transition = template_numbers[number]
-            tuned_indices = None
-            if "narrow" in transition:
-                tuned_indices = (0,) if group == "familiar" else (2,)
-            sample = copy.deepcopy(_center_config_with_tuning(transition, tuned_indices))
-            sample_global_idx = -(group_offsets[group] + int(number))
-            sample.update(
-                _canonical_transition=transition,
-                _sample_idx=display_idx - 1,
-                _sample_global_idx=sample_global_idx,
-                _center_template_number=int(number),
-                _highlight_group=group,
-                _highlight_display_number=int(display_idx),
-                _highlight_example_key=f"example_{group}_{int(number):02d}",
-            )
-            samples.append(sample)
-    return samples
 
 
 def _build_model_scatter_test_stimuli(
@@ -895,7 +846,10 @@ def _save_highlight_example_panels(
         configs_by_label: dict[str, dict[str, Any]] = {}
         transition_labels: dict[str, str] = {}
         for example in examples:
-            key = str(example.get("example_key", f"example_{example['number']:02d}"))
+            key = example.get("example_key")
+            if key is None:
+                key = f"example_{example['number']:02d}"
+            key = str(key)
             configs_by_label[key] = copy.deepcopy(example["sample"])
             transition_labels[key] = str(example.get("display_number", example["number"]))
         if precomputed_long_dfs is None:
@@ -1011,73 +965,6 @@ def _robust_shift_limits(summaries: list[pd.DataFrame], *, hi_percentile: float,
     else:
         extent *= 1.0 + pad_ratio
     return [-extent, extent]
-
-
-def _summary_with_transition(summary: pd.DataFrame, samples: list[dict[str, Any]]) -> pd.DataFrame:
-    transition_by_neuron = {
-        int(sample["_sample_global_idx"]): sample["_canonical_transition"]
-        for sample in samples
-    }
-    enriched = summary.copy()
-    enriched["transition"] = enriched["neuron_idx"].map(transition_by_neuron)
-    return enriched
-
-
-def _select_highlight_examples(
-    summaries: dict[str, pd.DataFrame],
-    *,
-    samples: list[dict[str, Any]],
-    highlights: dict[str, list[int]],
-    template_numbers: dict[int, str],
-) -> dict[str, list[dict[str, Any]]]:
-    sample_by_neuron = {
-        int(sample["_sample_global_idx"]): sample
-        for sample in samples
-    }
-    selected: dict[str, list[dict[str, Any]]] = {"familiar": [], "novel": []}
-    for group, numbers in highlights.items():
-        if not numbers:
-            continue
-        summary = summaries[group]
-        for display_idx, number in enumerate(numbers, start=1):
-            transition = template_numbers[number]
-            rows = summary.loc[summary["transition"] == transition].sort_values("neuron_idx")
-            rows = rows.loc[
-                rows["neuron_idx"].map(
-                    lambda neuron_idx: sample_by_neuron[int(neuron_idx)].get("_highlight_group", group) == group
-                )
-            ]
-            if rows.empty:
-                raise ValueError(
-                    f"No sampled cell from template {number} ({transition}) is present in the {group} summary. "
-                    "Increase --n-samples or use --transition-sampling equal."
-                )
-            row = rows.iloc[0]
-            sector = str(row["RotatedSector"])
-            color = th.ROTATED_SECTOR_PALETTE.get(sector, "0.35")
-            selected[group].append(
-                {
-                    # `number` keeps the global template index (1..len(transition_order))
-                    # for CSV bookkeeping; `display_number` is the per-group rank in the
-                    # --fam-examples / --nov-examples list (1..n) used for the
-                    # scatterplot label, so labels read 1..n independently per group.
-                    "number": int(number),
-                    "display_number": int(display_idx),
-                    "example_key": sample_by_neuron[int(row["neuron_idx"])].get("_highlight_example_key"),
-                    "transition": transition,
-                    "neuron_idx": int(row["neuron_idx"]),
-                    "sector": sector,
-                    "color": color,
-                    "NO_Pre": float(row["NO_Pre"]),
-                    "O_Pre": float(row["O_Pre"]),
-                    "NO_Target": float(row["NO_Target"]),
-                    "O_Target": float(row["O_Target"]),
-                    "dNO": float(row["dNO"]),
-                    "dO": float(row["dO"]),
-                    "sample": sample_by_neuron[int(row["neuron_idx"])],
-                }
-            )
-    return selected
 
 
 def _annotate_highlights(fig: plt.Figure, examples: list[dict[str, Any]]) -> None:
@@ -1284,7 +1171,7 @@ def _save_plots(
     output_dir: Path,
     transition_order: list[str],
     samples: list[dict[str, Any]],
-    highlights: dict[str, list[int]],
+    highlights: dict[str, list[dict[str, Any]]],
     template_numbers: dict[int, str],
     example_transition_table: pd.DataFrame | None = None,
     example_samples: list[dict[str, Any]] | None = None,
@@ -1304,7 +1191,7 @@ def _save_plots(
 
     wide = _wide_table(transition_table)
     aggregate = {
-        group: _summary_with_transition(
+        group: exs.summary_with_transition(
             th.build_mean_summary(wide, image_group=group, pre_stage="Naive", target_stage="Expert", threshold=threshold),
             samples,
         )
@@ -1313,17 +1200,20 @@ def _save_plots(
     example_wide = _wide_table(example_transition_table) if example_transition_table is not None else wide
     example_sample_list = example_samples if example_samples is not None else samples
     example_summaries = {
-        group: _summary_with_transition(
+        group: exs.summary_with_transition(
             th.build_mean_summary(example_wide, image_group=group, pre_stage="Naive", target_stage="Expert", threshold=threshold),
             example_sample_list,
         )
         for group in ("familiar", "novel")
     }
-    selected_examples = _select_highlight_examples(
+    selected_examples = exs.select_highlight_examples(
         example_summaries,
         samples=example_sample_list,
+        aggregate_summaries=aggregate,
+        aggregate_samples=samples,
         highlights=highlights,
         template_numbers=template_numbers,
+        threshold=threshold,
     )
     # A single shared response/shift frame across the familiar and novel panels
     # (like the transitions>threshold notebook), but scaled to the bulk so a few
@@ -1380,12 +1270,18 @@ def _save_plots(
             "neuron_idx": example["neuron_idx"],
             "sector": example["sector"],
             "source": example_source,
+            "selection_rule": example["selection_rule"],
+            "requested_sector": example["requested_sector"],
+            "requested_diagonal": example["requested_diagonal"],
+            "magnitude_band": example["magnitude_band"],
             "NO_Pre": example["NO_Pre"],
             "O_Pre": example["O_Pre"],
             "NO_Target": example["NO_Target"],
             "O_Target": example["O_Target"],
             "dNO": example["dNO"],
             "dO": example["dO"],
+            "dNorm": float(np.hypot(example["dNO"], example["dO"])),
+            "diagonal_distance": example["diagonal_distance"],
         }
         for group, examples in selected_examples.items()
         for example in examples
@@ -1413,8 +1309,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     transition_order = list(minimal_configs3)
     template_numbers = _template_number_map(transition_order)
-    highlights = _parse_highlight_numbers(args)
-    _validate_highlight_numbers(highlights, transition_order)
+    highlights = exs.parse_highlight_numbers(args)
+    exs.validate_highlight_numbers(highlights, transition_order)
     samples = _sample_configs(args, transition_order)
 
     torch.manual_seed(args.seed)
@@ -1436,41 +1332,37 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         )
         for sample in samples
     )
-    center_example_samples: list[dict[str, Any]] = []
-    center_example_transition_table: pd.DataFrame | None = None
-    center_example_long_dfs: dict[str, pd.DataFrame] | None = None
-    center_example_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None
-    if getattr(args, "use_center_examples", False) and _highlight_requested(highlights):
-        center_example_samples = _center_samples_for_highlights(highlights, template_numbers)
-        center_examples_by_key = {
-            sample["_highlight_example_key"]: sample
-            for sample in center_example_samples
-        }
-        center_example_long_dfs, center_example_stimuli = _run_panel_configs(
-            center_examples_by_key,
-            n_steps_per_phase=args.n_steps_per_phase,
-            test_trials=args.test_trials,
-            training_trials=args.training_trials,
-            training_stimulus_order=args.training_stimulus_order,
-            seed=args.seed,
-            n_jobs=args.n_jobs,
-        )
-        center_response_df = _response_df_from_panel_long_dfs(
-            center_example_long_dfs,
-            center_examples_by_key,
-            n_steps_per_phase=args.n_steps_per_phase,
-            response_tail_fraction=args.response_tail_fraction,
-            zscore_std_floor=args.zscore_std_floor,
-        )
-        center_example_transition_table = _transition_table(center_response_df)
-
     response_df = pd.concat(response_frames, ignore_index=True)
     transition_table = _transition_table(response_df)
     invalid = transition_table.loc[~np.isfinite(transition_table["response"])].copy()
+    highlight_example_source = "uniform_sample_first_above_or_closest"
+    highlight_example_samples: list[dict[str, Any]] = []
+    highlight_example_transition_table: pd.DataFrame | None = None
+    if exs.highlight_requested(highlights):
+        highlight_example_samples, highlight_example_transition_table = exs.sample_uniform_highlight_pool(
+            args,
+            transition_order=transition_order,
+            highlights=highlights,
+            template_numbers=template_numbers,
+            minimal_configs=minimal_configs3,
+            perturb_config=_perturb_config,
+            run_sample=_run_sample,
+            transition_table=_transition_table,
+            wide_table=_wide_table,
+            test_stimuli=test_stimuli,
+            training_stimuli=training_stimuli,
+        )
+        if highlight_example_transition_table is not None and highlight_example_transition_table.empty:
+            highlight_example_transition_table = None
 
     response_df.to_csv(args.output_dir / "sample_responses.csv", index=False)
     transition_table.to_csv(args.output_dir / "transition_table.csv", index=False)
     pd.DataFrame(_flatten_config(sample) for sample in samples).to_csv(args.output_dir / "sampled_config_parameters.csv", index=False)
+    if highlight_example_samples:
+        pd.DataFrame(_flatten_config(sample) for sample in highlight_example_samples).to_csv(
+            args.output_dir / "highlighted_example_config_parameters.csv",
+            index=False,
+        )
     (args.output_dir / "sampled_configs.json").write_text(json.dumps(samples, indent=2, default=repr))
     if not invalid.empty:
         invalid.to_csv(args.output_dir / "invalid_responses.csv", index=False)
@@ -1484,7 +1376,12 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         "transition_weights": {name: TRANSITIONS[name]["weight"] for name in transition_order},
         "template_numbers": template_numbers,
         "highlight_requested_examples": highlights,
-        "highlight_example_source": "center" if getattr(args, "use_center_examples", False) else "sample",
+        "highlight_example_source": highlight_example_source,
+        "highlight_candidate_n_samples": len(highlight_example_samples),
+        "highlight_candidate_transition_sample_counts": {
+            name: sum(sample["_canonical_transition"] == name for sample in highlight_example_samples)
+            for name in transition_order
+        },
         "seed": args.seed,
         "n_steps_per_phase": args.n_steps_per_phase,
         "test_trials": args.test_trials,
@@ -1516,9 +1413,9 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         samples=samples,
         highlights=highlights,
         template_numbers=template_numbers,
-        example_transition_table=center_example_transition_table,
-        example_samples=center_example_samples or None,
-        example_source="center" if center_example_transition_table is not None else "sample",
+        example_transition_table=highlight_example_transition_table,
+        example_samples=highlight_example_samples or None,
+        example_source=highlight_example_source,
         threshold=args.threshold,
         plot_by_transition=args.plot_by_transition,
         export_panels=args.export_panels,
@@ -1535,8 +1432,8 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         seed=args.seed,
         image_format=args.image_format,
         n_jobs=args.n_jobs,
-        precomputed_long_dfs=center_example_long_dfs,
-        precomputed_stimuli=center_example_stimuli,
+        precomputed_long_dfs=None,
+        precomputed_stimuli=None,
     )
 
     if not args.skip_center_panels and not args.canonical_only:
