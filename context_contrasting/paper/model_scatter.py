@@ -42,8 +42,10 @@ from joblib import Parallel, delayed
 from . import example_selection as exs
 from . import transitions_helpers as th
 from .experiment_s import (
+    NO_RESPONSE_ABLATION_SPECS,
     PRIMARY_EXPERIMENT_SERIES,
     STIMULUS_SPECS,
+    _temporary_model_overrides,
     _run_test_phase_variants,
     run_experimental_phase,
 )
@@ -586,6 +588,84 @@ def _append_post_stimulus_iti(
     return extended
 
 
+def _run_scatter_order_phase_traces(
+    model: CCNeuron,
+    stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    *,
+    phase_label: str,
+) -> list[pd.DataFrame]:
+    frames: list[pd.DataFrame] = []
+    ablation_frames: list[pd.DataFrame] = []
+    ablation_inputs: list[tuple[str, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+    for condition_name, (x_full, c_full) in stimuli.items():
+        occluded_x = torch.zeros_like(x_full)
+        frames.append(run_experimental_phase(model, x_full, c_full, condition_name=f"full_{condition_name}_{phase_label}", update=False))
+        frames.append(run_experimental_phase(model, occluded_x, c_full, condition_name=f"occlusion_{condition_name}_{phase_label}", update=False))
+        ablation_inputs.append((condition_name, x_full, occluded_x, c_full))
+
+    for condition_name, x_full, occluded_x, c_full in ablation_inputs:
+        no_context_c = torch.zeros_like(c_full)
+        for ablation_label, ablation_spec in NO_RESPONSE_ABLATION_SPECS.items():
+            ablated_c = no_context_c if ablation_spec.get("zero_context", False) else c_full
+            model_overrides = ablation_spec.get("model_overrides", {})
+            condition_prefix = ablation_spec.get("condition_prefix", ablation_label)
+            with _temporary_model_overrides(model, **model_overrides):
+                ablation_frames.append(
+                    run_experimental_phase(
+                        model,
+                        x_full,
+                        ablated_c,
+                        condition_name=f"{condition_prefix}_{condition_name}_{phase_label}",
+                        update=False,
+                    )
+                )
+                ablation_frames.append(
+                    run_experimental_phase(
+                        model,
+                        occluded_x,
+                        ablated_c,
+                        condition_name=f"occlusion_{condition_name}_{condition_prefix}_{phase_label}",
+                        update=False,
+                    )
+                )
+    return frames + ablation_frames
+
+
+def _run_scatter_order_panel_config(
+    transition: str,
+    config: dict[str, Any],
+    *,
+    n_steps_per_phase: int,
+    test_trials: int,
+    training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
+    zscore_std_floor: float,
+) -> tuple[str, pd.DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
+    model = CCNeuron(**{key: value for key, value in config.items() if not key.startswith("_")})
+    stimuli = _append_post_stimulus_iti(
+        _build_model_scatter_test_stimuli(n_steps_per_phase=n_steps_per_phase, n_trials=test_trials),
+        n_steps_per_phase=n_steps_per_phase,
+    )
+    training = _build_model_scatter_training_stimuli(
+        n_steps_per_phase=n_steps_per_phase,
+        n_trials=training_trials,
+        order=training_stimulus_order,
+        seed=seed,
+    )
+
+    frames = _run_scatter_order_phase_traces(model, stimuli, phase_label="naive")
+    run_experimental_phase(model, training[0], training[1], "full_familiar_training", update=True)
+    frames.extend(_run_scatter_order_phase_traces(model, stimuli, phase_label="expert"))
+
+    df = pd.concat([frame.assign(experiment_series=PRIMARY_EXPERIMENT_SERIES) for frame in frames], ignore_index=True)
+    df["seed"] = config.get("seed", 42)
+    long_df = wide_to_long(df)
+    long_df = long_df.loc[long_df["experiment_phase"].isin(["naive", "expert"])].copy()
+    long_df["_zscore_std_floor"] = max(zscore_std_floor, BASELINE_STD_SCALE * float(config.get("baseline_drive_sigma", 0.0)))
+    return transition, long_df, stimuli
+
+
 def _run_panel_config(
     transition: str,
     config: dict[str, Any],
@@ -595,6 +675,7 @@ def _run_panel_config(
     training_trials: int,
     training_stimulus_order: str,
     seed: int,
+    zscore_std_floor: float,
 ) -> tuple[str, pd.DataFrame, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
     """Lightweight naive->train->expert run for ONE config, including the same
     no-feedback and no-LAT variants used by the grouped minimal2 panels."""
@@ -618,6 +699,7 @@ def _run_panel_config(
     df["seed"] = config.get("seed", 42)
     long_df = wide_to_long(df)
     long_df = long_df.loc[long_df["experiment_phase"].isin(["naive", "expert"])].copy()
+    long_df["_zscore_std_floor"] = max(zscore_std_floor, BASELINE_STD_SCALE * float(config.get("baseline_drive_sigma", 0.0)))
     return transition, long_df, stimuli
 
 
@@ -630,6 +712,7 @@ def _run_panel_configs(
     training_stimulus_order: str,
     seed: int,
     n_jobs: int,
+    zscore_std_floor: float,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, tuple[torch.Tensor, torch.Tensor]] | None]:
     order = list(configs_by_transition)
     results = Parallel(n_jobs=n_jobs)(
@@ -641,6 +724,37 @@ def _run_panel_configs(
             training_trials=training_trials,
             training_stimulus_order=training_stimulus_order,
             seed=seed,
+            zscore_std_floor=zscore_std_floor,
+        )
+        for t in order
+    )
+    long_dfs = {t: long_df for t, long_df, _ in results}
+    stimuli = results[0][2] if results else None
+    return long_dfs, stimuli
+
+
+def _run_scatter_order_panel_configs(
+    configs_by_transition: dict[str, dict[str, Any]],
+    *,
+    n_steps_per_phase: int,
+    test_trials: int,
+    training_trials: int,
+    training_stimulus_order: str,
+    seed: int,
+    n_jobs: int,
+    zscore_std_floor: float,
+) -> tuple[dict[str, pd.DataFrame], dict[str, tuple[torch.Tensor, torch.Tensor]] | None]:
+    order = list(configs_by_transition)
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(_run_scatter_order_panel_config)(
+            t,
+            configs_by_transition[t],
+            n_steps_per_phase=n_steps_per_phase,
+            test_trials=test_trials,
+            training_trials=training_trials,
+            training_stimulus_order=training_stimulus_order,
+            seed=seed,
+            zscore_std_floor=zscore_std_floor,
         )
         for t in order
     )
@@ -661,12 +775,15 @@ def _render_panels(
     transition_labels: dict[str, str] | None = None,
     name: str = "transition_panel",
     figure_size_inches: tuple[float, float] | None = None,
+    zscore_std_floor: float | None = None,
+    step_window: tuple[int, int] | None = None,
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     if stimuli is None:
         return
     order = list(long_dfs)
     labels = transition_labels or {t: format_transition_label(t) for t in order}
+    resolved_step_window = step_window or _panel_step_window(n_steps_per_phase, test_trials)
     if image_mode is None:
         save_grouped_transition_panels(
             long_dfs,
@@ -674,10 +791,11 @@ def _render_panels(
             save_path=str(out_dir),
             transition_order=order,
             transition_labels=labels,
-            step_window=_panel_step_window(n_steps_per_phase, test_trials),
+            step_window=resolved_step_window,
             save_in_transition_subdir=False,
             zscore_activity=True,
             image_format=image_format,
+            zscore_std_floor=zscore_std_floor,
         )
     else:
         visualize_transition_response_matrix(
@@ -688,12 +806,13 @@ def _render_panels(
             image_mode=image_mode,
             transition_order=order,
             transition_labels=labels,
-            step_window=_panel_step_window(n_steps_per_phase, test_trials),
+            step_window=resolved_step_window,
             save_in_transition_subdir=False,
             save_csv=True,
             zscore_activity=True,
             image_format=image_format,
             figure_size_inches=figure_size_inches,
+            zscore_std_floor=zscore_std_floor,
         )
 
 
@@ -712,6 +831,7 @@ def _save_panels(
     transition_labels: dict[str, str] | None = None,
     name: str = "transition_panel",
     figure_size_inches: tuple[float, float] | None = None,
+    zscore_std_floor: float = 0.04,
 ) -> None:
     """Render a transition panel for the given configs, parallelised across configs."""
     long_dfs, stimuli = _run_panel_configs(
@@ -722,6 +842,7 @@ def _save_panels(
         training_stimulus_order=training_stimulus_order,
         seed=seed,
         n_jobs=n_jobs,
+        zscore_std_floor=zscore_std_floor,
     )
     _render_panels(
         long_dfs,
@@ -734,6 +855,7 @@ def _save_panels(
         transition_labels=transition_labels,
         name=name,
         figure_size_inches=figure_size_inches,
+        zscore_std_floor=zscore_std_floor,
     )
 
 
@@ -781,6 +903,7 @@ def _save_center_panels(
     seed: int,
     image_format: str = "png",
     n_jobs: int = -1,
+    zscore_std_floor: float = 0.04,
 ) -> None:
     """Sanity check: transition panels for the exact noise-free sampler centers."""
     center_dir = output_dir / "center_panels"
@@ -794,6 +917,7 @@ def _save_center_panels(
         seed=seed,
         image_format=image_format,
         n_jobs=n_jobs,
+        zscore_std_floor=zscore_std_floor,
     )
     labels = {transition: format_transition_label(transition) for transition in transition_order}
     _save_panels(
@@ -809,6 +933,7 @@ def _save_center_panels(
         image_mode="familiar",
         transition_labels=labels,
         name="transitions_FAM",
+        zscore_std_floor=zscore_std_floor,
     )
     _save_panels(
         _center_panel_configs(transition_order, narrow_mode="novel"),
@@ -823,6 +948,7 @@ def _save_center_panels(
         image_mode="novel",
         transition_labels=labels,
         name="transitions_NOV",
+        zscore_std_floor=zscore_std_floor,
     )
 
 
@@ -837,6 +963,7 @@ def _save_highlight_example_panels(
     seed: int,
     image_format: str,
     n_jobs: int,
+    zscore_std_floor: float,
     precomputed_long_dfs: dict[str, pd.DataFrame] | None = None,
     precomputed_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> None:
@@ -853,20 +980,28 @@ def _save_highlight_example_panels(
             configs_by_label[key] = copy.deepcopy(example["sample"])
             transition_labels[key] = str(example.get("display_number", example["number"]))
         if precomputed_long_dfs is None:
-            _save_panels(
+            long_dfs, stimuli = _run_scatter_order_panel_configs(
                 configs_by_label,
-                out_dir=output_dir / "highlight_examples" / group,
                 n_steps_per_phase=n_steps_per_phase,
                 test_trials=test_trials,
                 training_trials=training_trials,
                 training_stimulus_order=training_stimulus_order,
                 seed=seed,
-                image_format=image_format,
                 n_jobs=n_jobs,
+                zscore_std_floor=zscore_std_floor,
+            )
+            _render_panels(
+                long_dfs,
+                stimuli,
+                out_dir=output_dir / "highlight_examples" / group,
+                n_steps_per_phase=n_steps_per_phase,
+                test_trials=test_trials,
+                image_format=image_format,
                 image_mode=group,
                 transition_labels=transition_labels,
                 name=f"highlighted_{group}_examples",
                 figure_size_inches=HIGHLIGHT_EXAMPLE_FIGSIZE_INCHES,
+                zscore_std_floor=zscore_std_floor,
             )
         else:
             long_dfs = {key: precomputed_long_dfs[key] for key in configs_by_label if key in precomputed_long_dfs}
@@ -881,6 +1016,7 @@ def _save_highlight_example_panels(
                 transition_labels=transition_labels,
                 name=f"highlighted_{group}_examples",
                 figure_size_inches=HIGHLIGHT_EXAMPLE_FIGSIZE_INCHES,
+                zscore_std_floor=zscore_std_floor,
             )
 
 
@@ -1432,6 +1568,7 @@ def run_model_scatter(args: argparse.Namespace) -> None:
         seed=args.seed,
         image_format=args.image_format,
         n_jobs=args.n_jobs,
+        zscore_std_floor=args.zscore_std_floor,
         precomputed_long_dfs=None,
         precomputed_stimuli=None,
     )
@@ -1447,4 +1584,5 @@ def run_model_scatter(args: argparse.Namespace) -> None:
             seed=args.seed,
             image_format=args.image_format,
             n_jobs=args.n_jobs,
+            zscore_std_floor=args.zscore_std_floor,
         )

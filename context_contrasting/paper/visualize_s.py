@@ -611,15 +611,20 @@ def _window_repeated_trace(
     }
 
 
-def _compute_baseline_stats(baseline_values: np.ndarray) -> dict[str, float | int]:
+def _compute_baseline_stats(
+    baseline_values: np.ndarray,
+    *,
+    zscore_std_floor: float | None = None,
+) -> dict[str, float | int]:
     baseline_values = np.asarray(baseline_values, dtype=float).reshape(-1)
     baseline_n = int(baseline_values.size)
     baseline_mean = float(baseline_values.mean()) if baseline_n else 0.0
-    baseline_std = float(baseline_values.std(ddof=0)) if baseline_n else 0.0
+    baseline_std = float(baseline_values.std(ddof=1)) if baseline_n > 1 else 0.0
     return {
         "baseline_mean": baseline_mean,
         "baseline_std": baseline_std,
         "baseline_n": baseline_n,
+        "zscore_std_floor": float(zscore_std_floor or 0.0),
     }
 
 
@@ -630,6 +635,7 @@ def _collect_shared_baseline_stats(
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     focus_window: tuple[float, float],
     series_lookup: dict[tuple[str, str, str], np.ndarray] | None = None,
+    zscore_std_floor: float | None = None,
 ) -> dict[str, float | int] | None:
     baseline_chunks: list[np.ndarray] = []
     for condition, phase, image_type in trace_specs:
@@ -654,7 +660,7 @@ def _collect_shared_baseline_stats(
 
     if not baseline_chunks:
         return None
-    return _compute_baseline_stats(np.concatenate(baseline_chunks))
+    return _compute_baseline_stats(np.concatenate(baseline_chunks), zscore_std_floor=zscore_std_floor)
 
 
 def _collect_naive_row_baseline_stats(
@@ -665,6 +671,7 @@ def _collect_naive_row_baseline_stats(
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     focus_window: tuple[float, float],
     series_lookup: dict[tuple[str, str, str], np.ndarray] | None = None,
+    zscore_std_floor: float | None = None,
 ) -> dict[str, float | int] | None:
     return _collect_shared_baseline_stats(
         long_df,
@@ -676,6 +683,7 @@ def _collect_naive_row_baseline_stats(
         stimuli=stimuli,
         focus_window=focus_window,
         series_lookup=series_lookup,
+        zscore_std_floor=zscore_std_floor,
     )
 
 
@@ -689,6 +697,14 @@ def _require_naive_row_baseline(
             f"Cannot z-score transition '{transition_name}': no naive pre-stimulus baseline samples were found."
         )
     return baseline_stats
+
+
+def _infer_row_zscore_std_floor(long_df: DataFrame, fallback: float | None = None) -> float:
+    if "_zscore_std_floor" in long_df.columns:
+        values = pd.to_numeric(long_df["_zscore_std_floor"], errors="coerce").dropna()
+        if not values.empty:
+            return float(values.iloc[0])
+    return float(fallback or 0.0)
 
 
 def _summarize_windowed_repeated_trace(
@@ -722,7 +738,8 @@ def _summarize_windowed_repeated_trace(
     baseline_std = float(baseline_stats["baseline_std"])
     baseline_n = int(baseline_stats["baseline_n"])
     if zscore:
-        scale = baseline_std if np.isfinite(baseline_std) and baseline_std > 1e-12 else 1.0
+        zscore_std_floor = float(baseline_stats.get("zscore_std_floor", 0.0))
+        scale = max(baseline_std, zscore_std_floor) if np.isfinite(baseline_std) and baseline_std > 1e-12 else max(1.0, zscore_std_floor)
         summarized = (stacked - baseline_mean) / scale
     else:
         summarized = stacked
@@ -739,6 +756,8 @@ def _summarize_windowed_repeated_trace(
         "y_sem": y_sem,
         "baseline_mean": baseline_mean,
         "baseline_std": baseline_std,
+        "zscore_scale": scale if zscore else 1.0,
+        "zscore_std_floor": float(baseline_stats.get("zscore_std_floor", 0.0)),
         "baseline_n": baseline_n,
         "n_trials": int(stacked.shape[0]),
         "stim_seconds": tuple(windowed["stim_seconds"]),
@@ -753,10 +772,12 @@ def _build_windowed_transition_export(
     labels: dict[str, str],
     phases: list[str],
     selected_conditions: list[str],
+    baseline_conditions: list[str] | None = None,
     trace_types: tuple[str, ...],
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     plot_window: tuple[float, float],
     zscore_activity: bool,
+    zscore_std_floor: float | None = None,
 ) -> DataFrame:
     export_frames: list[DataFrame] = []
 
@@ -765,11 +786,12 @@ def _build_windowed_transition_export(
         series_lookup = _build_trace_series_lookup(long_df)
         row_baseline_stats = _collect_naive_row_baseline_stats(
             long_df,
-            selected_conditions=selected_conditions,
+            selected_conditions=baseline_conditions or selected_conditions,
             trace_types=trace_types,
             stimuli=stimuli,
             focus_window=plot_window,
             series_lookup=series_lookup,
+            zscore_std_floor=_infer_row_zscore_std_floor(long_df, zscore_std_floor),
         )
         if zscore_activity:
             row_baseline_stats = _require_naive_row_baseline(
@@ -822,6 +844,8 @@ def _build_windowed_transition_export(
                             trace_index=trace_index,
                             baseline_mean=float(summary["baseline_mean"]),
                             baseline_std=float(summary["baseline_std"]),
+                            zscore_scale=float(summary["zscore_scale"]),
+                            zscore_std_floor=float(summary["zscore_std_floor"]),
                             baseline_n=int(summary["baseline_n"]),
                             n_trials=int(summary["n_trials"]),
                             stim_start_seconds=float(stim_start),
@@ -849,6 +873,8 @@ def _build_windowed_transition_export(
                 "y_sem",
                 "baseline_mean",
                 "baseline_std",
+                "zscore_scale",
+                "zscore_std_floor",
                 "baseline_n",
                 "n_trials",
                 "experiment_series",
@@ -877,6 +903,8 @@ def _build_windowed_transition_export(
         "y_sem",
         "baseline_mean",
         "baseline_std",
+        "zscore_scale",
+        "zscore_std_floor",
         "baseline_n",
         "n_trials",
         "stim_start_seconds",
@@ -892,10 +920,12 @@ def _build_response_transition_export(
     ordered_transitions: list[str],
     labels: dict[str, str],
     selected_conditions: list[str],
+    baseline_conditions: list[str] | None = None,
     column_specs: tuple[dict[str, str], ...],
     stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
     plot_window: tuple[float, float],
     zscore_activity: bool,
+    zscore_std_floor: float | None = None,
 ) -> DataFrame:
     export_frames: list[DataFrame] = []
 
@@ -911,11 +941,12 @@ def _build_response_transition_export(
         )
         row_baseline_stats = _collect_naive_row_baseline_stats(
             long_df,
-            selected_conditions=selected_conditions,
+            selected_conditions=baseline_conditions or selected_conditions,
             trace_types=response_trace_types,
             stimuli=stimuli,
             focus_window=plot_window,
             series_lookup=series_lookup,
+            zscore_std_floor=_infer_row_zscore_std_floor(long_df, zscore_std_floor),
         )
         if zscore_activity:
             row_baseline_stats = _require_naive_row_baseline(
@@ -971,6 +1002,8 @@ def _build_response_transition_export(
                             image_type=trace_type,
                             baseline_mean=float(summary["baseline_mean"]),
                             baseline_std=float(summary["baseline_std"]),
+                            zscore_scale=float(summary["zscore_scale"]),
+                            zscore_std_floor=float(summary["zscore_std_floor"]),
                             baseline_n=int(summary["baseline_n"]),
                             n_trials=int(summary["n_trials"]),
                             stim_start_seconds=float(stim_start),
@@ -1000,6 +1033,8 @@ def _build_response_transition_export(
                 "y_sem",
                 "baseline_mean",
                 "baseline_std",
+                "zscore_scale",
+                "zscore_std_floor",
                 "baseline_n",
                 "n_trials",
                 "stim_start_seconds",
@@ -1027,6 +1062,8 @@ def _build_response_transition_export(
         "y_sem",
         "baseline_mean",
         "baseline_std",
+        "zscore_scale",
+        "zscore_std_floor",
         "baseline_n",
         "n_trials",
         "stim_start_seconds",
@@ -1051,6 +1088,7 @@ def visualize_transition_response_matrix(
     zscore_activity: bool = True,
     image_format: str = "png",
     figure_size_inches: tuple[float, float] | None = None,
+    zscore_std_floor: float | None = None,
 ) -> list[str]:
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
@@ -1082,6 +1120,7 @@ def visualize_transition_response_matrix(
         image_mode=image_mode,
         include_novel_image=(image_mode == "novel"),
     )
+    baseline_conditions = available_conditions or list(STIMULI)
     layout_conditions = _transition_response_layout_conditions(
         image_mode=image_mode,
         available_conditions=available_conditions or list(STIMULI),
@@ -1252,11 +1291,12 @@ def visualize_transition_response_matrix(
         )
         row_baseline_stats = _collect_naive_row_baseline_stats(
             long_df,
-            selected_conditions=selected_conditions,
+            selected_conditions=baseline_conditions,
             trace_types=response_trace_types,
             stimuli=STIMULI,
             focus_window=plot_window,
             series_lookup=series_lookup,
+            zscore_std_floor=_infer_row_zscore_std_floor(long_df, zscore_std_floor),
         )
         if zscore_activity:
             row_baseline_stats = _require_naive_row_baseline(
@@ -1356,10 +1396,12 @@ def visualize_transition_response_matrix(
             ordered_transitions=ordered_transitions,
             labels=labels,
             selected_conditions=selected_conditions,
+            baseline_conditions=baseline_conditions,
             column_specs=column_specs,
             stimuli=STIMULI,
             plot_window=plot_window,
             zscore_activity=zscore_activity,
+            zscore_std_floor=zscore_std_floor,
         )
         export_df.to_csv(f"{base_path}.csv", index=False)
         saved_paths.append(f"{base_path}.csv")
@@ -1594,6 +1636,7 @@ def visualize_transition_panel(
         image_mode=image_mode,
         include_novel_image=include_novel_image,
     )
+    baseline_conditions = available_conditions or list(STIMULI)
 
     display_windows = [
         _expand_window_to_event_bounds(STIMULI[condition], focus_window=step_window)
@@ -1650,6 +1693,7 @@ def visualize_transition_panel(
             labels=labels,
             phases=phases,
             selected_conditions=selected_conditions,
+            baseline_conditions=baseline_conditions,
             trace_types=resolved_trace_types,
             stimuli=STIMULI,
             plot_window=plot_window,
@@ -1816,6 +1860,7 @@ def save_grouped_transition_panels(
     step_window: tuple[int, int] = (1000, 1350),
     zscore_activity: bool = True,
     image_format: str = "png",
+    zscore_std_floor: float | None = None,
 ) -> None:
     sample_df = next(iter(long_dfs_by_transition.values()), None)
     if sample_df is None:
@@ -1863,6 +1908,7 @@ def save_grouped_transition_panels(
             save_csv=True,
             zscore_activity=zscore_activity,
             image_format=image_format,
+            zscore_std_floor=zscore_std_floor,
         )
         visualize_transition_response_matrix(
             combined_transitions,
@@ -1877,6 +1923,7 @@ def save_grouped_transition_panels(
             save_csv=True,
             zscore_activity=zscore_activity,
             image_format=image_format,
+            zscore_std_floor=zscore_std_floor,
         )
 
 
