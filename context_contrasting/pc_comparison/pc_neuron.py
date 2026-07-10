@@ -1,23 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Mapping
 
 import numpy as np
-
-from context_contrasting.mini_network.utils import EMA
-
-
-CircuitType = Literal["PPE", "NPE"]
-
-
-@dataclass(frozen=True)
-class PCResponse:
-    response: float
-    pyc_drive: float
-    pv_response: float
-    inhibition: float
-    residual: float
+import torch
 
 
 def _as_vector(values: Any, *, length: int = 3) -> np.ndarray:
@@ -31,171 +17,123 @@ def _relu(value: float) -> float:
     return float(max(0.0, value))
 
 
+def _nonnegative(values: np.ndarray | float) -> np.ndarray | float:
+    return np.maximum(values, 0.0)
+
+
+class _EMA:
+    def __init__(self, alpha: float) -> None:
+        self.alpha = float(alpha)
+        self.ema = 0.0
+
+    def __call__(self, value: float) -> float:
+        self.ema = (1.0 - self.alpha) * self.ema + self.alpha * float(value)
+        return float(self.ema)
+
+    def reset_state(self) -> None:
+        self.ema = 0.0
+
+
 class CorrectPCneuron:
-    """"
-    Reusing parameters from context-contrasting circuit population
-    """
-    def __init__(self, CC_template_parameters: Mapping[str, Any]) -> None:
-        self.w_LAT = float(CC_template_parameters.get("w_lat", 0.0))
-        self.w_FB = _as_vector(CC_template_parameters.get("w_fb", [0.0, 0.0, 0.0]))
-        self.w_FF = _as_vector(CC_template_parameters.get("w_ff", [0.0, 0.0, 0.0]))
-        self.activation = CC_template_parameters.get("activation", lambda x: max(0.0, x))
+    """PPE/NPE circuit that only reuses context-contrasting template parameters.
 
-        self.pv = EMA(...)
-        self.pyramidal = EMA(...)
-        self.adapt = EMA(...)
-    
-
-        self.lr_fb = nonnegative(float(CC_template_parameters.get("lr_fb", 0.0)))
-        self.lr_ff = nonnegative(float(CC_template_parameters.get("lr_ff", 0.0)) )
-
-    def PPE(self, x, c):
-        y_t = self.pyramidal.ema
-        a = self.adapt(self.pyramidal.ema)
-        pyc_drive = float(np.dot(self.w_FF, x))
-        pv_response = self.pv(self.activation(float(np.dot(self.w_FB, c)) + baseline))
-        inhibition = self.w_LAT * pv_response
-        y_next = self.pyramidal(self.activation(pyc_drive - inhibition + baseline - a))
-        
-        # already contains update
-        self.w_LAT += self.lr_ff * y_t * pv_response # dw = (ff-fb) * fb
-        return x, y_t, y_next, pv_response, c
-    
-    def NPE(self, x, c):
-        y_t = self.pyramidal.ema
-        a = self.adapt(self.pyramidal.ema)
-        pyc_drive = float(np.dot(self.w_FB, c))
-        pv_response = self.pv(self.activation(float(np.dot(self.w_FF, x)) + baseline))
-        inhibition = self.w_LAT * pv_response
-        y_next = self.pyramidal(self.activation(pyc_drive - inhibition + baseline - a))
-
-        # already contains update
-        self.w_FB += self.lr_fb * y_t * c # dw = (fb-ff) * fb
-        return x, y_t, y_next, pv_response, c
-
-
-# TOO TWEAKY and bloated
-class PCNeuron:
-    """Static subtractive PPE/NPE rate unit for the model-comparison panels.
-
-    The class deliberately uses only the synapses that are allowed for each
-    canonical circuit:
-
-    * PPE: PyC gets feedforward drive via ``w_ff``; a context-driven PV cell uses
-      ``w_pv_fb`` and inhibits PyC through plastic ``w_lat``.
-    * NPE: PyC gets context drive via plastic ``w_fb``; a feedforward-driven PV
-      cell uses ``w_pv_ff`` and inhibits PyC through fixed ``w_lat``.
-
-    ``W_pv`` and ``w_pv_lat`` from the context-contrasting model are intentionally
-    not part of the circuit unless the caller explicitly maps ``W_pv`` into
-    ``w_pv_ff`` before constructing an NPE unit.
+    Expected keys are the sampled paper/template values:
+    ``w_ff``, ``w_fb``, ``w_pv``, ``w_lat``, ``lr_lat``, ``lr_fb``,
+    ``pyc_decay`` and ``pv_decay``. There are no additional fitted gains,
+    biases, adaptation terms, leaks, caps, or random per-cell parameters.
     """
 
-    def __init__(
-        self,
-        neuron_id: int,
-        neuron_type: CircuitType,
-        parameters: Mapping[str, Any],
-    ) -> None:
-        if neuron_type not in {"PPE", "NPE"}:
-            raise ValueError("neuron_type must be 'PPE' or 'NPE'.")
-        self.neuron_id = int(neuron_id)
-        self.neuron_type: CircuitType = neuron_type
-        self.w_ff = _as_vector(parameters.get("w_ff", [0.0, 0.0, 0.0]))
-        self.w_fb = _as_vector(parameters.get("w_fb", [0.0, 0.0, 0.0]))
-        self.w_pv_fb = _as_vector(parameters.get("w_pv_fb", self.w_fb))
-        self.w_pv_ff = _as_vector(parameters.get("w_pv_ff", self.w_ff))
-        self.w_lat = float(np.asarray(parameters.get("w_lat", 0.0), dtype=float).reshape(-1)[0])
-        self.bias = float(parameters.get("bias", 0.0))
-        self.pv_bias = float(parameters.get("pv_bias", 0.0))
-        self.ff_gain = float(parameters.get("ff_gain", 1.0))
-        self.fb_gain = float(parameters.get("fb_gain", 1.0))
-        self.pv_gain = float(parameters.get("pv_gain", 1.0))
-        self.lat_gain = float(parameters.get("lat_gain", 1.0))
-        self.lr_lat = float(parameters.get("lr_lat", 0.0))
-        self.lr_fb = float(parameters.get("lr_fb", 0.0))
-        self.max_weight = float(parameters.get("max_weight", 5.0))
-        response_max = parameters.get("response_max")
-        self.response_max = None if response_max is None else float(response_max)
+    def __init__(self, cc_template_parameters: Mapping[str, Any]) -> None:
+        self.w_LAT = float(_nonnegative(float(cc_template_parameters.get("w_lat", 0.0))))
+        self.w_FB = _nonnegative(_as_vector(cc_template_parameters.get("w_fb", [0.0, 0.0, 0.0])))
+        self.w_FF = _nonnegative(_as_vector(cc_template_parameters.get("w_ff", [0.0, 0.0, 0.0])))
+        self.w_PV = _nonnegative(_as_vector(cc_template_parameters.get("w_pv", [0.0, 0.0, 0.0])))
 
-    def activate(self, ff_input: np.ndarray, context_input: np.ndarray) -> float:
-        return self.components(ff_input, context_input).response
-
-    def components(self, ff_input: np.ndarray, context_input: np.ndarray) -> PCResponse:
-        ff_input = _as_vector(ff_input)
-        context_input = _as_vector(context_input)
-
-        if self.neuron_type == "PPE":
-            pyc_drive = self.ff_gain * float(np.dot(self.w_ff, ff_input))
-            pv_response = self.pv_gain * _relu(float(np.dot(self.w_pv_fb, context_input)) - self.pv_bias)
-        else:
-            pyc_drive = self.fb_gain * float(np.dot(self.w_fb, context_input))
-            pv_response = self.pv_gain * _relu(float(np.dot(self.w_pv_ff, ff_input)) - self.pv_bias)
-
-        inhibition = self.lat_gain * self.w_lat * pv_response
-        residual = pyc_drive - inhibition
-        response = _relu(residual - self.bias)
-        if self.response_max is not None:
-            response = min(response, self.response_max)
-        return PCResponse(
-            response=response,
-            pyc_drive=pyc_drive,
-            pv_response=pv_response,
-            inhibition=inhibition,
-            residual=residual,
+        self.lr_fb = float(_nonnegative(float(cc_template_parameters.get("lr_fb", 0.0))))
+        self.lr_lat = float(_nonnegative(float(cc_template_parameters.get("lr_lat", 0.0))))
+        self.circuit = str(cc_template_parameters.get("circuit", "PPE"))
+        self.use_lat_connection = True
+        self.n_features = 3
+        self.baseline_drive_sigma = float(_nonnegative(float(cc_template_parameters.get("baseline_drive_sigma", 0.0))))
+        self.baseline_current_scale = 0.12
+        self.rng = np.random.default_rng(int(cc_template_parameters.get("seed", 0)))
+        self.baseline_current = float(
+            self.rng.normal(0.0, self.baseline_current_scale * self.baseline_drive_sigma)
+            if self.baseline_drive_sigma > 0.0
+            else 0.0
         )
 
-    def train(
-        self,
-        ff_input: np.ndarray,
-        context_input: np.ndarray,
-        *,
-        plasticity_context: np.ndarray | None = None,
-        repetitions: int = 1,
-    ) -> None:
-        if repetitions < 1:
-            return
-        ff_input = _as_vector(ff_input)
-        context_input = _as_vector(context_input)
-        plasticity_context = _as_vector(plasticity_context) if plasticity_context is not None else context_input
-        for _ in range(int(repetitions)):
-            parts = self.components(ff_input, context_input)
-            if self.neuron_type == "PPE":
-                # Balance expected sensory evidence with context-driven inhibition.
-                delta = self.lr_lat * parts.residual * parts.pv_response
-                self.w_lat = float(np.clip(self.w_lat + delta, 0.0, self.max_weight))
-            else:
-                # Strengthen the active generative/context channel when the NPE
-                # residual remains positive after sensory-driven inhibition.
-                delta = self.lr_fb * parts.residual * plasticity_context
-                self.w_fb = np.clip(self.w_fb + delta, 0.0, self.max_weight)
+        pyc_decay = float(cc_template_parameters.get("pyc_decay", 0.05))
+        pv_decay = float(cc_template_parameters.get("pv_decay", 0.5))
+        self.pv = _EMA(pv_decay)
+        self.pyramidal = _EMA(pyc_decay)
 
-    def update_parameters(self, new_parameters: Mapping[str, Any]) -> None:
-        for key, value in new_parameters.items():
-            if key in {"w_ff", "w_fb", "w_pv_fb", "w_pv_ff"}:
-                setattr(self, key, _as_vector(value))
-            elif hasattr(self, key):
-                setattr(self, key, float(value))
-            else:
-                raise KeyError(f"unknown PCNeuron parameter: {key}")
+    def reset_state(self) -> None:
+        self.pv.reset_state()
+        self.pyramidal.reset_state()
 
-    def get_info(self) -> dict[str, Any]:
-        return {
-            "neuron_id": self.neuron_id,
-            "neuron_type": self.neuron_type,
-            "w_ff": self.w_ff.tolist(),
-            "w_fb": self.w_fb.tolist(),
-            "w_pv_fb": self.w_pv_fb.tolist(),
-            "w_pv_ff": self.w_pv_ff.tolist(),
-            "w_lat": self.w_lat,
-            "bias": self.bias,
-            "pv_bias": self.pv_bias,
-            "ff_gain": self.ff_gain,
-            "fb_gain": self.fb_gain,
-            "pv_gain": self.pv_gain,
-            "lat_gain": self.lat_gain,
-            "lr_lat": self.lr_lat,
-            "lr_fb": self.lr_fb,
-            "max_weight": self.max_weight,
-            "response_max": self.response_max,
-        }
+    def _reset_state(self) -> None:
+        self.reset_state()
+
+    @property
+    def w_ff(self) -> torch.Tensor:
+        return torch.as_tensor(self.w_FF, dtype=torch.float32)
+
+    @property
+    def w_fb(self) -> torch.Tensor:
+        return torch.as_tensor(self.w_FB, dtype=torch.float32)
+
+    @property
+    def w_lat(self) -> torch.Tensor:
+        return torch.as_tensor([self.w_LAT], dtype=torch.float32)
+
+    @property
+    def w_pv_lat(self) -> torch.Tensor:
+        return torch.zeros(1, dtype=torch.float32)
+
+    @property
+    def W_pv(self) -> torch.Tensor:
+        return torch.as_tensor(self.w_PV.reshape(1, -1), dtype=torch.float32)
+
+    def PPE(self, x: np.ndarray, c: np.ndarray, *, update: bool = True) -> tuple[np.ndarray, float, float, float, np.ndarray]:
+        x = _as_vector(x)
+        c = _as_vector(c)
+        y_t = float(self.pyramidal.ema)
+        pyc_drive = float(np.dot(self.w_FF, x))
+        pv_response = self.pv(_relu(float(np.dot(self.w_PV, c))))
+        inhibition = (self.w_LAT * pv_response) if self.use_lat_connection else 0.0
+        v = pyc_drive - inhibition + self.baseline_current
+        y_next = self.pyramidal(_relu(v))
+
+        if update:
+            self.w_LAT = float(_nonnegative(self.w_LAT + self.lr_lat * v * pv_response))
+        return x, y_t, y_next, pv_response, c
+
+    def NPE(self, x: np.ndarray, c: np.ndarray, *, update: bool = True) -> tuple[np.ndarray, float, float, float, np.ndarray]:
+        x = _as_vector(x)
+        c = _as_vector(c)
+        y_t = float(self.pyramidal.ema)
+        pyc_drive = float(np.dot(self.w_FB, c))
+        pv_response = self.pv(_relu(float(np.dot(self.w_PV, x))))
+        inhibition = (self.w_LAT * pv_response) if self.use_lat_connection else 0.0
+        v = pyc_drive - inhibition + self.baseline_current
+        y_next = self.pyramidal(_relu(v))
+
+        if update:
+            self.w_FB = _nonnegative(self.w_FB - self.lr_fb * v * c)
+        return x, y_t, y_next, pv_response, c
+
+    def __call__(self, x: torch.Tensor, c: torch.Tensor, update:bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        x_np = np.asarray(x.detach().cpu(), dtype=float)
+        c_np = np.asarray(c.detach().cpu(), dtype=float)
+        if self.circuit == "NPE":
+            _, y_t, y_next, pv_response, _ = self.NPE(x_np, c_np, update=update)
+        else:
+            _, y_t, y_next, pv_response, _ = self.PPE(x_np, c_np, update=update)
+        return (
+            torch.as_tensor(x_np, dtype=torch.float32),
+            torch.as_tensor(y_t, dtype=torch.float32),
+            torch.as_tensor(y_next, dtype=torch.float32),
+            torch.as_tensor([pv_response], dtype=torch.float32),
+            torch.as_tensor(c_np, dtype=torch.float32),
+        )
