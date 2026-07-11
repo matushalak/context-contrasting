@@ -16,17 +16,19 @@ a small set of templates keyed by **tuning width** and PyC/PV feedforward streng
     asymmetry **emerges** from the protocol (only the familiar images are shown
     during the plastic phase, so their FF adapts while the novel image's does not)
     rather than being hand-assigned to separate familiar/novel templates.
-  * ``broad`` (width 2): strong FF plasticity + a low apical drive threshold, so
-    familiar FF adapts away (``-NO``) and the strengthened, generalized feedback
-    drives the occluded response (``+O``). Each sampled broad cell is tuned to a
-    random pair of the three images rather than all inputs.
+  * ``broad`` (width 2): a low apical drive threshold plus larger accumulated
+    activity, so familiar FF adapts away (``-NO``) and the strengthened,
+    generalized feedback drives the occluded response (``+O``). Each sampled
+    broad cell is tuned to a random pair of the three images rather than all
+    inputs.
 
-Two principled choices distinguish this from the legacy templates: feedback is
+Three principled choices distinguish this from the legacy templates: feedback is
 always **generalized over the context channels a cell receives** (no hand-painted
-per-channel weight asymmetry), and narrow/broad tuning is the *only* thing that
-sets the FF-plasticity scale and the feedback drive-vs-gain regime. Surround
-weights (``w_lat``, ``W_pv``, ``w_pv_lat``) are coupled per template; only
-``w_lat`` is plastic. PV feedforward tuning is sampled independently of PyC
+per-channel weight asymmetry), narrow/broad tuning sets the feedback
+drive-vs-gain regime, and the FF anti-Hebbian scale emerges from a slow
+activity accumulator rather than a width-specific fixed factor.
+Surround weights (``w_lat``, ``W_pv``, ``w_pv_lat``) are coupled per template;
+only ``w_lat`` is plastic. PV feedforward tuning is sampled independently of PyC
 tuning; every sampled PV is tuned to two images and less tuned to the third.
 
 The width-class scalars and the mixture weights at the top of this file are the
@@ -54,7 +56,20 @@ N_FEATURES = 3
 # rates are calibrated at 200 steps/phase; longer phase durations scale them down
 # so the accumulated plasticity stays close to the clearer 200-step scatter.
 LEARNING_RATE_REFERENCE_STEPS = 200
-SHARED_LEARNING_RATES = {"lr_ff": 0.0155, "lr_fb": 0.00065, "lr_lat": 0.0300, "lr_pv": 0.0}
+# The FF anti-Hebbian update now uses a very slow activity accumulator instead
+# of width-specific fixed factors. The accumulator runs through the full
+# training sequence (stimulus periods and ITIs); broad cells carry larger
+# long-term activity across the sequence, while narrow cells accumulate less.
+# The shared FF multiplier compensates for the small raw accumulator value at
+# alpha=pyc_decay*1e-5 and power=2.
+FF_ACTIVITY_ACCUMULATOR_LR_MULTIPLIER = 4.98586e8
+SHARED_LEARNING_RATES = {"lr_ff": 0.0155 * FF_ACTIVITY_ACCUMULATOR_LR_MULTIPLIER, "lr_fb": 0.00065, "lr_lat": 0.0300, "lr_pv": 0.0}
+FF_ACTIVITY_ACCUMULATOR = {
+    "use_ff_activity_accumulator": True,
+    "ff_accumulator_alpha_factor": 1e-5,
+    "ff_accumulator_power": 2.0,
+    "ff_accumulator_active_only": False,
+}
 SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
 SOMA_ACTIVATION_THRESHOLD = 0.08
 APICAL_DRIVE_SUBTRACTIVE = True
@@ -121,9 +136,9 @@ def _effective_learning_rates(n_steps_per_phase: int) -> dict[str, float]:
         for name, rate in SHARED_LEARNING_RATES.items()
     }
 
-# Two tuning-width classes only. BROAD: strong FF (anti-Hebbian) plasticity + a low
-# apical drive threshold, so feedback DRIVES the soma. NARROW: weak FF plasticity +
-# a high drive threshold, so feedback only GAIN-modulates. "Untuned" cells are
+# Two tuning-width classes only. BROAD: more accumulated activity + a low apical
+# drive threshold, so feedback DRIVES the soma. NARROW: less accumulated activity
+# + a high drive threshold, so feedback only GAIN-modulates. "Untuned" cells are
 # modeled as weak / already-adapted BROAD cells (a broad cell whose FF was depressed
 # by past adaptation), so they share the broad width class and merely carry a
 # near-silent feedforward weight -- there is no separate untuned regime. Each entry
@@ -131,7 +146,6 @@ def _effective_learning_rates(n_steps_per_phase: int) -> dict[str, float]:
 # (apical_gain_strength, apical_drive_threshold). Baseline sigma is a fixed center.
 WIDTH_CLASSES: dict[str, dict[str, Any]] = {
     "broad": dict(
-        ff_plasticity_scale=8.0,
         # Broad cells need enough gain that intact novel FF drive can be amplified
         # alongside strengthened generalized FB; otherwise novel expert NO gets
         # suppressed even for mixed FF+FB responders.
@@ -140,16 +154,10 @@ WIDTH_CLASSES: dict[str, dict[str, Any]] = {
         baseline=0.16,
     ),
     "narrow": dict(
-        # Weak (not zero) FF plasticity: a narrow cell tuned to a *familiar* image
-        # partially adapts its FF during training. With GainSigmoid now clipped at
-        # >=1, naive narrows are no longer FB-suppressed (gain factor = 1 at
-        # y_fb < threshold); the familiar +NO mover therefore requires the
-        # adapted-FF * expert-gain product to remain ABOVE the un-amplified naive
-        # NO. So the scale must be MILD enough that FF doesn't drain past
-        # ~gain_expert^-1 of its initial value -- otherwise familiar narrows
-        # collapse into small/-NO en masse. Novel-tuned narrows (FF intact) still
-        # ride the smaller expert-gain growth into +NO.
-        ff_plasticity_scale=2.0,
+        # Narrow cells tend to accumulate less long-term response than broad cells
+        # because only one preferred channel is active during familiar training.
+        # The slow always-on activity accumulator therefore gives them weaker FF
+        # plasticity without a width-specific fixed factor.
         gain=6.4, gain_clip=UNIFORM_GAIN_CLIP,
         # Sharper sigmoid (gain_k=9 vs the broad default 5) so the small naive->
         # expert w_fb growth produces a visible amplification step around the
@@ -379,6 +387,7 @@ def _build_config(
         "pv_noise_sigma": PV_NOISE_SIGMA,
         "pv_plasticity": False,
         "pv_lat_plasticity": False,
+        **FF_ACTIVITY_ACCUMULATOR,
     }
     # Width-class scalars, with optional per-template overrides.
     for key, model_key in _SCALAR_OVERRIDES.items():
@@ -569,6 +578,8 @@ def write_metadata(args) -> None:
         "shared_learning_rates": _effective_learning_rates(args.n_steps_per_phase),
         "base_shared_learning_rates": SHARED_LEARNING_RATES,
         "learning_rate_reference_steps": LEARNING_RATE_REFERENCE_STEPS,
+        "ff_activity_accumulator": FF_ACTIVITY_ACCUMULATOR,
+        "ff_activity_accumulator_lr_multiplier": FF_ACTIVITY_ACCUMULATOR_LR_MULTIPLIER,
         "soma_activation_threshold": SOMA_ACTIVATION_THRESHOLD,
         "apical_drive_subtractive": APICAL_DRIVE_SUBTRACTIVE,
         "pv_noise_sigma": PV_NOISE_SIGMA,
