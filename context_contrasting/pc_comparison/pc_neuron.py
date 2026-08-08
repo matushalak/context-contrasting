@@ -2,138 +2,222 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-import numpy as np
 import torch
+import torch.nn as nn
+
+from context_contrasting.paper.neuron_utils import EMA, ThresholdReLU, nonnegative, randn_reparam
 
 
-def _as_vector(values: Any, *, length: int = 3) -> np.ndarray:
-    arr = np.asarray(values, dtype=float).reshape(-1)
-    if arr.size != length:
-        raise ValueError(f"expected vector of length {length}, got shape={arr.shape}")
-    return arr.copy()
+def _init_tensor(init: Mapping[str, Any] | torch.Tensor | list[float] | tuple[float, ...] | float, *, shape: tuple[int, ...]) -> torch.Tensor:
+    if isinstance(init, Mapping):
+        value = randn_reparam(size=(1,), **init)
+    else:
+        value = torch.as_tensor(init, dtype=torch.float32)
+    value = value.to(dtype=torch.float32).reshape(shape)
+    return nonnegative(value)
 
 
-def _relu(value: float) -> float:
-    return float(max(0.0, value))
+def _bounded_signed_delta(delta: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    return torch.where(delta >= 0.0, delta * (1.0 - weights), delta * weights)
 
 
-def _nonnegative(values: np.ndarray | float) -> np.ndarray | float:
-    return np.maximum(values, 0.0)
+class CorrectPCneuron(nn.Module):
+    """Minimal PPE/NPE circuit using the same tensor-state contract as CCNeuron.
 
+    The PC comparison keeps the circuit-specific effective inputs:
+      - PPE: PyC gets sensory FF drive; PV gets context/prediction drive.
+      - NPE: PyC gets context/prediction drive; PV gets sensory FF drive.
 
-class _EMA:
-    def __init__(self, alpha: float) -> None:
-        self.alpha = float(alpha)
-        self.ema = 0.0
+    Plasticity is only the balancing rule for the relevant PC synapse. The
+    public attributes and `forward`/`update` contract intentionally match
+    `paper.minimal_divisive.CCNeuron`, so repository helpers such as
+    `run_experimental_phase`, `wide_to_long`, and `visualize_transition_panel`
+    can be reused directly.
 
-    def __call__(self, value: float) -> float:
-        self.ema = (1.0 - self.alpha) * self.ema + self.alpha * float(value)
-        return float(self.ema)
-
-    def reset_state(self) -> None:
-        self.ema = 0.0
-
-
-class CorrectPCneuron:
-    """PPE/NPE circuit that only reuses context-contrasting template parameters.
-
-    Expected keys are the sampled paper/template values:
-    ``w_ff``, ``w_fb``, ``w_pv``, ``w_lat``, ``lr_lat``, ``lr_fb``,
-    ``pyc_decay`` and ``pv_decay``. There are no additional fitted gains,
-    biases, adaptation terms, leaks, caps, or random per-cell parameters.
+    NOTE:
+    To have signed error, need to work with signed voltage, NOT rectified PyC output!!!
+    If rectified output used in update equations, sign of the learning update cannot change and can only be one polarity OR zero.
     """
 
-    def __init__(self, cc_template_parameters: Mapping[str, Any]) -> None:
-        self.w_LAT = float(_nonnegative(float(cc_template_parameters.get("w_lat", 0.0))))
-        self.w_FB = _nonnegative(_as_vector(cc_template_parameters.get("w_fb", [0.0, 0.0, 0.0])))
-        self.w_FF = _nonnegative(_as_vector(cc_template_parameters.get("w_ff", [0.0, 0.0, 0.0])))
-        self.w_PV = _nonnegative(_as_vector(cc_template_parameters.get("w_pv", [0.0, 0.0, 0.0])))
+    def __init__(self, cc_template_parameters: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
+        super().__init__()
+        params = dict(cc_template_parameters or {})
+        params.update(kwargs)
 
-        self.lr_fb = float(_nonnegative(float(cc_template_parameters.get("lr_fb", 0.0))))
-        self.lr_lat = float(_nonnegative(float(cc_template_parameters.get("lr_lat", 0.0))))
-        self.circuit = str(cc_template_parameters.get("circuit", "PPE"))
-        self.use_lat_connection = True
-        self.n_features = 3
-        self.baseline_drive_sigma = float(_nonnegative(float(cc_template_parameters.get("baseline_drive_sigma", 0.0))))
-        self.baseline_current_scale = 0.12
-        self.rng = np.random.default_rng(int(cc_template_parameters.get("seed", 0)))
-        self.baseline_current = float(
-            self.rng.normal(0.0, self.baseline_current_scale * self.baseline_drive_sigma)
-            if self.baseline_drive_sigma > 0.0
-            else 0.0
+        self.n_features = int(params.get("n_features", 3))
+        self.n_context = int(params.get("n_context", self.n_features))
+        self.n_pv = int(params.get("n_pv", 1))
+        if self.n_features != 3 or self.n_context != 3 or self.n_pv != 1:
+            raise ValueError("CorrectPCneuron currently expects 3 features/context channels and one PV cell.")
+
+        seed = int(params.get("seed", 42))
+        torch.manual_seed(seed)
+
+        self.circuit = str(params.get("circuit", "PPE"))
+        if self.circuit not in {"PPE", "NPE"}:
+            raise ValueError("circuit must be 'PPE' or 'NPE'.")
+
+        self.w_ff = _init_tensor(params.get("w_ff_init", {"mu": [0.0, 0.0, 0.0], "sigma": 0.0}), shape=(self.n_features,))
+        self.w_fb = _init_tensor(params.get("w_fb_init", {"mu": [0.0, 0.0, 0.0], "sigma": 0.0}), shape=(self.n_context,))
+        self.w_lat = _init_tensor(params.get("w_lat_init", {"mu": [0.0], "sigma": 0.0}), shape=(self.n_pv,))
+        self.w_pv_lat = _init_tensor(params.get("w_pv_lat_init", {"mu": [0.0], "sigma": 0.0}), shape=(self.n_pv,))
+        self.W_pv = _init_tensor(params.get("W_pv_init", {"mu": [0.0, 0.0, 0.0], "sigma": 0.0}), shape=(self.n_pv, self.n_features))
+
+        receives_context = params.get("receives_context", (True, True, True))
+        self.receives_context = torch.as_tensor(receives_context, dtype=torch.bool).reshape(self.n_context)
+        self.w_fb = self.w_fb * self.receives_context
+
+        self.lr_fb = float(nonnegative(torch.as_tensor(params.get("lr_fb", 0.0), dtype=torch.float32)))
+        self.lr_ff = float(nonnegative(torch.as_tensor(params.get("lr_ff", 0.0), dtype=torch.float32)))
+        self.lr_lat = float(nonnegative(torch.as_tensor(params.get("lr_lat", 0.0), dtype=torch.float32)))
+        self.baseline_drive_mu = float(params.get("baseline_drive_mu", 0.0))
+        self.baseline_drive_sigma = float(nonnegative(torch.as_tensor(params.get("baseline_drive_sigma", 0.0), dtype=torch.float32)))
+        self.pv_noise_sigma = float(nonnegative(torch.as_tensor(params.get("pv_noise_sigma", 0.0), dtype=torch.float32)))
+
+        pyc_decay = float(params.get("pyc_decay", 0.05))
+        pv_decay = float(params.get("pv_decay", 0.5))
+        self.activation = params.get(
+            "activation",
+            ThresholdReLU(threshold=0.0, subtractive=False, hasMax=True, maxValue=1.0),
+        )
+        self.pv = EMA(shape=(self.n_pv,), alpha=pv_decay)
+        self.pyramidal = EMA(shape=(), alpha=pyc_decay)
+        self.adapt = EMA(shape=(), alpha=pyc_decay * 0.2)
+
+        self.use_FF_connection = bool(params.get("use_FF_connection", True))
+        self.use_FB_connection = bool(params.get("use_FB_connection", True))
+        self.use_lat_connection = bool(params.get("use_lat_connection", True))
+        self.use_pv_connection = bool(params.get("use_pv_connection", True))
+        self.use_pv_lat_connection = bool(params.get("use_pv_lat_connection", False))
+
+        self._last_circuit = self.circuit
+        self._last_voltage = torch.zeros((), dtype=torch.float32)
+        self.pc_plasticity_mode = str(params.get("pc_plasticity_mode", "lat"))
+        if self.pc_plasticity_mode not in {"lat", "ppe_ff_npe_fb"}:
+            raise ValueError("pc_plasticity_mode must be 'lat' or 'ppe_ff_npe_fb'.")
+
+    @torch.no_grad()
+    def forward(self, x: torch.Tensor, c: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self.circuit == "PPE":
+            return self.PPE(x, c, update=False)
+        return self.NPE(x, c, update=False)
+
+    @torch.no_grad()
+    def PPE(self, x: torch.Tensor, c: torch.Tensor, *, update: bool = True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        '''
+        In PPE circuit, PVs receive context and PyC's receive FF input
+        '''
+        x_t = torch.as_tensor(x, dtype=self.w_ff.dtype).reshape(self.n_features)
+        c_t = torch.as_tensor(c, dtype=self.w_fb.dtype).reshape(self.n_context)
+        y_t = self.pyramidal.ema
+        a = self.adapt(self.pyramidal.ema)
+
+        pv_fb = (self.W_pv @ c_t).reshape(-1) * self.use_pv_connection
+        # NO pv_lat connection unlike in the CC model
+        # pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
+        # PV receive FB
+        p = self.pv(
+            self.activation(
+                pv_fb
+                # + pv_lat
+                + randn_reparam(size=tuple(self.pv.ema.shape), mu=0.0, sigma=self.pv_noise_sigma)
+            )
         )
 
-        pyc_decay = float(cc_template_parameters.get("pyc_decay", 0.05))
-        pv_decay = float(cc_template_parameters.get("pv_decay", 0.5))
-        self.pv = _EMA(pv_decay)
-        self.pyramidal = _EMA(pyc_decay)
+        pyc_drive = torch.dot(self.w_ff, x_t) * self.use_FF_connection
+        inhibition = torch.dot(self.w_lat, p) * self.use_lat_connection
+        baseline_drive = randn_reparam(size=(), mu=self.baseline_drive_mu, sigma=self.baseline_drive_sigma)
+        v = pyc_drive - inhibition + baseline_drive - a
+        y_next = self.pyramidal(self.activation(v))
+
+        self._last_circuit = "PPE"
+        self._last_voltage = v.detach().clone()
+        if update:
+            if self.pc_plasticity_mode == "ppe_ff_npe_fb":
+                self._update_ppe_ff(x_t)
+            else:
+                self._update_ppe(p)
+        return x_t, y_t, y_next, p, c_t
+
+    @torch.no_grad()
+    def NPE(self, x: torch.Tensor, c: torch.Tensor, *, update: bool = True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        ''''
+        In NPE circuit, PVs receive FF input and PyC's receive context
+        '''
+        x_t = torch.as_tensor(x, dtype=self.w_ff.dtype).reshape(self.n_features)
+        c_t = torch.as_tensor(c, dtype=self.w_fb.dtype).reshape(self.n_context)
+        y_t = self.pyramidal.ema
+        a = self.adapt(self.pyramidal.ema)
+
+        pyc_drive = torch.dot(self.w_fb, c_t * self.receives_context) * self.use_FB_connection
+        pv_ff = (self.W_pv @ x_t).reshape(-1) * self.use_pv_connection
+        # NO pv_lat connection unlike in the CC model
+        # pv_lat = y_t * self.w_pv_lat * self.use_pv_lat_connection
+        p = self.pv(
+            self.activation(
+                pv_ff
+                # + pv_lat
+                + randn_reparam(size=tuple(self.pv.ema.shape), mu=0.0, sigma=self.pv_noise_sigma)
+            )
+        )
+
+        inhibition = torch.dot(self.w_lat, p) * self.use_lat_connection
+        baseline_drive = randn_reparam(size=(), mu=self.baseline_drive_mu, sigma=self.baseline_drive_sigma)
+        v = pyc_drive - inhibition
+        y_next = self.pyramidal(self.activation(v + baseline_drive - a))
+
+        self._last_circuit = "NPE"
+        self._last_voltage = v.detach().clone()
+        if update:
+            # self._update_npe(p)
+            self._update_npe(c_t)
+        return x_t, y_t, y_next, p, c_t
+
+    @torch.no_grad()
+    def update(
+        self,
+        x_t: torch.Tensor,
+        y_t: torch.Tensor,
+        y_next: torch.Tensor,
+        pv_t: torch.Tensor,
+        c_t: torch.Tensor,
+    ) -> None:
+        if self._last_circuit == "PPE":
+            if self.pc_plasticity_mode == "ppe_ff_npe_fb":
+                self._update_ppe_ff(x_t)
+            else:
+                self._update_ppe(pv_t)
+        else:
+            # self._update_npe(pv_t)
+            self._update_npe(c_t)
+
+    @torch.no_grad()
+    def _update_ppe(self, pv_t: torch.Tensor) -> None:
+        if self.pc_plasticity_mode == "ppe_ff_npe_fb":
+            return
+        raw_delta = self.lr_lat * self._last_voltage * pv_t.reshape(self.n_pv)
+        self.w_lat = nonnegative(self.w_lat + _bounded_signed_delta(raw_delta, self.w_lat))
+
+    @torch.no_grad()
+    def _update_ppe_ff(self, x_t: torch.Tensor) -> None:
+        raw_delta = -self.lr_ff * self._last_voltage * x_t.reshape(self.n_features)
+        self.w_ff = nonnegative(self.w_ff + _bounded_signed_delta(raw_delta, self.w_ff))
+
+
+    # @torch.no_grad()
+    # def _update_npe(self, pv_t: torch.Tensor) -> None:
+    #     raw_delta = self.lr_lat * self._last_voltage * pv_t.reshape(self.n_pv)
+    #     self.w_lat = nonnegative(self.w_lat + _bounded_signed_delta(raw_delta, self.w_lat))
+
+    @torch.no_grad()
+    def _update_npe(self, c_t: torch.Tensor) -> None:
+        raw_delta = -self.lr_fb * self._last_voltage * c_t.reshape(self.n_context) * self.receives_context
+        self.w_fb = nonnegative(self.w_fb + _bounded_signed_delta(raw_delta, self.w_fb)) * self.receives_context
 
     def reset_state(self) -> None:
         self.pv.reset_state()
         self.pyramidal.reset_state()
+        self.adapt.reset_state()
 
     def _reset_state(self) -> None:
         self.reset_state()
-
-    @property
-    def w_ff(self) -> torch.Tensor:
-        return torch.as_tensor(self.w_FF, dtype=torch.float32)
-
-    @property
-    def w_fb(self) -> torch.Tensor:
-        return torch.as_tensor(self.w_FB, dtype=torch.float32)
-
-    @property
-    def w_lat(self) -> torch.Tensor:
-        return torch.as_tensor([self.w_LAT], dtype=torch.float32)
-
-    @property
-    def w_pv_lat(self) -> torch.Tensor:
-        return torch.zeros(1, dtype=torch.float32)
-
-    @property
-    def W_pv(self) -> torch.Tensor:
-        return torch.as_tensor(self.w_PV.reshape(1, -1), dtype=torch.float32)
-
-    def PPE(self, x: np.ndarray, c: np.ndarray, *, update: bool = True) -> tuple[np.ndarray, float, float, float, np.ndarray]:
-        x = _as_vector(x)
-        c = _as_vector(c)
-        y_t = float(self.pyramidal.ema)
-        pyc_drive = float(np.dot(self.w_FF, x))
-        pv_response = self.pv(_relu(float(np.dot(self.w_PV, c))))
-        inhibition = (self.w_LAT * pv_response) if self.use_lat_connection else 0.0
-        v = pyc_drive - inhibition + self.baseline_current
-        y_next = self.pyramidal(_relu(v))
-
-        if update:
-            self.w_LAT = float(_nonnegative(self.w_LAT + self.lr_lat * v * pv_response))
-        return x, y_t, y_next, pv_response, c
-
-    def NPE(self, x: np.ndarray, c: np.ndarray, *, update: bool = True) -> tuple[np.ndarray, float, float, float, np.ndarray]:
-        x = _as_vector(x)
-        c = _as_vector(c)
-        y_t = float(self.pyramidal.ema)
-        pyc_drive = float(np.dot(self.w_FB, c))
-        pv_response = self.pv(_relu(float(np.dot(self.w_PV, x))))
-        inhibition = (self.w_LAT * pv_response) if self.use_lat_connection else 0.0
-        v = pyc_drive - inhibition + self.baseline_current
-        y_next = self.pyramidal(_relu(v))
-
-        if update:
-            self.w_FB = _nonnegative(self.w_FB - self.lr_fb * v * c)
-        return x, y_t, y_next, pv_response, c
-
-    def __call__(self, x: torch.Tensor, c: torch.Tensor, update:bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        x_np = np.asarray(x.detach().cpu(), dtype=float)
-        c_np = np.asarray(c.detach().cpu(), dtype=float)
-        if self.circuit == "NPE":
-            _, y_t, y_next, pv_response, _ = self.NPE(x_np, c_np, update=update)
-        else:
-            _, y_t, y_next, pv_response, _ = self.PPE(x_np, c_np, update=update)
-        return (
-            torch.as_tensor(x_np, dtype=torch.float32),
-            torch.as_tensor(y_t, dtype=torch.float32),
-            torch.as_tensor(y_next, dtype=torch.float32),
-            torch.as_tensor([pv_response], dtype=torch.float32),
-            torch.as_tensor(c_np, dtype=torch.float32),
-        )

@@ -1411,6 +1411,12 @@ def _save_sector_average_highlight_panels(
         (image_group, image_idx_original, image_idx_within_group): condition
         for condition, (image_group, image_idx_original, image_idx_within_group) in IMAGE_INFO.items()
     }
+    for legacy_group in ("familiar", "novel"):
+        legacy_dir = output_dir / "sector_average_examples" / legacy_group
+        if legacy_dir.exists():
+            for legacy_file in legacy_dir.glob("sector_average_*_examples_sem.*"):
+                if legacy_file.is_file():
+                    legacy_file.unlink()
 
     def row_y_limits(row_bounds: list[float]) -> tuple[float, float] | None:
         if not row_bounds:

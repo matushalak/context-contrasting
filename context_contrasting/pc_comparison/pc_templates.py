@@ -11,48 +11,85 @@ from context_contrasting.paper import transition_templates as paper_templates
 
 
 N_FEATURES = 3
-STIMULUS_ORDER = ("familiar_1", "familiar_2", "novel")
-IMAGE_INFO = {
-    "familiar_1": ("familiar", 1, 1),
-    "familiar_2": ("familiar", 2, 2),
-    "novel": ("novel", 3, 1),
-}
 BROAD_TUNING_WIDTH = paper_templates.BROAD_TUNING_WIDTH
 NARROW_TUNING_WIDTH = 1
 PV_TUNING_WIDTH = paper_templates.PV_TUNING_WIDTH
-PC_LEARNING_RATE_SCALE = {"PPE": 3.0, "NPE": 4.0}
+PC_LEARNING_RATE_SCALE = {"PPE": 3.0, "NPE": 12.0}
 
 
 @dataclass(frozen=True)
 class PCWeightTemplate:
     name: str
     weight: float
-    pyc_width: str
-    pyc_ff: str
-    pyc_fb: str
-    pv_width: str
-    pv_ff: str
-    pv_fb: str
-    w_lat: float
-    baseline_drive_sigma: float
+    mismatch: str
+    pyc_widths: tuple[str, ...]
+    pyc_ffs: tuple[str, ...]
+    pyc_fbs: tuple[str, ...]
+    pv_ffs: tuple[str, ...]
+    pv_fbs: tuple[str, ...]
+    w_lats: tuple[float, ...]
+    baseline_drive_sigmas: tuple[float, ...]
 
 
+# PC templates are balance-mismatch templates, not response templates.
+# PPE compares PyC FF drive against context-driven PV suppression:
+#   under_inhibited -> low lateral inhibition; learning strengthens w_LAT.
+#   over_inhibited  -> high lateral inhibition; signed voltage weakens w_LAT.
 PPE_TEMPLATES: tuple[PCWeightTemplate, ...] = (
-    PCWeightTemplate("ppe_strengthen_narrow_mid_ff_strong_pvfb", 0.14, "narrow", "mid", "none", "broad", "weak", "strong", 0.01, 0.10),
-    PCWeightTemplate("ppe_strengthen_broad_strong_ff_strong_pvfb", 0.24, "broad", "strong", "none", "broad", "mid", "strong", 0.02, 0.14),
-    PCWeightTemplate("ppe_strengthen_broad_strong_ff_verystrong_pvfb", 0.14, "broad", "strong", "none", "broad", "mid", "very_strong", 0.04, 0.16),
-    PCWeightTemplate("ppe_release_narrow_veryweak_ff_verystrong_pvfb", 0.20, "narrow", "very_weak", "none", "broad", "weak", "very_strong", 0.95, 0.10),
-    PCWeightTemplate("ppe_release_broad_weak_ff_verystrong_pvfb", 0.20, "broad", "weak", "none", "broad", "mid", "very_strong", 0.95, 0.14),
-    PCWeightTemplate("ppe_release_broad_mid_ff_verystrong_pvfb", 0.08, "broad", "mid", "none", "broad", "mid", "very_strong", 0.95, 0.16),
+    PCWeightTemplate(
+        name="ppe_under_inhibited",
+        weight=0.52,
+        mismatch="under_inhibited",
+        pyc_widths=("narrow", "broad", "broad"),
+        pyc_ffs=("mid", "strong", "strong"),
+        pyc_fbs=("none",),
+        pv_ffs=("weak", "mid", "mid"),
+        pv_fbs=("strong", "strong", "very_strong"),
+        w_lats=(0.01, 0.02, 0.04),
+        baseline_drive_sigmas=(0.10, 0.14, 0.16),
+    ),
+    PCWeightTemplate(
+        name="ppe_over_inhibited",
+        weight=0.48,
+        mismatch="over_inhibited",
+        pyc_widths=("narrow", "broad", "broad"),
+        pyc_ffs=("very_weak", "weak", "mid"),
+        pyc_fbs=("none",),
+        pv_ffs=("weak", "mid", "mid"),
+        pv_fbs=("very_strong",),
+        w_lats=(0.95,),
+        baseline_drive_sigmas=(0.10, 0.14, 0.16),
+    ),
 )
 
+# NPE compares PyC FB drive against feedforward PV suppression:
+#   over_predicted  -> FB starts too strong; learning weakens w_FB toward PV match.
+#   under_predicted -> FB starts too weak; learning strengthens w_FB toward PV match.
 NPE_TEMPLATES: tuple[PCWeightTemplate, ...] = (
-    PCWeightTemplate("npe_over_fb_narrow_mid_low_pvff", 0.14, "narrow", "silent", "mid", "broad", "weak", "none", 0.02, 0.10),
-    PCWeightTemplate("npe_over_fb_broad_mid_low_pvff", 0.18, "broad", "silent", "mid", "broad", "weak", "none", 0.03, 0.14),
-    PCWeightTemplate("npe_over_fb_broad_strong_mid_pvff", 0.18, "broad", "silent", "strong", "broad", "mid", "none", 0.06, 0.16),
-    PCWeightTemplate("npe_under_fb_narrow_weak_strong_pvff", 0.16, "narrow", "silent", "weak", "broad", "strong", "none", 0.95, 0.10),
-    PCWeightTemplate("npe_under_fb_broad_mid_strong_pvff", 0.22, "broad", "silent", "mid", "broad", "strong", "none", 0.95, 0.14),
-    PCWeightTemplate("npe_under_fb_broad_strong_verystrong_pvff", 0.12, "broad", "silent", "strong", "broad", "very_strong", "none", 0.95, 0.16),
+    PCWeightTemplate(
+        name="npe_over_predicted",
+        weight=0.50,
+        mismatch="over_predicted",
+        pyc_widths=("narrow", "broad", "broad"),
+        pyc_ffs=("silent",),
+        pyc_fbs=("very_strong",),
+        pv_ffs=("strong",),
+        pv_fbs=("none",),
+        w_lats=(0.25, 0.45),
+        baseline_drive_sigmas=(0.10, 0.12, 0.14),
+    ),
+    PCWeightTemplate(
+        name="npe_under_predicted",
+        weight=0.50,
+        mismatch="under_predicted",
+        pyc_widths=("narrow", "broad", "broad"),
+        pyc_ffs=("silent",),
+        pyc_fbs=("very_weak", "weak"),
+        pv_ffs=("mid", "strong", "very_strong"),
+        pv_fbs=("none",),
+        w_lats=(0.12, 0.25, 0.45, 0.70),
+        baseline_drive_sigmas=(0.10, 0.12, 0.14, 0.16),
+    ),
 )
 
 
@@ -67,6 +104,10 @@ def _templates_for(circuit: str) -> tuple[PCWeightTemplate, ...]:
 def _draw_template(rng: np.random.Generator, templates: tuple[PCWeightTemplate, ...]) -> PCWeightTemplate:
     weights = np.asarray([template.weight for template in templates], dtype=float)
     return templates[int(rng.choice(len(templates), p=weights / weights.sum()))]
+
+
+def _draw_option(options: tuple[Any, ...], rng: np.random.Generator) -> Any:
+    return options[int(rng.integers(0, len(options)))]
 
 
 def _draw_indices(width: str, rng: np.random.Generator) -> tuple[int, ...]:
@@ -151,13 +192,20 @@ def sample_pc_template_configs(
         template = _draw_template(draw_rng, templates)
         seen[template.name] += 1
         rng = np.random.default_rng(child_rngs[sample_global_idx - 1])
-        pyc_indices = _draw_indices(template.pyc_width, rng)
-        pv_indices = _draw_indices(template.pv_width, rng)
+        pyc_width = str(_draw_option(template.pyc_widths, rng))
+        pyc_ff = str(_draw_option(template.pyc_ffs, rng))
+        pyc_fb = str(_draw_option(template.pyc_fbs, rng))
+        pv_ff = str(_draw_option(template.pv_ffs, rng))
+        pv_fb = str(_draw_option(template.pv_fbs, rng))
+        w_lat = float(_draw_option(template.w_lats, rng))
+        baseline_drive_sigma = float(_draw_option(template.baseline_drive_sigmas, rng))
+        pyc_indices = _draw_indices(pyc_width, rng)
+        pv_indices = _draw_indices("broad", rng)
 
-        w_ff = _init_from_ff_level(template.pyc_ff, pyc_indices, rng)
-        w_fb = _init_from_fb_level(template.pyc_fb, pyc_indices, rng)
-        w_pv_ff = _init_from_pv_level(template.pv_ff, pv_indices)
-        w_pv_fb = _init_from_fb_level(template.pv_fb, pv_indices, rng)
+        w_ff = _init_from_ff_level(pyc_ff, pyc_indices, rng)
+        w_fb = _init_from_fb_level(pyc_fb, pyc_indices, rng)
+        w_pv_ff = _init_from_pv_level(pv_ff, pv_indices)
+        w_pv_fb = _init_from_fb_level(pv_fb, pv_indices, rng)
         w_pv = w_pv_fb if circuit == "PPE" else w_pv_ff
 
         row: dict[str, Any] = {
@@ -174,16 +222,17 @@ def sample_pc_template_configs(
             "lr_pv": rates["lr_pv"],
             "pyc_decay": paper_templates.BASE_CONFIG["pyc_decay"],
             "pv_decay": paper_templates.BASE_CONFIG["pv_decay"],
-            "baseline_drive_sigma": template.baseline_drive_sigma,
+            "baseline_drive_sigma": baseline_drive_sigma,
             "pv_noise_sigma": paper_templates.PV_NOISE_SIGMA,
             "pc_learning_rate_scale": PC_LEARNING_RATE_SCALE[circuit],
             "circuit": circuit,
-            "pc_pyc_width": template.pyc_width,
-            "pc_pv_width": template.pv_width,
-            "ff_strength": template.pyc_ff,
-            "fb_level": template.pyc_fb,
-            "pv_ff_strength": template.pv_ff,
-            "pv_fb_level": template.pv_fb,
+            "pc_mismatch": template.mismatch,
+            "pc_pyc_width": pyc_width,
+            "pc_pv_width": "broad",
+            "ff_strength": pyc_ff,
+            "fb_level": pyc_fb,
+            "pv_ff_strength": pv_ff,
+            "pv_fb_level": pv_fb,
             "ff_tuning_width": len(pyc_indices),
             "pv_tuning_width": len(pv_indices),
             "receives_context_0": True,
@@ -192,7 +241,7 @@ def sample_pc_template_configs(
         }
         _write_init_columns(row, "w_ff_init", w_ff)
         _write_init_columns(row, "w_fb_init", w_fb)
-        _write_init_columns(row, "w_lat_init", np.asarray([template.w_lat], dtype=float))
+        _write_init_columns(row, "w_lat_init", np.asarray([w_lat], dtype=float))
         _write_init_columns(row, "W_pv_init", w_pv)
         _write_init_columns(row, "w_pv_context_init", w_pv_fb)
         _write_init_columns(row, "w_pv_ff_init", w_pv_ff)
@@ -202,30 +251,3 @@ def sample_pc_template_configs(
         rows.append(row)
 
     return pd.DataFrame(rows)
-
-
-def template_trace_series(
-    *,
-    response: float,
-    n_steps_per_phase: int,
-    n_trials: int = 1,
-    post_steps: int = 0,
-    seed: int = 0,
-) -> np.ndarray:
-    pre_steps = 3 * n_steps_per_phase // 4
-    stim_steps = n_steps_per_phase - pre_steps
-    total_steps = n_steps_per_phase * n_trials + post_steps
-    target = np.zeros(total_steps, dtype=float)
-    for trial_idx in range(n_trials):
-        start = trial_idx * n_steps_per_phase + pre_steps
-        target[start : start + stim_steps] = float(response)
-
-    rng = np.random.default_rng(seed)
-    trace = np.zeros(total_steps, dtype=float)
-    noise_state = 0.0
-    for step, target_value in enumerate(target):
-        previous = trace[step - 1] if step else 0.0
-        alpha = 0.055 if target_value > previous else 0.020
-        noise_state = 0.94 * noise_state + rng.normal(0.0, 0.006)
-        trace[step] = max(0.0, previous + alpha * (target_value - previous) + noise_state)
-    return trace

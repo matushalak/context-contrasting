@@ -13,9 +13,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
+from joblib import Parallel, delayed
 
+from context_contrasting.paper import model_scatter as paper_scatter
 from context_contrasting.paper import transition_templates
 from context_contrasting.paper import transitions_helpers as th
+from context_contrasting.paper.experiment_s import run_experimental_phase
+from context_contrasting.paper.neuron_utils import ThresholdReLU
 from context_contrasting.pc_comparison.pc_templates import sample_pc_template_configs
 from context_contrasting.pc_comparison.pc_neuron import CorrectPCneuron
 
@@ -57,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--extra-format", choices=("png", "svg", "eps", "none"), default="eps")
     parser.add_argument("--axis-clip-percentile", type=float, default=99.0)
     parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--n-jobs", type=int, default=-1)
+    parser.add_argument("--pc-plasticity-mode", choices=("lat", "ppe_ff_npe_fb"), default="ppe_ff_npe_fb")
     parser.add_argument("--copy-reference", action="store_true", default=True)
     parser.add_argument("--no-copy-reference", dest="copy_reference", action="store_false")
     return parser.parse_args()
@@ -98,86 +105,35 @@ def _specific_fb_vector(row: pd.Series) -> np.ndarray:
     return np.where(receives & pyc_tuned, tuned, np.where(receives, silent, 0.0))
 
 
-def _model_params_from_row(row: pd.Series, *, circuit: str = "PPE") -> dict[str, Any]:
+def _init_spec(values: np.ndarray | list[float] | tuple[float, ...] | float) -> dict[str, Any]:
+    return {"mu": [float(value) for value in np.asarray(values, dtype=float).reshape(-1)], "sigma": 0.0}
+
+
+def _model_params_from_row(row: pd.Series, *, circuit: str = "PPE", pc_plasticity_mode: str | None = None) -> dict[str, Any]:
     return {
-        "w_ff": _vec(row, "w_ff_init"),
-        "w_fb": _specific_fb_vector(row),
-        "w_pv": _vec(row, "W_pv_init"),
-        "w_lat": float(row["w_lat_init.mu_0"]),
+        "w_ff_init": _init_spec(_vec(row, "w_ff_init")),
+        "w_fb_init": _init_spec(_specific_fb_vector(row)),
+        "W_pv_init": _init_spec(_vec(row, "W_pv_init")),
+        "w_lat_init": _init_spec([float(row["w_lat_init.mu_0"])]),
+        "w_pv_lat_init": _init_spec([0.0]),
+        "receives_context": tuple(bool(row.get(f"receives_context_{idx}", True)) for idx in range(N_FEATURES)),
+        "lr_ff": float(row["lr_ff"]),
         "lr_fb": float(row["lr_fb"]),
         "lr_lat": float(row["lr_lat"]),
         "pyc_decay": float(row["pyc_decay"]),
         "pv_decay": float(row["pv_decay"]),
         "baseline_drive_sigma": float(row.get("baseline_drive_sigma", 0.0)),
+        "pv_noise_sigma": float(row.get("pv_noise_sigma", 0.0)),
+        "activation": ThresholdReLU(
+            threshold=transition_templates.SOMA_ACTIVATION_THRESHOLD,
+            subtractive=False,
+            hasMax=True,
+            maxValue=1.0,
+        ),
         "seed": int(row.get("seed", 0)),
         "circuit": circuit,
+        "pc_plasticity_mode": pc_plasticity_mode or str(row.get("pc_plasticity_mode", "lat")),
     }
-
-
-def _training_order(metadata: dict[str, Any]) -> list[str]:
-    order = metadata.get("training_trial_order")
-    if order:
-        return [str(name) for name in order]
-    training_trials = int(metadata.get("training_trials", 7))
-    familiar = [name for name in STIMULUS_SPECS if name.startswith("familiar")]
-    return [name for _ in range(training_trials) for name in familiar]
-
-
-def _phase_response(
-    model: CorrectPCneuron,
-    circuit: str,
-    *,
-    ff_input: np.ndarray,
-    context_input: np.ndarray,
-    n_steps_per_phase: int,
-    n_trials: int,
-    response_tail_fraction: float,
-    update: bool,
-) -> float:
-    step_fn = model.PPE if circuit == "PPE" else model.NPE
-    pre_steps = 3 * n_steps_per_phase // 4
-    stim_steps = n_steps_per_phase - pre_steps
-    tail_start = pre_steps + int(round((1.0 - response_tail_fraction) * stim_steps))
-    responses: list[float] = []
-    zero = np.zeros(N_FEATURES, dtype=float)
-
-    for _ in range(n_trials):
-        for step in range(n_steps_per_phase):
-            in_stimulus = step >= pre_steps
-            x = ff_input if in_stimulus else zero
-            c = context_input if in_stimulus else zero
-            _, _, y_next, _, _ = step_fn(x, c, update=update)
-            if in_stimulus and step >= tail_start:
-                responses.append(float(y_next))
-    return float(np.mean(responses)) if responses else 0.0
-
-
-def _train(
-    model: CorrectPCneuron,
-    circuit: str,
-    *,
-    metadata: dict[str, Any],
-) -> None:
-    model.reset_state()
-    n_steps_per_phase = int(metadata.get("n_steps_per_phase", 400))
-    for condition in _training_order(metadata):
-        ff_input, context_input = (np.asarray(values, dtype=float) for values in STIMULUS_SPECS[condition])
-        _phase_response(
-            model,
-            circuit,
-            ff_input=ff_input,
-            context_input=context_input,
-            n_steps_per_phase=n_steps_per_phase,
-            n_trials=1,
-            response_tail_fraction=1.0,
-            update=True,
-        )
-
-
-def _response_scale(row: pd.Series, metadata: dict[str, Any]) -> float:
-    zscore_std_floor = float(metadata.get("zscore_std_floor", 0.04))
-    baseline_sigma = float(row.get("baseline_drive_sigma", 0.0))
-    return max(zscore_std_floor, transition_templates.BASELINE_STD_SCALE * baseline_sigma, 1e-12)
 
 
 def simulate_circuit(
@@ -185,6 +141,8 @@ def simulate_circuit(
     *,
     circuit: str,
     metadata: dict[str, Any],
+    n_jobs: int = 1,
+    pc_plasticity_mode: str = "ppe_ff_npe_fb",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     n_samples = int(metadata.get("n_samples_total", metadata.get("requested_n_samples", len(configs))))
     template_configs = sample_pc_template_configs(
@@ -193,8 +151,86 @@ def simulate_circuit(
         seed=int(metadata.get("seed", 7151)),
         n_steps_per_phase=int(metadata.get("n_steps_per_phase", 400)),
     )
-    response_df, _ = simulate_template_weight_circuit(template_configs, circuit=circuit, metadata=metadata)
+    template_configs["pc_plasticity_mode"] = pc_plasticity_mode
+    response_df, final_weights = simulate_template_weight_circuit(
+        template_configs,
+        circuit=circuit,
+        metadata=metadata,
+        n_jobs=n_jobs,
+        pc_plasticity_mode=pc_plasticity_mode,
+    )
+    template_configs = template_configs.merge(
+        final_weights,
+        on=["circuit", "sample_global_idx", "transition"],
+        how="left",
+    )
     return response_df, template_configs
+
+
+def _simulate_template_weight_cell(
+    row_dict: dict[str, Any],
+    *,
+    circuit: str,
+    metadata: dict[str, Any],
+    test_stimuli: dict[str, tuple[torch.Tensor, torch.Tensor]],
+    training_stimuli: tuple[torch.Tensor, torch.Tensor],
+    response_tail_fraction: float,
+    n_steps_per_phase: int,
+    zscore_std_floor: float,
+    pc_plasticity_mode: str,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    torch.set_num_threads(1)
+    row = pd.Series(row_dict)
+    model = CorrectPCneuron(_model_params_from_row(row, circuit=circuit, pc_plasticity_mode=pc_plasticity_mode))
+    cell_floor = max(
+        zscore_std_floor,
+        transition_templates.BASELINE_STD_SCALE * float(row.get("baseline_drive_sigma", 0.0)),
+    )
+    naive_rows, naive_baseline, _ = paper_scatter._probe_rows(
+        model,
+        test_stimuli,
+        phase="naive",
+        n_steps_per_phase=n_steps_per_phase,
+        response_tail_fraction=response_tail_fraction,
+        baseline=None,
+        zscore_std_floor=cell_floor,
+    )
+    run_experimental_phase(model, training_stimuli[0], training_stimuli[1], "full_familiar_training", update=True)
+    expert_rows, _, _ = paper_scatter._probe_rows(
+        model,
+        test_stimuli,
+        phase="expert",
+        n_steps_per_phase=n_steps_per_phase,
+        response_tail_fraction=response_tail_fraction,
+        baseline=naive_baseline,
+        zscore_std_floor=cell_floor,
+    )
+    rows: list[dict[str, Any]] = []
+    for response_row in naive_rows + expert_rows:
+        response_row.update(
+            {
+                "transition": row["transition"],
+                "sample_idx": int(row["sample_idx"]),
+                "sample_global_idx": int(row["sample_global_idx"]),
+                "seed": int(row["seed"]),
+                "circuit": circuit,
+                "response_scale": cell_floor,
+            }
+        )
+        rows.append(response_row)
+    final_row = {
+        "circuit": circuit,
+        "sample_global_idx": int(row["sample_global_idx"]),
+        "transition": row["transition"],
+        "final_w_lat": float(model.w_lat.detach().cpu().reshape(-1)[0]),
+        "final_w_ff_0": float(model.w_ff.detach().cpu().reshape(-1)[0]),
+        "final_w_ff_1": float(model.w_ff.detach().cpu().reshape(-1)[1]),
+        "final_w_ff_2": float(model.w_ff.detach().cpu().reshape(-1)[2]),
+        "final_w_fb_0": float(model.w_fb.detach().cpu().reshape(-1)[0]),
+        "final_w_fb_1": float(model.w_fb.detach().cpu().reshape(-1)[1]),
+        "final_w_fb_2": float(model.w_fb.detach().cpu().reshape(-1)[2]),
+    }
+    return pd.DataFrame(rows), final_row
 
 
 def simulate_template_weight_circuit(
@@ -202,69 +238,58 @@ def simulate_template_weight_circuit(
     *,
     circuit: str,
     metadata: dict[str, Any],
+    n_jobs: int = 1,
+    pc_plasticity_mode: str = "ppe_ff_npe_fb",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     response_tail_fraction = float(metadata.get("response_tail_fraction", 1.0))
     n_steps_per_phase = int(metadata.get("n_steps_per_phase", 400))
     test_trials = int(metadata.get("test_trials", 5))
-    stimulus_vectors = {
-        name: (np.asarray(ff, dtype=float), np.asarray(context, dtype=float))
-        for name, (ff, context) in STIMULUS_SPECS.items()
-    }
+    test_stimuli = paper_scatter._build_model_scatter_test_stimuli(
+        n_steps_per_phase=n_steps_per_phase,
+        n_trials=test_trials,
+    )
+    training_stimuli = paper_scatter._build_model_scatter_training_stimuli(
+        n_steps_per_phase=n_steps_per_phase,
+        n_trials=int(metadata.get("training_trials", 7)),
+        order=str(metadata.get("training_stimulus_order", "randomized")),
+        seed=int(metadata.get("seed", 7151)),
+    )
+    zscore_std_floor = float(metadata.get("zscore_std_floor", 0.04))
 
-    rows: list[dict[str, Any]] = []
-    final_rows: list[dict[str, Any]] = []
-    for _, row in configs.iterrows():
-        model = CorrectPCneuron(_model_params_from_row(row, circuit=circuit))
-        scale = _response_scale(row, metadata)
-
-        def probe(phase: str) -> None:
-            for condition, (ff_full, context) in stimulus_vectors.items():
-                for trace, ff_input in (("full", ff_full), ("occlusion", np.zeros_like(ff_full))):
-                    model.reset_state()
-                    raw_response = _phase_response(
-                        model,
-                        circuit,
-                        ff_input=ff_input,
-                        context_input=context,
-                        n_steps_per_phase=n_steps_per_phase,
-                        n_trials=test_trials,
-                        response_tail_fraction=response_tail_fraction,
-                        update=False,
-                    )
-                    rows.append(
-                        {
-                            "condition": condition,
-                            "phase": phase,
-                            "stage": STAGES[phase],
-                            "trace": trace,
-                            "image_type": TRACE_TYPES[trace],
-                            "response": raw_response / scale,
-                            "raw_response": raw_response,
-                            "response_scale": scale,
-                            "transition": row["transition"],
-                            "sample_idx": int(row["sample_idx"]),
-                            "sample_global_idx": int(row["sample_global_idx"]),
-                            "seed": int(row["seed"]),
-                            "circuit": circuit,
-                        }
-                    )
-
-        probe("naive")
-        _train(model, circuit, metadata=metadata)
-        probe("expert")
-        final_rows.append(
-            {
-                "circuit": circuit,
-                "sample_global_idx": int(row["sample_global_idx"]),
-                "transition": row["transition"],
-                "final_w_lat": model.w_LAT,
-                "final_w_fb_0": model.w_FB[0],
-                "final_w_fb_1": model.w_FB[1],
-                "final_w_fb_2": model.w_FB[2],
-            }
+    records = configs.to_dict("records")
+    if n_jobs == 1:
+        results = [
+            _simulate_template_weight_cell(
+                row,
+                circuit=circuit,
+                metadata=metadata,
+                test_stimuli=test_stimuli,
+                training_stimuli=training_stimuli,
+                response_tail_fraction=response_tail_fraction,
+                n_steps_per_phase=n_steps_per_phase,
+                zscore_std_floor=zscore_std_floor,
+                pc_plasticity_mode=pc_plasticity_mode,
+            )
+            for row in records
+        ]
+    else:
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(_simulate_template_weight_cell)(
+                row,
+                circuit=circuit,
+                metadata=metadata,
+                test_stimuli=test_stimuli,
+                training_stimuli=training_stimuli,
+                response_tail_fraction=response_tail_fraction,
+                n_steps_per_phase=n_steps_per_phase,
+                zscore_std_floor=zscore_std_floor,
+                pc_plasticity_mode=pc_plasticity_mode,
+            )
+            for row in records
         )
 
-    return pd.DataFrame(rows), pd.DataFrame(final_rows)
+    response_frames, final_rows = zip(*results, strict=True)
+    return pd.concat(response_frames, ignore_index=True), pd.DataFrame(final_rows)
 
 
 def _transition_table(response_df: pd.DataFrame) -> pd.DataFrame:
@@ -861,7 +886,13 @@ def main() -> None:
     final_frames: list[pd.DataFrame] = []
     summaries_by_model: dict[str, dict[str, pd.DataFrame]] = {"CC": cc_summaries}
     for circuit in ("PPE", "NPE"):
-        response_df, circuit_configs = simulate_circuit(configs, circuit=circuit, metadata=metadata)
+        response_df, circuit_configs = simulate_circuit(
+            configs,
+            circuit=circuit,
+            metadata=metadata,
+            n_jobs=args.n_jobs,
+            pc_plasticity_mode=args.pc_plasticity_mode,
+        )
         transition = _transition_table(response_df)
         summaries = _build_summaries(transition, circuit_configs, threshold=threshold)
         summaries_by_model[circuit] = summaries
@@ -1029,6 +1060,7 @@ def main() -> None:
                         "sector_threshold",
                     )
                 },
+                "pc_plasticity_mode": args.pc_plasticity_mode,
                 "pc_model": {
                     "source": "context_contrasting.pc_comparison.pc_templates",
                     "templates": {
