@@ -56,19 +56,22 @@ N_FEATURES = 3
 # rates are calibrated at 200 steps/phase; longer phase durations scale them down
 # so the accumulated plasticity stays close to the clearer 200-step scatter.
 LEARNING_RATE_REFERENCE_STEPS = 200
-# The FF anti-Hebbian update now uses a very slow activity accumulator instead
-# of width-specific fixed factors. The accumulator runs through the full
-# training sequence (stimulus periods and ITIs); broad cells carry larger
-# long-term activity across the sequence, while narrow cells accumulate less.
-# The shared FF multiplier compensates for the small raw accumulator value at
-# alpha=pyc_decay*1e-5 and power=2.
-FF_ACTIVITY_ACCUMULATOR_LR_MULTIPLIER = 4.98586e8
-SHARED_LEARNING_RATES = {"lr_ff": 0.0155 * FF_ACTIVITY_ACCUMULATOR_LR_MULTIPLIER, "lr_fb": 0.00065, "lr_lat": 0.0300, "lr_pv": 0.0}
+# The FF anti-Hebbian update now uses a slow activity accumulator instead of
+# width-specific fixed factors. The accumulator runs through the full training
+# sequence (stimulus periods and ITIs); broad cells carry larger long-term
+# activity across the sequence, while narrow cells accumulate less. At
+# pyc_decay=0.05 and ff_accumulator_alpha_factor=0.05, the accumulator has a
+# roughly 400-step time constant, so it persists across the 300-step ITI plus the
+# next 100-step stimulus window. The round scale factor below compensates for
+# the squared raw accumulator magnitude while keeping the shared lr_ff at the
+# original value; it is a unit conversion for the accumulator branch, not a
+# separate fitted learning rate.
+SHARED_LEARNING_RATES = {"lr_ff": 0.0155, "lr_fb": 0.00065, "lr_lat": 0.0300, "lr_pv": 0.0}
 FF_ACTIVITY_ACCUMULATOR = {
     "use_ff_activity_accumulator": True,
-    "ff_accumulator_alpha_factor": 1e-5,
-    "ff_accumulator_power": 2.0,
-    "ff_accumulator_active_only": False,
+    "ff_accumulator_alpha_factor": 0.05,
+    "ff_accumulator_power": 2,
+    "ff_accumulator_scale": 2000.0,
 }
 SCALAR_NOISE_KEYS = ("apical_gain_strength", "apical_drive_threshold")
 SOMA_ACTIVATION_THRESHOLD = 0.08
@@ -579,7 +582,6 @@ def write_metadata(args) -> None:
         "base_shared_learning_rates": SHARED_LEARNING_RATES,
         "learning_rate_reference_steps": LEARNING_RATE_REFERENCE_STEPS,
         "ff_activity_accumulator": FF_ACTIVITY_ACCUMULATOR,
-        "ff_activity_accumulator_lr_multiplier": FF_ACTIVITY_ACCUMULATOR_LR_MULTIPLIER,
         "soma_activation_threshold": SOMA_ACTIVATION_THRESHOLD,
         "apical_drive_subtractive": APICAL_DRIVE_SUBTRACTIVE,
         "pv_noise_sigma": PV_NOISE_SIGMA,

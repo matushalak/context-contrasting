@@ -75,9 +75,9 @@ class CCNeuron(nn.Module):
         FF_plasticity:bool = True,
         ff_plasticity_scale: float | list[float] | tuple[float, ...] = 1.0,
         use_ff_activity_accumulator: bool = False,
-        ff_accumulator_alpha_factor: float = 1e-5,
+        ff_accumulator_alpha_factor: float = 0.05,
         ff_accumulator_power: float = 2.0,
-        ff_accumulator_active_only: bool = False,
+        ff_accumulator_scale: float = 1.0,
         use_FB_connection:bool = True,
         FB_plasticity:bool = True,
         use_lat_connection:bool = True,
@@ -127,19 +127,9 @@ class CCNeuron(nn.Module):
         self.lr_lat = lr_lat
         self.lr_pv = lr_pv
         self.ff_plasticity_scale = torch.as_tensor(ff_plasticity_scale, dtype=self.w_ff.dtype)
-        if self.ff_plasticity_scale.ndim == 0:
-            self.ff_plasticity_scale = torch.full_like(self.w_ff, float(self.ff_plasticity_scale))
-        elif self.ff_plasticity_scale.shape != self.w_ff.shape:
-            raise ValueError("ff_plasticity_scale must be scalar or match n_features.")
-        if torch.any(self.ff_plasticity_scale < 0):
-            raise ValueError("ff_plasticity_scale must be nonnegative.")
-        if ff_accumulator_alpha_factor <= 0:
-            raise ValueError("ff_accumulator_alpha_factor must be > 0.")
-        if ff_accumulator_power <= 0:
-            raise ValueError("ff_accumulator_power must be > 0.")
         self.use_ff_activity_accumulator = use_ff_activity_accumulator
         self.ff_accumulator_power = ff_accumulator_power
-        self.ff_accumulator_active_only = ff_accumulator_active_only
+        self.ff_accumulator_scale = ff_accumulator_scale
         self.alpha = alpha
         self.weight_decay = weight_decay
         self.baseline_drive_mu = baseline_drive_mu
@@ -151,7 +141,8 @@ class CCNeuron(nn.Module):
         self.pv = EMA(shape=(n_pv,), alpha=pv_decay)
         self.pyramidal = EMA(shape=(), alpha=pyc_decay)
         self.adapt = EMA(shape=(), alpha=pyc_decay*0.2)
-        self.ff_activity_accumulator = EMA(shape=(), alpha=pyc_decay * ff_accumulator_alpha_factor)
+        if self.use_ff_activity_accumulator:
+            self.ff_activity_accumulator = EMA(shape=(), alpha=pyc_decay * ff_accumulator_alpha_factor)
 
         self.threshold = ThresholdReLU(threshold=apical_drive_threshold, subtractive=apical_drive_subtractive, hasMax=False)
         self.sigmoid = GainSigmoid(gain=apical_gain_strength, k=apical_gain_k, threshold=apical_gain_threshold)
@@ -255,12 +246,8 @@ class CCNeuron(nn.Module):
                 case "anti-Hebbian":
                     plasticity_scale = self.ff_plasticity_scale
                     if self.use_ff_activity_accumulator:
-                        active_stimulus = bool(torch.any(x_t > 0))
-                        if active_stimulus or not self.ff_accumulator_active_only:
-                            accumulator = self.ff_activity_accumulator(y_next)
-                        else:
-                            accumulator = self.ff_activity_accumulator.ema
-                        plasticity_scale = accumulator ** self.ff_accumulator_power
+                        accumulator = self.ff_activity_accumulator(y_next)
+                        plasticity_scale = self.ff_accumulator_scale * (accumulator ** self.ff_accumulator_power)
                     dw_ff = - self.lr_ff * plasticity_scale * (y_next * x_t) * (self.w_ff - 0.0)
                 case "Hebbian":
                     dw_ff = self.lr_ff * self.ff_plasticity_scale * (y_next * x_t) * (1.0 - self.w_ff)
