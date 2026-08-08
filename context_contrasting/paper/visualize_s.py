@@ -238,19 +238,34 @@ def _add_row_scale_bar(
     length: float = 1.0,
     color: str = "0.15",
     linewidth: float = 2.2,
+    label: str = "1 z",
 ) -> None:
     visible_axes = [ax for ax in axes_row if ax.get_visible()]
     if not visible_axes:
         return
     ax = visible_axes[0]
     x0, x1 = ax.get_xlim()
-    y0, y1 = ax.get_ylim()
+    y0_lim, y1_lim = ax.get_ylim()
     x = x0 + 0.06 * (x1 - x0)
-    y_start = y0 + 0.18 * (y1 - y0)
-    y_end = min(y_start + length, y1 - 0.08 * (y1 - y0))
-    if y_end <= y_start:
+    cap = 0.016 * (x1 - x0)
+    y_start = 0.0
+    y_end = length
+    if y_end <= y_start or y_start < y0_lim or y_end > y1_lim:
         return
     ax.plot([x, x], [y_start, y_end], color=color, lw=linewidth, solid_capstyle="butt", zorder=20)
+    ax.plot([x - cap, x + cap], [y_start, y_start], color=color, lw=linewidth, solid_capstyle="butt", zorder=20)
+    ax.plot([x - cap, x + cap], [y_end, y_end], color=color, lw=linewidth, solid_capstyle="butt", zorder=20)
+    ax.text(
+        x - 1.8 * cap,
+        0.5 * (y_start + y_end),
+        label,
+        ha="right",
+        va="center",
+        fontsize=7,
+        color=color,
+        rotation=90,
+        zorder=20,
+    )
 
 
 def _matrix_header_fontsizes(n_cols: int) -> tuple[int, int]:
@@ -1084,7 +1099,7 @@ def visualize_transition_response_matrix(
     transition_labels: dict[str, str] | None = None,
     step_window: tuple[int, int] = (1000, 1350),
     save_in_transition_subdir: bool = True,
-    save_csv: bool = True,
+    save_csv: bool = False,
     zscore_activity: bool = True,
     image_format: str = "png",
     figure_size_inches: tuple[float, float] | None = None,
@@ -1365,6 +1380,9 @@ def visualize_transition_response_matrix(
         if row_bounds:
             row_min = min(bound[0] for bound in row_bounds)
             row_max = max(bound[1] for bound in row_bounds)
+            if zscore_activity:
+                row_min = min(row_min, 0.0)
+                row_max = max(row_max, 1.0)
             span = row_max - row_min
             if span <= 0:
                 span = max(abs(row_min), abs(row_max), 0.1)
@@ -1389,22 +1407,6 @@ def visualize_transition_response_matrix(
         fig.savefig(out_path)
         saved_paths.append(out_path)
     plt.close(fig)
-
-    if save_csv:
-        export_df = _build_response_transition_export(
-            long_dfs_by_transition,
-            ordered_transitions=ordered_transitions,
-            labels=labels,
-            selected_conditions=selected_conditions,
-            baseline_conditions=baseline_conditions,
-            column_specs=column_specs,
-            stimuli=STIMULI,
-            plot_window=plot_window,
-            zscore_activity=zscore_activity,
-            zscore_std_floor=zscore_std_floor,
-        )
-        export_df.to_csv(f"{base_path}.csv", index=False)
-        saved_paths.append(f"{base_path}.csv")
 
     return saved_paths
 
@@ -1606,7 +1608,7 @@ def visualize_transition_panel(
     trace_types: tuple[str, ...] | None = None,
     step_window: tuple[int, int] = (1000, 1350),
     save_in_transition_subdir: bool = True,
-    save_csv: bool = True,
+    save_csv: bool = False,
     zscore_activity: bool = True,
     image_format: str = "png",
 ) -> str:
@@ -1685,21 +1687,6 @@ def visualize_transition_panel(
     column_specs = [(phase, condition) for phase in phases for condition in selected_conditions]
     n_rows = len(ordered_transitions)
     n_cols = len(column_specs)
-    transition_export_df = None
-    if save_csv:
-        transition_export_df = _build_windowed_transition_export(
-            long_dfs_by_transition,
-            ordered_transitions=ordered_transitions,
-            labels=labels,
-            phases=phases,
-            selected_conditions=selected_conditions,
-            baseline_conditions=baseline_conditions,
-            trace_types=resolved_trace_types,
-            stimuli=STIMULI,
-            plot_window=plot_window,
-            zscore_activity=zscore_activity,
-        )
-
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
@@ -1826,6 +1813,9 @@ def visualize_transition_panel(
         if row_bounds:
             row_min = min(bound[0] for bound in row_bounds)
             row_max = max(bound[1] for bound in row_bounds)
+            if zscore_activity:
+                row_min = min(row_min, 0.0)
+                row_max = max(row_max, 1.0)
             span = row_max - row_min
             if span <= 0:
                 span = max(abs(row_min), abs(row_max), 0.1)
@@ -1845,8 +1835,6 @@ def visualize_transition_panel(
 
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
-    if transition_export_df is not None:
-        transition_export_df.to_csv(os.path.splitext(out_path)[0] + ".csv", index=False)
     return out_path
 
 
@@ -1891,7 +1879,7 @@ def save_grouped_transition_panels(
             transition_labels=combined_labels,
             step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
-            save_csv=True,
+            save_csv=False,
             zscore_activity=zscore_activity,
             image_format=image_format,
         )
@@ -1905,7 +1893,7 @@ def save_grouped_transition_panels(
             transition_labels=combined_labels,
             step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
-            save_csv=True,
+            save_csv=False,
             zscore_activity=zscore_activity,
             image_format=image_format,
             zscore_std_floor=zscore_std_floor,
@@ -1920,7 +1908,7 @@ def save_grouped_transition_panels(
             transition_labels=combined_labels,
             step_window=step_window,
             save_in_transition_subdir=save_in_transition_subdir,
-            save_csv=True,
+            save_csv=False,
             zscore_activity=zscore_activity,
             image_format=image_format,
             zscore_std_floor=zscore_std_floor,
