@@ -30,13 +30,13 @@ COUNT_COLORS = (
 )
 
 DISPLAY_LABELS = {
-    "task": "Task",
+    "task_familiar": "Task familiar",
     "expert_familiar": "Expert familiar",
     "expert_novel": "Expert novel",
 }
 
 TARGET_LABELS = {
-    "task": "Task",
+    "task_familiar": "Task",
     "expert_familiar": "Expert",
     "expert_novel": "Expert",
 }
@@ -44,6 +44,10 @@ TARGET_LABELS = {
 
 def _threshold_tag(threshold: float) -> str:
     return f"gt_{threshold:g}".replace(".", "_").replace("-", "minus_")
+
+
+def _threshold_folder(threshold: float) -> str:
+    return f"{threshold:g}"
 
 
 def _count_cmap(max_count: int) -> tuple[ListedColormap, BoundaryNorm]:
@@ -192,7 +196,6 @@ def _scatter_response_panel(
     norm: BoundaryNorm,
     point_size: float,
 ) -> None:
-    _draw_displacement_vectors(ax, frame, cmap=cmap, norm=norm)
     ax.scatter(
         frame[x_col],
         frame[y_col],
@@ -464,6 +467,204 @@ def plot_mean_displacement_by_responsiveness(
     return fig
 
 
+def _delta_lims(frame: pd.DataFrame) -> list[float]:
+    max_abs = float(np.nanmax(np.abs(frame[["dNO", "dO"]].to_numpy(dtype=float))))
+    extent = max(0.25, max_abs * 1.08)
+    return [-extent, extent]
+
+
+def plot_delta_by_responsive_count(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+    response_threshold: float,
+    point_size: float = 34.0,
+) -> plt.Figure:
+    ordered = frame.sort_values("neuron_idx").reset_index(drop=True)
+    max_count = int(ordered["naive_responsive_image_count"].max())
+    cmap, norm = _count_cmap(max_count)
+    display_label = DISPLAY_LABELS.get(label, label)
+    target_label = TARGET_LABELS.get(label, str(ordered["target_stage"].iloc[0]))
+    delta_lims = _delta_lims(ordered)
+
+    fig, ax = plt.subplots(figsize=(5.2, 5.0), constrained_layout=True)
+    _draw_shift_guides(ax, delta_lims)
+    ax.scatter(
+        ordered["dNO"],
+        ordered["dO"],
+        c=ordered["naive_responsive_image_count"],
+        cmap=cmap,
+        norm=norm,
+        s=point_size,
+        alpha=0.86,
+        edgecolors="white",
+        linewidths=0.25,
+        zorder=2,
+    )
+    ax.set_xlim(delta_lims)
+    ax.set_ylim(delta_lims)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("dNO")
+    ax.set_ylabel("dO")
+    ax.set_title(f"{display_label}: {target_label} - Pre")
+
+    mappable = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    mappable.set_array([])
+    cbar = fig.colorbar(
+        mappable,
+        ax=ax,
+        ticks=np.arange(0, max_count + 1),
+        shrink=0.82,
+        pad=0.02,
+    )
+    cbar.set_label(f"Naive responsive images (Pre NO > {response_threshold:g})")
+    fig.suptitle(
+        "Transition plane colored by naive responsiveness count",
+        fontsize=13,
+        fontweight="bold",
+    )
+    return fig
+
+
+def _responsive_count_x(frame: pd.DataFrame, *, jitter: float) -> np.ndarray:
+    rng = np.random.default_rng(1729)
+    return frame["naive_responsive_image_count"].to_numpy(dtype=float) + rng.uniform(
+        -jitter,
+        jitter,
+        len(frame),
+    )
+
+
+def _directional_sectors() -> tuple[str, ...]:
+    return tuple(sector for sector in th.ROTATED_SECTOR_ORDER if sector != "small ∆")
+
+
+def build_sector_count_summary(frame: pd.DataFrame) -> pd.DataFrame:
+    count_col = "naive_responsive_image_count"
+    grouped = (
+        frame.groupby(["RotatedSector", count_col], observed=True, as_index=False)
+        .agg(
+            neuron_count=("neuron_idx", "size"),
+            mean_dNO=("dNO", "mean"),
+            mean_dO=("dO", "mean"),
+            sem_dNO=("dNO", "sem"),
+            sem_dO=("dO", "sem"),
+        )
+        .sort_values(["RotatedSector", count_col])
+    )
+    totals = frame.groupby(count_col, observed=True).size().rename("count_total").reset_index()
+    grouped = grouped.merge(totals, on=count_col, how="left", validate="many_to_one")
+    grouped["percent_within_count"] = grouped["neuron_count"] / grouped["count_total"] * 100.0
+    return grouped
+
+
+def plot_delta_by_responsive_count_sectors(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+    jitter: float = 0.08,
+    point_size: float = 34.0,
+) -> plt.Figure:
+    ordered = frame.sort_values("neuron_idx").reset_index(drop=True)
+    x = _responsive_count_x(ordered, jitter=jitter)
+    max_count = int(ordered["naive_responsive_image_count"].max())
+    display_label = DISPLAY_LABELS.get(label, label)
+    sector_count_summary = build_sector_count_summary(ordered)
+    count_index = pd.Index(range(max_count + 1), name="naive_responsive_image_count")
+
+    fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.7), sharex=True, constrained_layout=True)
+    for col_idx, delta_col in enumerate(("dNO", "dO")):
+        ax = axes[col_idx]
+        for sector in th._sector_plot_order(small_delta_first=True):
+            sector_mask = ordered["RotatedSector"].astype(str).eq(sector).to_numpy()
+            if not sector_mask.any():
+                continue
+            ax.scatter(
+                x[sector_mask],
+                ordered.loc[sector_mask, delta_col],
+                color=th.ROTATED_SECTOR_PALETTE[sector],
+                s=point_size,
+                alpha=0.86,
+                edgecolors="white",
+                linewidths=0.25,
+                label=sector,
+                zorder=th._sector_scatter_zorder(sector),
+            )
+        mean_col = f"mean_{delta_col}"
+        for sector in _directional_sectors():
+            rows = sector_count_summary.loc[
+                sector_count_summary["RotatedSector"].astype(str).eq(sector)
+            ].set_index("naive_responsive_image_count").reindex(count_index)
+            ax.plot(
+                count_index.to_numpy(dtype=int),
+                rows[mean_col],
+                color=th.ROTATED_SECTOR_PALETTE[sector],
+                marker="o",
+                markersize=4.0,
+                linewidth=2.2,
+                alpha=0.95,
+                zorder=6,
+            )
+        ax.set_title(f"{delta_col} colored by rotated sector")
+        ax.axhline(0.0, color="0.75", lw=0.9, zorder=0)
+        ax.set_xlim(-0.45, max_count + 0.45)
+        ax.set_xticks(np.arange(0, max_count + 1, 1))
+        ax.set_xlabel("naive responsive image count")
+        ax.set_ylabel(delta_col)
+
+    handles, legend_labels = axes[1].get_legend_handles_labels()
+    if handles:
+        fig.legend(
+            handles,
+            legend_labels,
+            frameon=False,
+            loc="center right",
+            bbox_to_anchor=(1.08, 0.50),
+        )
+    fig.suptitle(
+        f"{display_label}: response components by naive responsiveness count",
+        fontsize=13,
+        fontweight="bold",
+    )
+    return fig
+
+
+def plot_sector_percentage_by_responsive_count(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+) -> plt.Figure:
+    ordered = frame.sort_values("neuron_idx").reset_index(drop=True)
+    max_count = int(ordered["naive_responsive_image_count"].max())
+    display_label = DISPLAY_LABELS.get(label, label)
+    sector_count_summary = build_sector_count_summary(ordered)
+    count_index = pd.Index(range(max_count + 1), name="naive_responsive_image_count")
+
+    fig, ax = plt.subplots(figsize=(5.8, 3.8), constrained_layout=True)
+    for sector in _directional_sectors():
+        rows = sector_count_summary.loc[
+            sector_count_summary["RotatedSector"].astype(str).eq(sector)
+        ].set_index("naive_responsive_image_count").reindex(count_index)
+        ax.plot(
+            count_index.to_numpy(dtype=int),
+            rows["percent_within_count"].fillna(0.0),
+            color=th.ROTATED_SECTOR_PALETTE[sector],
+            marker="o",
+            linewidth=2.2,
+            label=sector,
+        )
+
+    ax.set_xlim(-0.45, max_count + 0.45)
+    ax.set_xticks(np.arange(0, max_count + 1, 1))
+    ax.set_ylim(0.0, 100.0)
+    ax.set_xlabel("naive responsive image count")
+    ax.set_ylabel("neurons in sector (%)")
+    ax.set_title(f"{display_label}: rotated-sector composition by count")
+    ax.grid(axis="y", color="0.90", linewidth=0.8)
+    ax.legend(frameon=False, bbox_to_anchor=(1.02, 1.0), loc="upper left")
+    return fig
+
+
 def export_naive_responsiveness_plots(
     *,
     data_dir: Path,
@@ -472,13 +673,14 @@ def export_naive_responsiveness_plots(
     sector_threshold: float,
     point_size: float,
 ) -> list[Path]:
+    output_dir = output_dir / _threshold_folder(response_threshold)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     act_table = th.load_transition_table(data_dir / "transitions_act.csv")
     post_table = th.load_transition_table(data_dir / "transitions_post.csv")
 
     summaries = {
-        "task": build_colored_summary(
+        "task_familiar": build_colored_summary(
             act_table,
             image_group="all",
             target_stage="Task",
@@ -534,6 +736,39 @@ def export_naive_responsiveness_plots(
             saved_paths.append(path)
         plt.close(fig)
 
+        delta_fig = plot_delta_by_responsive_count(
+            frame,
+            label=label,
+            response_threshold=response_threshold,
+            point_size=point_size,
+        )
+        for suffix in ("png", "svg"):
+            path = output_dir / f"{label}_delta_by_naive_responsive_count_{threshold_tag}.{suffix}"
+            delta_fig.savefig(path, dpi=300, bbox_inches="tight")
+            saved_paths.append(path)
+        plt.close(delta_fig)
+
+        sector_delta_fig = plot_delta_by_responsive_count_sectors(
+            frame,
+            label=label,
+            point_size=point_size,
+        )
+        for suffix in ("png", "svg"):
+            path = output_dir / f"{label}_delta_by_rotated_sector_count_{threshold_tag}.{suffix}"
+            sector_delta_fig.savefig(path, dpi=300, bbox_inches="tight")
+            saved_paths.append(path)
+        plt.close(sector_delta_fig)
+
+        sector_percent_fig = plot_sector_percentage_by_responsive_count(
+            frame,
+            label=label,
+        )
+        for suffix in ("png", "svg"):
+            path = output_dir / f"{label}_sector_percentage_by_naive_responsive_count_{threshold_tag}.{suffix}"
+            sector_percent_fig.savefig(path, dpi=300, bbox_inches="tight")
+            saved_paths.append(path)
+        plt.close(sector_percent_fig)
+
     merged = pd.concat(summaries.values(), ignore_index=True)
     summary_csv = output_dir / f"chronic_scatter_by_naive_responsive_count_{threshold_tag}.csv"
     merged.to_csv(summary_csv, index=False)
@@ -548,20 +783,21 @@ def export_naive_responsiveness_plots(
     count_distribution.to_csv(distribution_csv, index=False)
     saved_paths.append(distribution_csv)
 
+    sector_count_summary = pd.concat(
+        [
+            build_sector_count_summary(frame).assign(summary_name=label)
+            for label, frame in summaries.items()
+        ],
+        ignore_index=True,
+    )
+    sector_count_csv = output_dir / f"sector_count_summary_{threshold_tag}.csv"
+    sector_count_summary.to_csv(sector_count_csv, index=False)
+    saved_paths.append(sector_count_csv)
+
     mean_displacements = build_mean_displacement_by_responsiveness(merged)
     mean_displacement_csv = output_dir / f"mean_displacement_by_naive_responsive_count_{threshold_tag}.csv"
     mean_displacements.to_csv(mean_displacement_csv, index=False)
     saved_paths.append(mean_displacement_csv)
-
-    mean_fig = plot_mean_displacement_by_responsiveness(
-        mean_displacements,
-        response_threshold=response_threshold,
-    )
-    for suffix in ("png", "svg"):
-        path = output_dir / f"mean_displacement_by_naive_responsive_count_{threshold_tag}.{suffix}"
-        mean_fig.savefig(path, dpi=300, bbox_inches="tight")
-        saved_paths.append(path)
-    plt.close(mean_fig)
 
     return saved_paths
 
