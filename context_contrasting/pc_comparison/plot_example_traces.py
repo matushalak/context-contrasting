@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import torch
 
@@ -33,6 +34,11 @@ SECTOR_TRACE_LABELS = {
     "small ∆": "small",
 }
 SECTOR_MODES = ("sector-average", "sector-per-image")
+DIAGONAL_HALF_WIDTH_RAD = np.pi / 8.0
+DIAGONAL_BY_GROUP = {
+    "familiar": ("minus_no_plus_o", "-NO/+O", 3.0 * np.pi / 4.0),
+    "novel": ("plus_no_plus_o", "+NO/+O", np.pi / 4.0),
+}
 GROUP_CONDITIONS = {
     "familiar": ["familiar_1", "familiar_2"],
     "novel": ["novel"],
@@ -58,6 +64,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-jobs", type=int, default=-1)
     parser.add_argument("--circuits", nargs="+", choices=("PPE", "NPE"), default=("PPE", "NPE"))
     parser.add_argument("--max-sector-traces-per-sector", type=int, default=8)
+    parser.add_argument("--skip-representatives", action="store_true")
+    parser.add_argument("--skip-sector-averages", action="store_true")
     return parser.parse_args()
 
 
@@ -82,6 +90,7 @@ def _select_examples(circuit: str, summaries_dir: Path) -> list[tuple[str, int]]
     if circuit == "PPE":
         candidates = [
             familiar.sort_values(["dNO", "sample_order"], ascending=[True, True]),
+            familiar.sort_values(["dNO", "sample_order"], ascending=[False, True]),
             novel.sort_values(["dNO", "sample_order"], ascending=[False, True]),
         ]
     else:
@@ -196,8 +205,10 @@ def _long_df_for_config(
 ) -> pd.DataFrame:
     model = CorrectPCneuron(_model_params_from_row(row, circuit=circuit))
     cell_floor = _cell_floor(row, metadata)
+    probe_noise_state = model.get_noise_state()
     frames = _trace_frames(model, stimuli, phase="naive", cell_floor=cell_floor)
     _run_compact_phase(model, training_stimuli[0], training_stimuli[1], update=True)
+    model.set_noise_state(probe_noise_state)
     frames.extend(_trace_frames(model, stimuli, phase="expert", cell_floor=cell_floor))
     return pd.concat(frames, ignore_index=True)
 
@@ -321,6 +332,10 @@ def _plot_circuit(
             save_csv=True,
             zscore_activity=True,
             image_format=fmt,
+            condition_title_size=22,
+            phase_title_size=26,
+            panel_top=0.80,
+            phase_title_y=0.94,
         )
 
 
@@ -337,6 +352,23 @@ def _sector_members(summary: pd.DataFrame, *, max_per_sector: int) -> dict[str, 
             rows = rows.sort_values(["dNorm", "sample_order"], ascending=[True, True])
         members[sector] = [int(neuron_idx) for neuron_idx in rows["neuron_idx"].head(max_per_sector)]
     return members
+
+
+def _angle_distance(angle: pd.Series, target: float) -> pd.Series:
+    values = angle.to_numpy(dtype=float)
+    return pd.Series(
+        np.abs(np.arctan2(np.sin(values - target), np.cos(values - target))),
+        index=angle.index,
+    )
+
+
+def _diagonal_members(summary: pd.DataFrame, *, group: str, threshold: float) -> dict[str, list[int]]:
+    diagonal_key, _diagonal_label, diagonal_angle = DIAGONAL_BY_GROUP[group]
+    mask = _angle_distance(summary["Angle"], float(diagonal_angle)).le(DIAGONAL_HALF_WIDTH_RAD)
+    if "dNorm" in summary:
+        mask &= summary["dNorm"].astype(float).gt(threshold)
+    rows = summary.loc[mask].sort_values(["dNorm", "sample_order"], ascending=[False, True])
+    return {diagonal_key: [int(neuron_idx) for neuron_idx in rows["neuron_idx"]]}
 
 
 def _average_member_traces(frames: list[pd.DataFrame]) -> pd.DataFrame:
@@ -406,6 +438,27 @@ def _members_by_condition(
     }
 
 
+def _diagonal_members_by_condition(
+    summary: pd.DataFrame,
+    *,
+    group: str,
+    selected_conditions: list[str],
+    sector_mode: str,
+    threshold: float,
+) -> dict[str, dict[str, list[int]]]:
+    if sector_mode == "sector-average":
+        members = _diagonal_members(summary, group=group, threshold=threshold)
+        return {condition: members for condition in selected_conditions}
+    return {
+        condition: _diagonal_members(
+            summary.loc[summary["condition"].eq(condition)].copy(),
+            group=group,
+            threshold=threshold,
+        )
+        for condition in selected_conditions
+    }
+
+
 def _needed_neurons(members_by_condition: dict[str, dict[str, list[int]]]) -> set[int]:
     return {
         neuron_idx
@@ -421,9 +474,10 @@ def _sector_average_long_dfs(
     *,
     selected_conditions: list[str],
     pooled: bool,
+    trace_order: tuple[str, ...] = SECTOR_TRACE_ORDER,
 ) -> dict[str, pd.DataFrame]:
     long_dfs: dict[str, pd.DataFrame] = {}
-    for sector in SECTOR_TRACE_ORDER:
+    for sector in trace_order:
         frames: list[pd.DataFrame] = []
         for condition in selected_conditions:
             neuron_ids = members_by_condition.get(condition, {}).get(sector, [])
@@ -476,6 +530,7 @@ def _plot_sector_average_circuit(
         },
     }
     members_lookup: dict[tuple[str, str], dict[str, dict[str, list[int]]]] = {}
+    diagonal_members_lookup: dict[tuple[str, str], dict[str, dict[str, list[int]]]] = {}
     needed: set[int] = set()
     for sector_mode in SECTOR_MODES:
         for group in ("familiar", "novel"):
@@ -488,6 +543,15 @@ def _plot_sector_average_circuit(
             )
             members_lookup[(sector_mode, group)] = members
             needed.update(_needed_neurons(members))
+            diagonal_members = _diagonal_members_by_condition(
+                summaries_by_mode_group[sector_mode][group],
+                group=group,
+                selected_conditions=selected_conditions,
+                sector_mode=sector_mode,
+                threshold=threshold,
+            )
+            diagonal_members_lookup[(sector_mode, group)] = diagonal_members
+            needed.update(_needed_neurons(diagonal_members))
     needed_neurons = sorted(neuron_idx for neuron_idx in needed if neuron_idx in configs_by_neuron)
     long_df_cache = _render_neuron_traces(
         needed_neurons,
@@ -542,6 +606,82 @@ def _plot_sector_average_circuit(
                         save_csv=True,
                         zscore_activity=True,
                         image_format=fmt,
+                        condition_title_size=22,
+                        phase_title_size=26,
+                        panel_top=0.80,
+                        phase_title_y=0.94,
+                        match_sector_export_style=True,
+                    )
+
+            diagonal_key, diagonal_label, _diagonal_angle = DIAGONAL_BY_GROUP[group]
+            diagonal_order = (diagonal_key,)
+            diagonal_members = diagonal_members_lookup[(sector_mode, group)]
+            diagonal_long_dfs = _sector_average_long_dfs(
+                long_df_cache,
+                diagonal_members,
+                selected_conditions=selected_conditions,
+                pooled=False,
+                trace_order=diagonal_order,
+            )
+            diagonal_pooled_long_dfs = _sector_average_long_dfs(
+                long_df_cache,
+                diagonal_members,
+                selected_conditions=selected_conditions,
+                pooled=True,
+                trace_order=diagonal_order,
+            )
+            diagonal_output_dir = output_dir / "diagonal-average" / sector_mode / circuit.lower() / group
+            diagonal_output_dir.mkdir(parents=True, exist_ok=True)
+            diagonal_name_prefix = (
+                f"diagonal_per_image_{diagonal_key}"
+                if sector_mode == "sector-per-image"
+                else f"diagonal_average_{diagonal_key}"
+            )
+            for fmt in formats:
+                if diagonal_long_dfs:
+                    visualize_transition_panel(
+                        diagonal_long_dfs,
+                        stimuli,
+                        save_path=str(diagonal_output_dir),
+                        name=f"{circuit.lower()}_{diagonal_name_prefix}_{group}_examples",
+                        image_mode=group,
+                        include_novel_image=(group == "novel"),
+                        transition_order=list(diagonal_long_dfs),
+                        transition_labels={diagonal_key: diagonal_label},
+                        trace_types=("full", "occlusion"),
+                        step_window=paper_scatter._panel_step_window(n_steps_per_phase, test_trials),
+                        save_in_transition_subdir=False,
+                        save_csv=True,
+                        zscore_activity=True,
+                        image_format=fmt,
+                        condition_title_size=22,
+                        phase_title_size=26,
+                        panel_top=0.80,
+                        phase_title_y=0.94,
+                        match_sector_export_style=True,
+                    )
+                if diagonal_pooled_long_dfs:
+                    pooled_stimuli = {"pooled": stimuli[selected_conditions[0]]}
+                    visualize_transition_panel(
+                        diagonal_pooled_long_dfs,
+                        pooled_stimuli,
+                        save_path=str(diagonal_output_dir),
+                        name=f"{circuit.lower()}_{diagonal_name_prefix}_{group}_pooled_examples",
+                        image_mode=None,
+                        include_novel_image=False,
+                        transition_order=list(diagonal_pooled_long_dfs),
+                        transition_labels={diagonal_key: diagonal_label},
+                        trace_types=("full", "occlusion"),
+                        step_window=paper_scatter._panel_step_window(n_steps_per_phase, test_trials),
+                        save_in_transition_subdir=False,
+                        save_csv=True,
+                        zscore_activity=True,
+                        image_format=fmt,
+                        condition_title_size=22,
+                        phase_title_size=26,
+                        panel_top=0.80,
+                        phase_title_y=0.94,
+                        match_sector_export_style=True,
                     )
                 if pooled_long_dfs:
                     pooled_stimuli = {"pooled": stimuli[selected_conditions[0]]}
@@ -560,6 +700,11 @@ def _plot_sector_average_circuit(
                         save_csv=True,
                         zscore_activity=True,
                         image_format=fmt,
+                        condition_title_size=22,
+                        phase_title_size=26,
+                        panel_top=0.80,
+                        phase_title_y=0.94,
+                        match_sector_export_style=True,
                     )
 
 
@@ -568,23 +713,25 @@ def main() -> None:
     metadata = json.loads((args.paper_output_dir / "metadata.json").read_text())
     formats = _formats(args)
     for circuit in args.circuits:
-        _plot_circuit(
-            circuit,
-            metadata=metadata,
-            output_dir=args.output_dir,
-            pc_output_dir=args.pc_output_dir,
-            formats=formats,
-            n_jobs=args.n_jobs,
-        )
-        _plot_sector_average_circuit(
-            circuit,
-            metadata=metadata,
-            output_dir=args.pc_output_dir / "sector_average_examples",
-            pc_output_dir=args.pc_output_dir,
-            formats=formats,
-            n_jobs=args.n_jobs,
-            max_sector_traces_per_sector=int(args.max_sector_traces_per_sector),
-        )
+        if not args.skip_representatives:
+            _plot_circuit(
+                circuit,
+                metadata=metadata,
+                output_dir=args.output_dir,
+                pc_output_dir=args.pc_output_dir,
+                formats=formats,
+                n_jobs=args.n_jobs,
+            )
+        if not args.skip_sector_averages:
+            _plot_sector_average_circuit(
+                circuit,
+                metadata=metadata,
+                output_dir=args.pc_output_dir / "sector_average_examples",
+                pc_output_dir=args.pc_output_dir,
+                formats=formats,
+                n_jobs=args.n_jobs,
+                max_sector_traces_per_sector=int(args.max_sector_traces_per_sector),
+            )
 
 
 if __name__ == "__main__":

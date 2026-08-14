@@ -1,0 +1,112 @@
+\subsection{Comparison with matched predictive-coding circuits}
+\label{s:predictive-coding-comparison}
+
+We compared the context-contrasting (CC) circuit with minimal positive and
+negative prediction-error circuits (PPE and NPE). The two predictive-coding
+models used the same parameter rows and differed only by exchanging sensory
+input $\mathbf{x}(t)$ and contextual input $\mathbf{c}(t)$. In a PPE circuit,
+the PyC received direct sensory excitation and the PV cell received contextual
+excitation. In an NPE circuit, the PyC received direct contextual excitation and
+the PV cell received sensory excitation. Their signed prediction errors were
+
+\begin{align}
+e_{+}(t) &= \mathbf{w}_{E}^{T}\mathbf{x}(t)
+ - w_{LAT}p_{+}(t),
+&p_{+}(t) &= \operatorname{EMA}_{\alpha_p}
+ \!\left[\phi\!\left(\mathbf{w}_{PV}^{T}\mathbf{c}(t)\right)\right],\\
+e_{-}(t) &= \mathbf{w}_{E}^{T}\mathbf{c}(t)
+ - w_{LAT}p_{-}(t),
+&p_{-}(t) &= \operatorname{EMA}_{\alpha_p}
+ \!\left[\phi\!\left(\mathbf{w}_{PV}^{T}\mathbf{x}(t)\right)\right].
+\end{align}
+
+For both circuits, the reported PyC response was
+\begin{equation}
+y_{\pm}(t+1)=\operatorname{EMA}_{\alpha_y}
+\left[\phi\left(e_{\pm}(t)+I_y(t)-a_f(t)\right)\right],
+\qquad I_y(t)\sim\mathcal{N}(0.2,0.30^2),
+\end{equation}
+where $a_f$ was a short-term adaptation trace with update rate
+$\alpha_a=0.2\alpha_y$. Baseline noise affected the response and its
+normalization, but not the signed error used for learning. PV noise was set to
+zero.
+
+Only the direct excitatory PyC synapses were plastic: $\mathbf{w}_E$ denoted
+$\mathbf{w}_{FF}$ in PPEs and $\mathbf{w}_{FB}$ in NPEs. Both circuits used the
+same anti-Hebbian rule,
+\begin{equation}
+\boldsymbol{\delta}(t)=-\eta e_{\pm}(t)\mathbf{u}(t),\qquad
+\Delta w_{E,i}(t)=
+\begin{cases}
+\delta_i(t)(1-w_{E,i}(t)), & \delta_i(t)\geq 0,\\
+\delta_i(t)w_{E,i}(t), & \delta_i(t)<0,
+\end{cases}
+\end{equation}
+with $\mathbf{u}=\mathbf{x}$ for PPEs and $\mathbf{u}=\mathbf{c}$ for NPEs.
+The PV excitation and $w_{LAT}$ were fixed. The single learning rate was chosen
+as the smallest full-protocol value for which the absolute signed error was at
+most $0.005$ for both familiar inputs in every sampled parameter row.
+
+\begin{table*}[h!]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.08}
+\begin{tabular}{@{}p{0.15\textwidth}p{0.14\textwidth}p{0.14\textwidth}p{0.47\textwidth}@{}}
+\toprule
+Quantity & PPE & NPE & Shared setting \\
+\midrule
+Direct PyC input & sensory $\mathbf{x}$ & context $\mathbf{c}$
+ & tuned weight $\mathcal{U}_{\mathrm{strat}}(0.05,0.95)$ \\
+PV input & context $\mathbf{c}$ & sensory $\mathbf{x}$
+ & tuned weight $\mathcal{U}_{\mathrm{strat}}(0.05,0.95)$ \\
+Plastic synapse & $\mathbf{w}_{FF}$ & $\mathbf{w}_{FB}$
+ & all other synapses fixed \\
+PyC/PV tuning width & $1$ or $3$ of $3$ & $1$ or $3$ of $3$
+ & preferred channels sampled independently; untuned weight $0$ \\
+$w_{LAT}$ & PV$\rightarrow$PyC & PV$\rightarrow$PyC
+ & $\mathcal{U}_{\mathrm{strat}}(0.05,0.95)$ \\
+Rate updates & $\alpha_y=0.05$ & $\alpha_y=0.05$
+ & $\alpha_p=0.5$, $\alpha_a=0.01$ \\
+Baseline current & $\mathcal{N}(0.2,0.30^2)$ & $\mathcal{N}(0.2,0.30^2)$
+ & PV noise $=0$ \\
+Plasticity rate & $\eta=0.2820286$ & $\eta=0.2820286$
+ & calibrated at $400$ steps and $|e|\leq0.005$ \\
+Population and protocol & $300$ cells & matched $300$ cells
+ & seed $7151$; $5$ test and $7$ training trials per familiar image \\
+\bottomrule
+\end{tabular}
+\caption{Matched PPE/NPE model parameters. Stratified uniform sampling covered
+each interval evenly across the population. Every sampled row was instantiated
+once as PPE and once as NPE.}
+\label{tab:predictive-coding-parameters}
+\end{table*}
+
+The predictive-coding population construction differed from the CC transition
+templates. CC templates represented phenomenologically selected response
+classes, used class-specific parameter combinations and mixture proportions,
+and included basal, apical, lateral and dendritic mechanisms with several
+plastic synapse classes. The PPE/NPE comparison instead used one
+circuit-independent, stratified parameter pool. PyC excitatory strength, PV
+excitatory strength and $w_{LAT}$ were sampled independently over the ranges in
+Table~\ref{tab:predictive-coding-parameters}; PyC and PV preferred-channel sets
+were also sampled independently. The same row was then mapped to PPE or NPE by
+the sensory/context input swap above. Thus the predictive-coding population was
+not fitted to the empirical scatter plots or to the CC template proportions.
+
+Scatter plots were generated with the same stimulus definitions and evaluation
+protocol as for CC: two familiar images, one untrained novel image, and an
+occluded condition obtained by setting $\mathbf{x}=\mathbf{0}$. Each trial had
+$400$ simulation steps; responses were measured over $5$ naive trials,
+familiarization used $7$ randomized non-occluded trials per familiar image, and
+responses were measured again over $5$ expert trials with plasticity disabled.
+Naive and expert probes used matched random-number streams so that response
+changes reflected learning rather than finite-trial noise. Activity was
+standardized using naive pre-stimulus activity with scale
+$\max(\sigma_{\mathrm{baseline}},0.27\sigma_y,0.04)$; here the imposed floor was
+$0.081$. For each cell we plotted naive and expert non-occluded (NO) against
+occluded (O) responses, and the response-change vector
+$(\Delta NO,\Delta O)=(NO_{expert}-NO_{naive},O_{expert}-O_{naive})$.
+Vectors with norm below $0.3$ were assigned to the small-change sector; all
+others were classified by their rotated angular sector using the same procedure
+as the CC population.

@@ -18,6 +18,12 @@ import context_contrasting.data_analysis.transitions_helpers as th
 SECTOR_ORDER = ("+NO axis", "+O axis", "-NO axis", "-O axis")
 SECTOR_LABELS = {sector: sector.replace(" axis", "") for sector in SECTOR_ORDER}
 SECTOR_MODES = ("sector-average", "sector-per-image")
+DIAGONAL_HALF_WIDTH_RAD = np.pi / 8.0
+DIAGONAL_SPECS = {
+    "task": {"key": "minus_no_plus_o", "label": "-NO/+O", "angle": 3.0 * np.pi / 4.0},
+    "expert_familiar": {"key": "minus_no_plus_o", "label": "-NO/+O", "angle": 3.0 * np.pi / 4.0},
+    "novel": {"key": "plus_no_plus_o", "label": "+NO/+O", "angle": np.pi / 4.0},
+}
 IMAGE_TYPE_SPECS = (
     ("Occl", "O", "red"),
     ("Full", "NO", "black"),
@@ -90,11 +96,17 @@ def _attach_sector_labels(
     summary: pd.DataFrame,
     *,
     key_cols: list[str],
+    require_all: bool = True,
 ) -> pd.DataFrame:
     sectors = summary[key_cols + ["RotatedSector"]].copy()
     sectors["neuron_idx"] = sectors["neuron_idx"].astype(int)
-    labeled = trace_table.merge(sectors, on=key_cols, how="left", validate="many_to_one")
-    if labeled["RotatedSector"].isna().any():
+    labeled = trace_table.merge(
+        sectors,
+        on=key_cols,
+        how="left" if require_all else "inner",
+        validate="many_to_one",
+    )
+    if require_all and labeled["RotatedSector"].isna().any():
         missing = (
             labeled.loc[labeled["RotatedSector"].isna(), key_cols]
             .drop_duplicates()
@@ -103,6 +115,11 @@ def _attach_sector_labels(
         )
         raise ValueError(f"Trace rows missing sector labels for keys: {missing}")
     return labeled
+
+
+def _angle_distance(angle: pd.Series | np.ndarray, target: float) -> np.ndarray:
+    values = np.asarray(angle, dtype=float)
+    return np.abs(np.arctan2(np.sin(values - target), np.cos(values - target)))
 
 
 def _mean_sector_summary(
@@ -154,11 +171,31 @@ def _per_image_sector_summary(
     return pd.concat(summaries, ignore_index=True)
 
 
+def _diagonal_assignments(
+    summary: pd.DataFrame,
+    *,
+    spec: TraceExportSpec,
+    key_cols: list[str],
+    threshold: float,
+) -> pd.DataFrame:
+    diagonal = DIAGONAL_SPECS[spec.key]
+    mask = (
+        _angle_distance(summary["Angle"], float(diagonal["angle"])) <= DIAGONAL_HALF_WIDTH_RAD
+    ) & (summary["dNorm"].astype(float) > threshold)
+    selected = summary.loc[mask, key_cols].copy()
+    selected["RotatedSector"] = str(diagonal["key"])
+    return selected
+
+
 def _summarize_traces(
     labeled: pd.DataFrame,
     *,
     spec: TraceExportSpec,
+    trace_order: tuple[str, ...] = SECTOR_ORDER,
+    trace_labels: dict[str, str] | None = None,
 ) -> pd.DataFrame:
+    if trace_labels is None:
+        trace_labels = SECTOR_LABELS
     index_cols = [
         "RotatedSector",
         "image_group",
@@ -169,7 +206,7 @@ def _summarize_traces(
         "time",
     ]
     grouped = (
-        labeled.loc[labeled["RotatedSector"].isin(SECTOR_ORDER)]
+        labeled.loc[labeled["RotatedSector"].isin(trace_order)]
         .groupby(index_cols, observed=True, as_index=False)
         .agg(
             mean_response=("response", "mean"),
@@ -180,7 +217,7 @@ def _summarize_traces(
     )
     grouped["sem"] = grouped["sd_response"].fillna(0.0) / np.sqrt(np.maximum(grouped["n_cells"], 1))
     grouped.insert(0, "trace_group", spec.key)
-    grouped["sector_label"] = grouped["RotatedSector"].map(SECTOR_LABELS)
+    grouped["sector_label"] = grouped["RotatedSector"].map(trace_labels)
     grouped["stage_label"] = grouped["stage"].replace({spec.pre_stage: "Naive", spec.target_stage: spec.target_label})
     grouped["response_type"] = grouped["image_type"].map({"Full": "NO", "Occl": "O"})
     return grouped
@@ -190,7 +227,11 @@ def _summarize_pooled_traces(
     labeled: pd.DataFrame,
     *,
     spec: TraceExportSpec,
+    trace_order: tuple[str, ...] = SECTOR_ORDER,
+    trace_labels: dict[str, str] | None = None,
 ) -> pd.DataFrame:
+    if trace_labels is None:
+        trace_labels = SECTOR_LABELS
     index_cols = [
         "RotatedSector",
         "image_group",
@@ -199,7 +240,7 @@ def _summarize_pooled_traces(
         "time",
     ]
     grouped = (
-        labeled.loc[labeled["RotatedSector"].isin(SECTOR_ORDER)]
+        labeled.loc[labeled["RotatedSector"].isin(trace_order)]
         .groupby(index_cols, observed=True, as_index=False)
         .agg(
             mean_response=("response", "mean"),
@@ -212,7 +253,7 @@ def _summarize_pooled_traces(
     )
     grouped["sem"] = grouped["sd_response"].fillna(0.0) / np.sqrt(np.maximum(grouped["n_responses"], 1))
     grouped.insert(0, "trace_group", spec.key)
-    grouped["sector_label"] = grouped["RotatedSector"].map(SECTOR_LABELS)
+    grouped["sector_label"] = grouped["RotatedSector"].map(trace_labels)
     grouped["stage_label"] = grouped["stage"].replace({spec.pre_stage: "Naive", spec.target_stage: spec.target_label})
     grouped["response_type"] = grouped["image_type"].map({"Full": "NO", "Occl": "O"})
     return grouped
@@ -280,15 +321,20 @@ def _plot_sector_average_panel(
     basename: str,
     formats: tuple[str, ...],
     dpi: int,
+    trace_order: tuple[str, ...] = SECTOR_ORDER,
+    trace_labels: dict[str, str] | None = None,
+    title: str = "Real-data sector-average traces +/- SEM",
 ) -> list[Path]:
+    if trace_labels is None:
+        trace_labels = SECTOR_LABELS
     column_pairs = _column_pairs(summary, pre_stage=spec.pre_stage, target_stage=spec.target_stage)
     if not column_pairs:
         return []
 
     fig, axes = plt.subplots(
-        len(SECTOR_ORDER),
+        len(trace_order),
         len(column_pairs),
-        figsize=(max(7.0, 1.65 * len(column_pairs)), 1.8 * len(SECTOR_ORDER) + 1.0),
+        figsize=(max(7.0, 1.65 * len(column_pairs)), 1.8 * len(trace_order) + 1.0),
         squeeze=False,
         sharex=True,
         sharey=False,
@@ -299,7 +345,7 @@ def _plot_sector_average_panel(
         stage_label = "Naive" if stage == spec.pre_stage else spec.target_label
         axes[0, col_idx].set_title(f"image {image_idx}\n{stage_label}", fontsize=8)
 
-    for row_idx, sector in enumerate(SECTOR_ORDER):
+    for row_idx, sector in enumerate(trace_order):
         sector_rows = summary.loc[summary["RotatedSector"].eq(sector)].copy()
         row_bounds: list[float] = []
         for col_idx, (image_idx, stage) in enumerate(column_pairs):
@@ -328,7 +374,7 @@ def _plot_sector_average_panel(
         axes[row_idx, 0].text(
             -0.08,
             0.5,
-            SECTOR_LABELS[sector],
+            trace_labels[sector],
             transform=axes[row_idx, 0].transAxes,
             ha="right",
             va="center",
@@ -340,7 +386,7 @@ def _plot_sector_average_panel(
                 ax.set_ylim(y_limits)
             _add_scale_bar(axes[row_idx, 0])
 
-    fig.suptitle("Real-data sector-average traces +/- SEM", y=0.98, fontsize=11)
+    fig.suptitle(title, y=0.98, fontsize=11)
     output_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
     for fmt in formats:
@@ -359,12 +405,17 @@ def _plot_pooled_sector_panel(
     basename: str,
     formats: tuple[str, ...],
     dpi: int,
+    trace_order: tuple[str, ...] = SECTOR_ORDER,
+    trace_labels: dict[str, str] | None = None,
+    title: str = "Real-data pooled sector-average traces +/- SEM",
 ) -> list[Path]:
+    if trace_labels is None:
+        trace_labels = SECTOR_LABELS
     stage_pairs = [(spec.pre_stage, "Naive"), (spec.target_stage, spec.target_label)]
     fig, axes = plt.subplots(
-        len(SECTOR_ORDER),
+        len(trace_order),
         len(stage_pairs),
-        figsize=(7.0, 1.8 * len(SECTOR_ORDER) + 1.0),
+        figsize=(7.0, 1.8 * len(trace_order) + 1.0),
         squeeze=False,
         sharex=True,
         sharey=False,
@@ -374,7 +425,7 @@ def _plot_pooled_sector_panel(
     for col_idx, (_stage, stage_label) in enumerate(stage_pairs):
         axes[0, col_idx].set_title(f"pooled\n{stage_label}", fontsize=8)
 
-    for row_idx, sector in enumerate(SECTOR_ORDER):
+    for row_idx, sector in enumerate(trace_order):
         sector_rows = pooled_summary.loc[pooled_summary["RotatedSector"].eq(sector)].copy()
         row_bounds: list[float] = []
         for col_idx, (stage, _stage_label) in enumerate(stage_pairs):
@@ -402,7 +453,7 @@ def _plot_pooled_sector_panel(
         axes[row_idx, 0].text(
             -0.08,
             0.5,
-            SECTOR_LABELS[sector],
+            trace_labels[sector],
             transform=axes[row_idx, 0].transAxes,
             ha="right",
             va="center",
@@ -414,7 +465,7 @@ def _plot_pooled_sector_panel(
                 ax.set_ylim(y_limits)
             _add_scale_bar(axes[row_idx, 0])
 
-    fig.suptitle("Real-data pooled sector-average traces +/- SEM", y=0.98, fontsize=11)
+    fig.suptitle(title, y=0.98, fontsize=11)
     output_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
     for fmt in formats:
@@ -429,6 +480,15 @@ def _mode_basename(spec: TraceExportSpec, *, sector_mode: str, pooled: bool = Fa
     basename = spec.basename
     if sector_mode == "sector-per-image":
         basename = basename.replace("sector_average", "sector_per_image")
+    if pooled:
+        basename = basename.replace("_examples_sem", "_pooled_examples_sem")
+    return basename
+
+
+def _diagonal_basename(spec: TraceExportSpec, *, sector_mode: str, pooled: bool = False) -> str:
+    diagonal_key = str(DIAGONAL_SPECS[spec.key]["key"])
+    mode_prefix = "diagonal_per_image" if sector_mode == "sector-per-image" else "diagonal_average"
+    basename = f"{mode_prefix}_{diagonal_key}_{spec.folder}_examples_sem"
     if pooled:
         basename = basename.replace("_examples_sem", "_pooled_examples_sem")
     return basename
@@ -510,6 +570,74 @@ def export_real_sector_average_traces(
                     basename=pooled_basename,
                     formats=formats,
                     dpi=dpi,
+                )
+            )
+
+            diagonal = DIAGONAL_SPECS[spec.key]
+            diagonal_order = (str(diagonal["key"]),)
+            diagonal_labels = {str(diagonal["key"]): str(diagonal["label"])}
+            diagonal_assignments = _diagonal_assignments(
+                sector_summary,
+                spec=spec,
+                key_cols=key_cols,
+                threshold=threshold,
+            )
+            if diagonal_assignments.empty:
+                continue
+            diagonal_labeled = _attach_sector_labels(
+                trace_table,
+                diagonal_assignments,
+                key_cols=key_cols,
+                require_all=False,
+            )
+            diagonal_summary = _summarize_traces(
+                diagonal_labeled,
+                spec=spec,
+                trace_order=diagonal_order,
+                trace_labels=diagonal_labels,
+            )
+            diagonal_pooled_summary = _summarize_pooled_traces(
+                diagonal_labeled,
+                spec=spec,
+                trace_order=diagonal_order,
+                trace_labels=diagonal_labels,
+            )
+            diagonal_dir = output_dir / "diagonal-average" / sector_mode / spec.folder
+            diagonal_dir.mkdir(parents=True, exist_ok=True)
+
+            diagonal_basename = _diagonal_basename(spec, sector_mode=sector_mode)
+            diagonal_csv_path = diagonal_dir / f"{diagonal_basename}.csv"
+            diagonal_summary.to_csv(diagonal_csv_path, index=False)
+            saved.append(diagonal_csv_path)
+            saved.extend(
+                _plot_sector_average_panel(
+                    diagonal_summary,
+                    spec=spec,
+                    output_dir=diagonal_dir,
+                    basename=diagonal_basename,
+                    formats=formats,
+                    dpi=dpi,
+                    trace_order=diagonal_order,
+                    trace_labels=diagonal_labels,
+                    title=f"Real-data {diagonal['label']} diagonal traces +/- SEM",
+                )
+            )
+
+            diagonal_pooled_basename = _diagonal_basename(spec, sector_mode=sector_mode, pooled=True)
+            diagonal_pooled_csv_path = diagonal_dir / f"{diagonal_pooled_basename}.csv"
+            diagonal_pooled_summary.to_csv(diagonal_pooled_csv_path, index=False)
+            saved.append(diagonal_pooled_csv_path)
+            saved.extend(
+                _plot_pooled_sector_panel(
+                    diagonal_pooled_summary,
+                    spec=spec,
+                    output_dir=diagonal_dir,
+                    basename=diagonal_pooled_basename,
+                    formats=formats,
+                    dpi=dpi,
+                    trace_order=diagonal_order,
+                    trace_labels=diagonal_labels,
+                    title=f"Real-data pooled {diagonal['label']} diagonal traces +/- SEM",
                 )
             )
 

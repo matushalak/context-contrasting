@@ -16,6 +16,8 @@ import context_contrasting.data_analysis.transitions_helpers as th
 
 
 DEFAULT_RESPONSE_THRESHOLD = 0.3
+PAPER_STIMULUS_SELECTIVITY_THRESHOLD = 0.3
+PAPER_NOVEL_SELECTIVITY_THRESHOLD = 0.5
 
 COUNT_COLORS = (
     "#9E9E9E",
@@ -113,6 +115,110 @@ def build_naive_responsiveness_counts(
     return counts
 
 
+def _lifetime_sparseness(responses: pd.DataFrame) -> pd.Series:
+    values = responses.to_numpy(dtype=float)
+    n_stimuli = values.shape[1]
+    sum_responses = np.nansum(values, axis=1)
+    sum_squared_responses = np.nansum(values**2, axis=1)
+    denominator = n_stimuli * sum_squared_responses
+
+    sparseness = np.full(values.shape[0], np.nan, dtype=float)
+    valid = denominator > 0.0
+    sparseness[valid] = 1.0 - (sum_responses[valid] ** 2) / denominator[valid]
+    return pd.Series(sparseness, index=responses.index)
+
+
+def build_lifetime_sparseness(
+    transition_table: pd.DataFrame,
+    *,
+    stage: str,
+    image_groups: str | tuple[str, ...],
+    response_col: str = "NO",
+    response_threshold: float | None = PAPER_STIMULUS_SELECTIVITY_THRESHOLD,
+    expected_image_count: int | None = None,
+    output_col: str,
+) -> pd.DataFrame:
+    """Compute the paper lifetime-sparseness selectivity formula per neuron."""
+    groups = (image_groups,) if isinstance(image_groups, str) else tuple(image_groups)
+    rows = transition_table.loc[
+        transition_table["stage"].astype(str).eq(stage)
+        & transition_table["image_group"].astype(str).isin(groups)
+    ].copy()
+    if rows.empty:
+        raise ValueError(f"No rows found for stage={stage!r}, image_groups={groups!r}.")
+
+    responses = rows.pivot_table(
+        index="neuron_idx",
+        columns="image_idx_original",
+        values=response_col,
+        aggfunc="mean",
+    )
+    if expected_image_count is not None:
+        responses = responses.loc[responses.notna().sum(axis=1) == expected_image_count]
+
+    result = pd.DataFrame({"neuron_idx": responses.index})
+    result[output_col] = _lifetime_sparseness(responses).to_numpy(dtype=float)
+    result[f"{output_col}_mean_response"] = responses.mean(axis=1).to_numpy(dtype=float)
+    result[f"{output_col}_image_count"] = responses.notna().sum(axis=1).to_numpy(dtype=int)
+
+    if response_threshold is not None:
+        responsive = result[f"{output_col}_mean_response"] > response_threshold
+        result.loc[~responsive, output_col] = np.nan
+    return result.reset_index(drop=True)
+
+
+def build_paper_novel_selectivity(
+    transition_table: pd.DataFrame,
+    *,
+    stage: str,
+    response_col: str = "NO",
+    novel_response_threshold: float = PAPER_NOVEL_SELECTIVITY_THRESHOLD,
+    output_col: str = "paper_novel_selectivity",
+) -> pd.DataFrame:
+    """Average pairwise (R_novel - R_familiar) / (R_novel + R_familiar) per neuron."""
+    rows = transition_table.loc[
+        transition_table["stage"].astype(str).eq(stage)
+        & transition_table["image_group"].astype(str).isin(["familiar", "novel"])
+    ].copy()
+    if rows.empty:
+        raise ValueError(f"No familiar/novel rows found for stage={stage!r}.")
+
+    responses = rows.pivot_table(
+        index="neuron_idx",
+        columns=["image_group", "image_idx_original"],
+        values=response_col,
+        aggfunc="mean",
+    )
+    familiar_cols = [col for col in responses.columns if col[0] == "familiar"]
+    novel_cols = [col for col in responses.columns if col[0] == "novel"]
+
+    result_rows: list[dict[str, float | int]] = []
+    for neuron_idx, row in responses.iterrows():
+        familiar = row[familiar_cols].dropna().to_numpy(dtype=float)
+        novel = row[novel_cols].dropna().to_numpy(dtype=float)
+        pair_indices: list[float] = []
+        if len(novel) and float(np.nanmean(novel)) > novel_response_threshold:
+            for novel_response in novel:
+                for familiar_response in familiar:
+                    if novel_response > 0.0 and familiar_response > 0.0:
+                        denominator = novel_response + familiar_response
+                        if denominator > 0.0:
+                            pair_indices.append((novel_response - familiar_response) / denominator)
+        result_rows.append(
+            {
+                "neuron_idx": int(neuron_idx),
+                output_col: float(np.nanmean(pair_indices)) if pair_indices else np.nan,
+                f"{output_col}_pair_count": len(pair_indices),
+                f"{output_col}_mean_novel_response": float(np.nanmean(novel)) if len(novel) else np.nan,
+                f"{output_col}_mean_familiar_response": (
+                    float(np.nanmean(familiar)) if len(familiar) else np.nan
+                ),
+            }
+        )
+
+    return pd.DataFrame(result_rows)
+
+
 def build_colored_summary(
     transition_table: pd.DataFrame,
     *,
@@ -139,6 +245,10 @@ def build_colored_summary(
     colored["summary_image_group"] = image_group
     colored["target_stage"] = target_stage
     return colored
+
+
+def _merge_neuron_metric(summary: pd.DataFrame, metric: pd.DataFrame) -> pd.DataFrame:
+    return summary.merge(metric, on="neuron_idx", how="left", validate="one_to_one")
 
 
 def _draw_response_guides(ax: plt.Axes, response_lims: list[float]) -> None:
@@ -526,13 +636,12 @@ def plot_delta_by_responsive_count(
     return fig
 
 
-def _responsive_count_x(frame: pd.DataFrame, *, jitter: float) -> np.ndarray:
+def _x_values(frame: pd.DataFrame, *, x_col: str, jitter: float = 0.0) -> np.ndarray:
+    values = frame[x_col].to_numpy(dtype=float)
+    if jitter <= 0.0:
+        return values
     rng = np.random.default_rng(1729)
-    return frame["naive_responsive_image_count"].to_numpy(dtype=float) + rng.uniform(
-        -jitter,
-        jitter,
-        len(frame),
-    )
+    return values + rng.uniform(-jitter, jitter, len(frame))
 
 
 def _directional_sectors() -> tuple[str, ...]:
@@ -558,19 +667,142 @@ def build_sector_count_summary(frame: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-def plot_delta_by_responsive_count_sectors(
+def _selectivity_specs_for_label(label: str) -> list[tuple[str, str, str, str]]:
+    specs: list[tuple[str, str, str, str]] = []
+    if label in {"task_familiar", "expert_familiar"}:
+        specs.append(
+            (
+                "paper_stimulus_selectivity",
+                "paper stimulus selectivity",
+                "paper stimulus selectivity",
+                "paper_stimulus_selectivity_resp_gt_0_3",
+            )
+        )
+    if label == "expert_novel":
+        specs.append(
+            (
+                "paper_novel_selectivity",
+                "paper novel selectivity",
+                "paper novel selectivity",
+                "paper_novel_selectivity_novel_gt_0_5",
+            )
+        )
+    if label in {"expert_familiar", "expert_novel"}:
+        specs.append(
+            (
+                "all6_lifetime_sparseness",
+                "lifetime sparseness over all 6 images",
+                "six-image lifetime sparseness",
+                "all6_lifetime_sparseness_resp_gt_0_3",
+            )
+        )
+    return specs
+
+
+def _fit_line(x: np.ndarray, y: np.ndarray) -> dict[str, float | int] | None:
+    finite = np.isfinite(x) & np.isfinite(y)
+    x_valid = x[finite]
+    y_valid = y[finite]
+    if len(x_valid) < 2 or len(np.unique(x_valid)) < 2:
+        return None
+
+    slope, intercept = np.polyfit(x_valid, y_valid, deg=1)
+    if len(x_valid) > 1 and np.nanstd(x_valid) > 0.0 and np.nanstd(y_valid) > 0.0:
+        r_value = float(np.corrcoef(x_valid, y_valid)[0, 1])
+    else:
+        r_value = np.nan
+    return {
+        "n": int(len(x_valid)),
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "r": r_value,
+        "x_min": float(np.nanmin(x_valid)),
+        "x_max": float(np.nanmax(x_valid)),
+    }
+
+
+def build_sector_x_fit_summary(
+    frame: pd.DataFrame,
+    *,
+    x_col: str,
+    x_measure: str,
+    label: str,
+) -> pd.DataFrame:
+    rows: list[dict[str, float | int | str]] = []
+    for delta_col in ("dNO", "dO"):
+        for sector in th.ROTATED_SECTOR_ORDER:
+            sector_rows = frame.loc[frame["RotatedSector"].astype(str).eq(sector)]
+            fit = _fit_line(
+                sector_rows[x_col].to_numpy(dtype=float),
+                sector_rows[delta_col].to_numpy(dtype=float),
+            )
+            if fit is None:
+                finite_count = int(
+                    (
+                        np.isfinite(sector_rows[x_col].to_numpy(dtype=float))
+                        & np.isfinite(sector_rows[delta_col].to_numpy(dtype=float))
+                    ).sum()
+                )
+                rows.append(
+                    {
+                        "summary_name": label,
+                        "x_measure": x_measure,
+                        "delta_component": delta_col,
+                        "RotatedSector": sector,
+                        "n": finite_count,
+                        "slope": np.nan,
+                        "intercept": np.nan,
+                        "r": np.nan,
+                        "x_min": np.nan,
+                        "x_max": np.nan,
+                    }
+                )
+            else:
+                rows.append(
+                    {
+                        "summary_name": label,
+                        "x_measure": x_measure,
+                        "delta_component": delta_col,
+                        "RotatedSector": sector,
+                        **fit,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _x_limits(values: np.ndarray) -> tuple[float, float]:
+    finite = values[np.isfinite(values)]
+    if not len(finite):
+        return (0.0, 1.0)
+    x_min = float(np.nanmin(finite))
+    x_max = float(np.nanmax(finite))
+    if np.isclose(x_min, x_max):
+        pad = max(0.05, abs(x_min) * 0.05)
+    else:
+        pad = max(0.025, (x_max - x_min) * 0.06)
+    return (x_min - pad, x_max + pad)
+
+
+def plot_delta_by_x_sectors(
     frame: pd.DataFrame,
     *,
     label: str,
+    x_col: str,
+    x_label: str,
+    x_measure_label: str,
     jitter: float = 0.08,
     point_size: float = 34.0,
+    integer_ticks: bool = False,
 ) -> plt.Figure:
-    ordered = frame.sort_values("neuron_idx").reset_index(drop=True)
-    x = _responsive_count_x(ordered, jitter=jitter)
-    max_count = int(ordered["naive_responsive_image_count"].max())
+    ordered = (
+        frame.loc[np.isfinite(frame[x_col].to_numpy(dtype=float))]
+        .sort_values("neuron_idx")
+        .reset_index(drop=True)
+    )
+    x = _x_values(ordered, x_col=x_col, jitter=jitter)
     display_label = DISPLAY_LABELS.get(label, label)
-    sector_count_summary = build_sector_count_summary(ordered)
-    count_index = pd.Index(range(max_count + 1), name="naive_responsive_image_count")
+    x_raw = ordered[x_col].to_numpy(dtype=float)
+    x_min, x_max = _x_limits(x_raw)
 
     fig, axes = plt.subplots(1, 2, figsize=(9.5, 3.7), sharex=True, constrained_layout=True)
     for col_idx, delta_col in enumerate(("dNO", "dO")):
@@ -590,26 +822,32 @@ def plot_delta_by_responsive_count_sectors(
                 label=sector,
                 zorder=th._sector_scatter_zorder(sector),
             )
-        mean_col = f"mean_{delta_col}"
-        for sector in _directional_sectors():
-            rows = sector_count_summary.loc[
-                sector_count_summary["RotatedSector"].astype(str).eq(sector)
-            ].set_index("naive_responsive_image_count").reindex(count_index)
+        for sector in th.ROTATED_SECTOR_ORDER:
+            sector_rows = ordered.loc[ordered["RotatedSector"].astype(str).eq(sector)]
+            fit = _fit_line(
+                sector_rows[x_col].to_numpy(dtype=float),
+                sector_rows[delta_col].to_numpy(dtype=float),
+            )
+            if fit is None:
+                continue
+            x_line = np.linspace(float(fit["x_min"]), float(fit["x_max"]), 100)
+            y_line = float(fit["slope"]) * x_line + float(fit["intercept"])
             ax.plot(
-                count_index.to_numpy(dtype=int),
-                rows[mean_col],
+                x_line,
+                y_line,
                 color=th.ROTATED_SECTOR_PALETTE[sector],
-                marker="o",
-                markersize=4.0,
-                linewidth=2.2,
+                linewidth=2.0,
                 alpha=0.95,
                 zorder=6,
             )
         ax.set_title(f"{delta_col} colored by rotated sector")
         ax.axhline(0.0, color="0.75", lw=0.9, zorder=0)
-        ax.set_xlim(-0.45, max_count + 0.45)
-        ax.set_xticks(np.arange(0, max_count + 1, 1))
-        ax.set_xlabel("naive responsive image count")
+        ax.set_xlim(x_min, x_max)
+        if integer_ticks:
+            tick_min = int(np.floor(np.nanmin(x_raw)))
+            tick_max = int(np.ceil(np.nanmax(x_raw)))
+            ax.set_xticks(np.arange(tick_min, tick_max + 1, 1))
+        ax.set_xlabel(x_label)
         ax.set_ylabel(delta_col)
 
     handles, legend_labels = axes[1].get_legend_handles_labels()
@@ -622,11 +860,30 @@ def plot_delta_by_responsive_count_sectors(
             bbox_to_anchor=(1.08, 0.50),
         )
     fig.suptitle(
-        f"{display_label}: response components by naive responsiveness count",
+        f"{display_label}: response components by {x_measure_label}",
         fontsize=13,
         fontweight="bold",
     )
     return fig
+
+
+def plot_delta_by_responsive_count_sectors(
+    frame: pd.DataFrame,
+    *,
+    label: str,
+    jitter: float = 0.08,
+    point_size: float = 34.0,
+) -> plt.Figure:
+    return plot_delta_by_x_sectors(
+        frame,
+        label=label,
+        x_col="naive_responsive_image_count",
+        x_label="naive responsive image count",
+        x_measure_label="naive responsiveness count",
+        jitter=jitter,
+        point_size=point_size,
+        integer_ticks=True,
+    )
 
 
 def plot_sector_percentage_by_responsive_count(
@@ -703,6 +960,58 @@ def export_naive_responsiveness_plots(
         ),
     }
 
+    task_stimulus_selectivity = build_lifetime_sparseness(
+        act_table,
+        stage="Pre",
+        image_groups="all",
+        response_threshold=PAPER_STIMULUS_SELECTIVITY_THRESHOLD,
+        expected_image_count=4,
+        output_col="paper_stimulus_selectivity",
+    )
+    expert_familiar_stimulus_selectivity = build_lifetime_sparseness(
+        post_table,
+        stage="Pre",
+        image_groups="familiar",
+        response_threshold=PAPER_STIMULUS_SELECTIVITY_THRESHOLD,
+        expected_image_count=4,
+        output_col="paper_stimulus_selectivity",
+    )
+    expert_novel_selectivity = build_paper_novel_selectivity(
+        post_table,
+        stage="Pre",
+        novel_response_threshold=PAPER_NOVEL_SELECTIVITY_THRESHOLD,
+        output_col="paper_novel_selectivity",
+    )
+    expert_all6_sparseness = build_lifetime_sparseness(
+        post_table,
+        stage="Pre",
+        image_groups=("familiar", "novel"),
+        response_threshold=PAPER_STIMULUS_SELECTIVITY_THRESHOLD,
+        expected_image_count=6,
+        output_col="all6_lifetime_sparseness",
+    )
+
+    summaries["task_familiar"] = _merge_neuron_metric(
+        summaries["task_familiar"],
+        task_stimulus_selectivity,
+    )
+    summaries["expert_familiar"] = _merge_neuron_metric(
+        summaries["expert_familiar"],
+        expert_familiar_stimulus_selectivity,
+    )
+    summaries["expert_familiar"] = _merge_neuron_metric(
+        summaries["expert_familiar"],
+        expert_all6_sparseness,
+    )
+    summaries["expert_novel"] = _merge_neuron_metric(
+        summaries["expert_novel"],
+        expert_novel_selectivity,
+    )
+    summaries["expert_novel"] = _merge_neuron_metric(
+        summaries["expert_novel"],
+        expert_all6_sparseness,
+    )
+
     for label, frame in summaries.items():
         frame.insert(0, "summary_name", label)
 
@@ -759,6 +1068,22 @@ def export_naive_responsiveness_plots(
             saved_paths.append(path)
         plt.close(sector_delta_fig)
 
+        for x_col, x_label, x_measure_label, x_slug in _selectivity_specs_for_label(label):
+            selectivity_delta_fig = plot_delta_by_x_sectors(
+                frame,
+                label=label,
+                x_col=x_col,
+                x_label=x_label,
+                x_measure_label=x_measure_label,
+                jitter=0.0,
+                point_size=point_size,
+            )
+            for suffix in ("png", "svg"):
+                path = output_dir / f"{label}_delta_by_rotated_sector_{x_slug}_{threshold_tag}.{suffix}"
+                selectivity_delta_fig.savefig(path, dpi=300, bbox_inches="tight")
+                saved_paths.append(path)
+            plt.close(selectivity_delta_fig)
+
         sector_percent_fig = plot_sector_percentage_by_responsive_count(
             frame,
             label=label,
@@ -793,6 +1118,32 @@ def export_naive_responsiveness_plots(
     sector_count_csv = output_dir / f"sector_count_summary_{threshold_tag}.csv"
     sector_count_summary.to_csv(sector_count_csv, index=False)
     saved_paths.append(sector_count_csv)
+
+    sector_fit_summary = pd.concat(
+        [
+            build_sector_x_fit_summary(
+                frame,
+                x_col="naive_responsive_image_count",
+                x_measure="naive_responsive_image_count",
+                label=label,
+            )
+            for label, frame in summaries.items()
+        ]
+        + [
+            build_sector_x_fit_summary(
+                frame,
+                x_col=x_col,
+                x_measure=x_slug,
+                label=label,
+            )
+            for label, frame in summaries.items()
+            for x_col, _, _, x_slug in _selectivity_specs_for_label(label)
+        ],
+        ignore_index=True,
+    )
+    sector_fit_csv = output_dir / f"sector_x_fit_summary_{threshold_tag}.csv"
+    sector_fit_summary.to_csv(sector_fit_csv, index=False)
+    saved_paths.append(sector_fit_csv)
 
     mean_displacements = build_mean_displacement_by_responsiveness(merged)
     mean_displacement_csv = output_dir / f"mean_displacement_by_naive_responsive_count_{threshold_tag}.csv"

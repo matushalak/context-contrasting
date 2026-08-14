@@ -21,7 +21,18 @@ from context_contrasting.paper import transition_templates
 from context_contrasting.paper import transitions_helpers as th
 from context_contrasting.paper.experiment_s import run_experimental_phase
 from context_contrasting.paper.neuron_utils import ThresholdReLU
-from context_contrasting.pc_comparison.pc_templates import sample_pc_template_configs
+from context_contrasting.pc_comparison.pc_templates import (
+    DEFAULT_BASELINE_DRIVE,
+    DEFAULT_BASELINE_DRIVE_SIGMA,
+    DEFAULT_CONVERGENCE_TOLERANCE,
+    LEARNING_RATE_REFERENCE_STEPS,
+    parameter_space_metadata,
+    sample_shared_pc_configs,
+)
+from context_contrasting.pc_comparison.pc_convergence import (
+    convergence_summary,
+    find_minimum_learning_rate,
+)
 from context_contrasting.pc_comparison.pc_neuron import CorrectPCneuron
 
 
@@ -54,7 +65,7 @@ PC_SECTOR_DRAW_ORDER = ("small ∆", "+O axis", "-O axis", "-NO axis", "+NO axis
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate PPE/NPE comparison panels using only the submitted paper template weights."
+        description="Generate matched PPE/NPE comparison panels from one shared PC parameter pool."
     )
     parser.add_argument("--paper-output-dir", type=Path, default=PAPER_DONE_FINAL_FIX)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -63,7 +74,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--axis-clip-percentile", type=float, default=99.0)
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--n-jobs", type=int, default=-1)
-    parser.add_argument("--pc-plasticity-mode", choices=("lat", "ppe_ff_npe_fb"), default="ppe_ff_npe_fb")
+    parser.add_argument("--n-samples", type=int, default=None)
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help=(
+            f"Shared PPE/NPE learning rate at the {LEARNING_RATE_REFERENCE_STEPS}-step reference horizon. "
+            "By default, calibrate the minimum rate that passes the full protocol."
+        ),
+    )
+    parser.add_argument(
+        "--prediction-error-tolerance",
+        type=float,
+        default=DEFAULT_CONVERGENCE_TOLERANCE,
+    )
     parser.add_argument("--copy-reference", action="store_true", default=True)
     parser.add_argument("--no-copy-reference", dest="copy_reference", action="store_false")
     return parser.parse_args()
@@ -80,59 +105,29 @@ def _vec(row: pd.Series, prefix: str) -> np.ndarray:
     return np.asarray([float(row[f"{prefix}.mu_{idx}"]) for idx in range(N_FEATURES)], dtype=float)
 
 
-def _index_vector(row: pd.Series, prefix: str) -> np.ndarray:
-    return np.asarray([int(row.get(f"{prefix}_{idx}", 0)) for idx in range(N_FEATURES)], dtype=bool)
-
-
-def _specific_fb_vector(row: pd.Series) -> np.ndarray:
-    sampled = _vec(row, "w_fb_init")
-    receives = _index_vector(row, "receives_context")
-    if not np.allclose(sampled, sampled[0]):
-        return np.where(receives, sampled, 0.0)
-
-    pyc_tuned = _index_vector(row, "tuned_index")
-    if not pyc_tuned.any():
-        pyc_tuned = receives.copy()
-    if not pyc_tuned.any():
-        return np.zeros(N_FEATURES, dtype=float)
-
-    fb_level = str(row.get("fb_level", "none"))
-    fb_levels = transition_templates.FB_LEVELS
-    level = fb_levels.get(fb_level, {})
-    none_level = fb_levels.get("none", {})
-    tuned = float(level.get("tuned", level.get("center", sampled[0])))
-    silent = float(level.get("silent", none_level.get("center", 0.0)))
-    return np.where(receives & pyc_tuned, tuned, np.where(receives, silent, 0.0))
-
-
 def _init_spec(values: np.ndarray | list[float] | tuple[float, ...] | float) -> dict[str, Any]:
     return {"mu": [float(value) for value in np.asarray(values, dtype=float).reshape(-1)], "sigma": 0.0}
 
 
-def _model_params_from_row(row: pd.Series, *, circuit: str = "PPE", pc_plasticity_mode: str | None = None) -> dict[str, Any]:
+def _model_params_from_row(row: pd.Series, *, circuit: str = "PPE") -> dict[str, Any]:
     return {
-        "w_ff_init": _init_spec(_vec(row, "w_ff_init")),
-        "w_fb_init": _init_spec(_specific_fb_vector(row)),
-        "W_pv_init": _init_spec(_vec(row, "W_pv_init")),
+        "pyc_excitatory_init": _init_spec(_vec(row, "pyc_excitatory_init")),
+        "pv_excitatory_init": _init_spec(_vec(row, "pv_excitatory_init")),
         "w_lat_init": _init_spec([float(row["w_lat_init.mu_0"])]),
-        "w_pv_lat_init": _init_spec([0.0]),
-        "receives_context": tuple(bool(row.get(f"receives_context_{idx}", True)) for idx in range(N_FEATURES)),
-        "lr_ff": float(row["lr_ff"]),
-        "lr_fb": float(row["lr_fb"]),
-        "lr_lat": float(row["lr_lat"]),
+        "learning_rate": float(row["learning_rate"]),
         "pyc_decay": float(row["pyc_decay"]),
         "pv_decay": float(row["pv_decay"]),
+        "baseline_drive_mu": float(row.get("baseline_drive_mu", 0.0)),
         "baseline_drive_sigma": float(row.get("baseline_drive_sigma", 0.0)),
         "pv_noise_sigma": float(row.get("pv_noise_sigma", 0.0)),
         "activation": ThresholdReLU(
-            threshold=transition_templates.SOMA_ACTIVATION_THRESHOLD,
+            threshold=0.0,
             subtractive=False,
             hasMax=True,
             maxValue=1.0,
         ),
         "seed": int(row.get("seed", 0)),
         "circuit": circuit,
-        "pc_plasticity_mode": pc_plasticity_mode or str(row.get("pc_plasticity_mode", "lat")),
     }
 
 
@@ -142,22 +137,14 @@ def simulate_circuit(
     circuit: str,
     metadata: dict[str, Any],
     n_jobs: int = 1,
-    pc_plasticity_mode: str = "ppe_ff_npe_fb",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    n_samples = int(metadata.get("n_samples_total", metadata.get("requested_n_samples", len(configs))))
-    template_configs = sample_pc_template_configs(
-        circuit=circuit,
-        n_samples=n_samples,
-        seed=int(metadata.get("seed", 7151)),
-        n_steps_per_phase=int(metadata.get("n_steps_per_phase", 400)),
-    )
-    template_configs["pc_plasticity_mode"] = pc_plasticity_mode
+    template_configs = configs.copy()
+    template_configs["circuit"] = circuit
     response_df, final_weights = simulate_template_weight_circuit(
         template_configs,
         circuit=circuit,
         metadata=metadata,
         n_jobs=n_jobs,
-        pc_plasticity_mode=pc_plasticity_mode,
     )
     template_configs = template_configs.merge(
         final_weights,
@@ -177,15 +164,15 @@ def _simulate_template_weight_cell(
     response_tail_fraction: float,
     n_steps_per_phase: int,
     zscore_std_floor: float,
-    pc_plasticity_mode: str,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     torch.set_num_threads(1)
     row = pd.Series(row_dict)
-    model = CorrectPCneuron(_model_params_from_row(row, circuit=circuit, pc_plasticity_mode=pc_plasticity_mode))
+    model = CorrectPCneuron(_model_params_from_row(row, circuit=circuit))
     cell_floor = max(
         zscore_std_floor,
         transition_templates.BASELINE_STD_SCALE * float(row.get("baseline_drive_sigma", 0.0)),
     )
+    probe_noise_state = model.get_noise_state()
     naive_rows, naive_baseline, _ = paper_scatter._probe_rows(
         model,
         test_stimuli,
@@ -196,6 +183,7 @@ def _simulate_template_weight_cell(
         zscore_std_floor=cell_floor,
     )
     run_experimental_phase(model, training_stimuli[0], training_stimuli[1], "full_familiar_training", update=True)
+    model.set_noise_state(probe_noise_state)
     expert_rows, _, _ = paper_scatter._probe_rows(
         model,
         test_stimuli,
@@ -239,7 +227,6 @@ def simulate_template_weight_circuit(
     circuit: str,
     metadata: dict[str, Any],
     n_jobs: int = 1,
-    pc_plasticity_mode: str = "ppe_ff_npe_fb",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     response_tail_fraction = float(metadata.get("response_tail_fraction", 1.0))
     n_steps_per_phase = int(metadata.get("n_steps_per_phase", 400))
@@ -268,7 +255,6 @@ def simulate_template_weight_circuit(
                 response_tail_fraction=response_tail_fraction,
                 n_steps_per_phase=n_steps_per_phase,
                 zscore_std_floor=zscore_std_floor,
-                pc_plasticity_mode=pc_plasticity_mode,
             )
             for row in records
         ]
@@ -283,7 +269,6 @@ def simulate_template_weight_circuit(
                 response_tail_fraction=response_tail_fraction,
                 n_steps_per_phase=n_steps_per_phase,
                 zscore_std_floor=zscore_std_floor,
-                pc_plasticity_mode=pc_plasticity_mode,
             )
             for row in records
         )
@@ -870,8 +855,43 @@ def main() -> None:
     args = parse_args()
     metadata = json.loads((args.paper_output_dir / "metadata.json").read_text())
     threshold = float(args.threshold if args.threshold is not None else metadata.get("sector_threshold", 0.3))
-    configs = pd.read_csv(args.paper_output_dir / "sampled_config_parameters.csv")
     formats = _formats(args)
+    n_samples = int(
+        args.n_samples
+        if args.n_samples is not None
+        else metadata.get("n_samples_total", metadata.get("requested_n_samples", 300))
+    )
+    shared_configs = sample_shared_pc_configs(
+        n_samples=n_samples,
+        seed=int(metadata.get("seed", 7151)),
+        n_steps_per_phase=int(metadata.get("n_steps_per_phase", LEARNING_RATE_REFERENCE_STEPS)),
+        learning_rate=0.0,
+    )
+    convergence_kwargs = {
+        "configs": shared_configs,
+        "n_steps_per_phase": int(metadata.get("n_steps_per_phase", LEARNING_RATE_REFERENCE_STEPS)),
+        "training_trials": int(metadata.get("training_trials", 7)),
+        "training_stimulus_order": str(metadata.get("training_stimulus_order", "randomized")),
+        "seed": int(metadata.get("seed", 7151)),
+        "tolerance": float(args.prediction_error_tolerance),
+    }
+    if args.learning_rate is None:
+        calibration = find_minimum_learning_rate(**convergence_kwargs)
+        reference_learning_rate = calibration.reference_learning_rate
+    else:
+        reference_learning_rate = float(args.learning_rate)
+        calibration = convergence_summary(
+            reference_learning_rate=reference_learning_rate,
+            **convergence_kwargs,
+        )
+        if not calibration.converged:
+            raise ValueError(
+                f"learning rate {reference_learning_rate:g} does not converge under the full protocol: "
+                f"max |PE|={calibration.max_abs_prediction_error:.6g} > "
+                f"{args.prediction_error_tolerance:g}."
+            )
+    shared_configs["reference_learning_rate"] = reference_learning_rate
+    shared_configs["learning_rate"] = calibration.effective_learning_rate
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if args.copy_reference:
@@ -887,11 +907,10 @@ def main() -> None:
     summaries_by_model: dict[str, dict[str, pd.DataFrame]] = {"CC": cc_summaries}
     for circuit in ("PPE", "NPE"):
         response_df, circuit_configs = simulate_circuit(
-            configs,
+            shared_configs,
             circuit=circuit,
             metadata=metadata,
             n_jobs=args.n_jobs,
-            pc_plasticity_mode=args.pc_plasticity_mode,
         )
         transition = _transition_table(response_df)
         summaries = _build_summaries(transition, circuit_configs, threshold=threshold)
@@ -1060,14 +1079,25 @@ def main() -> None:
                         "sector_threshold",
                     )
                 },
-                "pc_plasticity_mode": args.pc_plasticity_mode,
+                "n_samples": n_samples,
+                "reference_learning_rate": reference_learning_rate,
+                "learning_rate_reference_steps": LEARNING_RATE_REFERENCE_STEPS,
+                "convergence_calibration": {
+                    "n_steps_per_phase": calibration.n_steps_per_phase,
+                    "training_trials_per_familiar_image": int(metadata.get("training_trials", 7)),
+                    "prediction_error_tolerance": calibration.tolerance,
+                    "max_abs_prediction_error": calibration.max_abs_prediction_error,
+                    "mean_abs_prediction_error": calibration.mean_abs_prediction_error,
+                    "converged_fraction": calibration.converged_fraction,
+                },
                 "pc_model": {
-                    "source": "context_contrasting.pc_comparison.pc_templates",
-                    "templates": {
-                        "PPE": "paper-style weight templates: PyC FF tuning is narrow/broad; PV context weights are broad and sampled from paper FB levels.",
-                        "NPE": "paper-style weight templates: PyC FB tuning is narrow/broad; PV feedforward weights are broad and sampled from paper PV levels.",
-                    },
-                    "notes": "PC templates specify initial weights, baseline-drive sigma, and tuning width only; naive/expert shifts are generated by CorrectPCneuron.",
+                    "source": "context_contrasting.pc_comparison.pc_templates.sample_shared_pc_configs",
+                    "parameter_space": parameter_space_metadata(),
+                    "baseline_drive": DEFAULT_BASELINE_DRIVE,
+                    "baseline_drive_sigma": DEFAULT_BASELINE_DRIVE_SIGMA,
+                    "plastic_synapse": "PPE w_FF; NPE w_FB",
+                    "plasticity_rule": "delta_w = -learning_rate * signed_prediction_error * presynaptic_input",
+                    "notes": "Every shared parameter row is instantiated once as PPE and once as NPE. No CC template weights or CC learning rates are used.",
                 },
             },
             indent=2,

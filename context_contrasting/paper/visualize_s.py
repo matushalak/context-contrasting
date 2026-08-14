@@ -1611,6 +1611,11 @@ def visualize_transition_panel(
     save_csv: bool = False,
     zscore_activity: bool = True,
     image_format: str = "png",
+    condition_title_size: int = 32,
+    phase_title_size: int = 32,
+    panel_top: float = 0.89,
+    phase_title_y: float = 0.945,
+    match_sector_export_style: bool = False,
 ) -> str:
     if not long_dfs_by_transition:
         raise ValueError("long_dfs_by_transition must contain at least one transition result.")
@@ -1687,16 +1692,53 @@ def visualize_transition_panel(
     column_specs = [(phase, condition) for phase in phases for condition in selected_conditions]
     n_rows = len(ordered_transitions)
     n_cols = len(column_specs)
+    if match_sector_export_style:
+        figure_size = (max(7.0, 1.65 * n_cols), 1.8 * n_rows + 1.0)
+        subplot_adjust = {
+            "left": 0.12,
+            "right": 0.995,
+            "top": 0.82,
+            "bottom": 0.06,
+            "wspace": 0.14,
+            "hspace": 0.22,
+        }
+        condition_title_size = 8
+        phase_title_size = 8
+        phase_title_y = 0.965
+        legend_fontsize = 8
+        legend_linewidth = 1.2
+        trace_linewidth = 1.2
+        row_label_fontsize = 9
+        fill_alpha = 0.18
+        guide_linewidth = 0.6
+        scale_bar_linewidth = 1.3
+    else:
+        figure_size = (5 * n_cols + 1.8, 3 * n_rows + 1.9)
+        subplot_adjust = {
+            "left": 0.18,
+            "right": 0.99,
+            "top": panel_top,
+            "bottom": 0.05,
+            "wspace": 0.12,
+            "hspace": 0.18,
+        }
+        legend_fontsize = None
+        legend_linewidth = 1.6
+        trace_linewidth = 3.0
+        row_label_fontsize = 32
+        fill_alpha = 0.14
+        guide_linewidth = 0.6
+        scale_bar_linewidth = 2.2
     fig, axes = plt.subplots(
         n_rows,
         n_cols,
-        figsize=(5 * n_cols + 1.8, 3 * n_rows + 1.9),
+        figsize=figure_size,
         squeeze=False,
         sharex=True,
         sharey=False,
         constrained_layout=False,
     )
-    fig.subplots_adjust(left=0.18, right=0.99, top=0.89, bottom=0.05, wspace=0.12, hspace=0.18)
+    fig.subplots_adjust(**subplot_adjust)
 
     legend_handles = [
         Line2D(
@@ -1704,13 +1746,13 @@ def visualize_transition_panel(
             [0],
             color=TRACE_COLORS[trace_type],
             linestyle=TRACE_LINESTYLES.get(trace_type, "-"),
-            lw=1.6,
+            lw=legend_linewidth,
             label=TRACE_LABELS.get(trace_type, trace_type),
         )
         for trace_type in resolved_trace_types
         if trace_type in TRACE_COLORS
     ]
-    if legend_handles:
+    if legend_handles and not match_sector_export_style:
         fig.legend(
             handles=legend_handles,
             loc="upper right",
@@ -1719,10 +1761,15 @@ def visualize_transition_panel(
             ncol=len(legend_handles),
             handlelength=2.0,
             columnspacing=1.2,
+            fontsize=legend_fontsize,
         )
 
     for col_idx, (phase, condition) in enumerate(column_specs):
-        axes[0, col_idx].set_title(_display_condition_label(condition), fontsize=32, pad=12)
+        axes[0, col_idx].set_title(
+            _display_condition_label(condition),
+            fontsize=condition_title_size,
+            pad=12,
+        )
 
     for phase_idx, phase in enumerate(phases):
         start_col = phase_idx * len(selected_conditions)
@@ -1730,11 +1777,11 @@ def visualize_transition_panel(
         x_center = 0.5 * (axes[0, start_col].get_position().x0 + axes[0, end_col].get_position().x1)
         fig.text(
             x_center,
-            0.945,
+            phase_title_y,
             PHASE_DISPLAY_LABELS.get(phase, phase.title()),
             ha="center",
             va="center",
-            fontsize=32,
+            fontsize=phase_title_size,
         )
 
     for row_idx, transition_name in enumerate(ordered_transitions):
@@ -1748,6 +1795,7 @@ def visualize_transition_panel(
             stimuli=STIMULI,
             focus_window=plot_window,
             series_lookup=series_lookup,
+            zscore_std_floor=_infer_row_zscore_std_floor(long_df),
         )
         if zscore_activity:
             row_baseline_stats = _require_naive_row_baseline(
@@ -1764,7 +1812,7 @@ def visualize_transition_panel(
 
             if stim_interval is not None:
                 ax.axvspan(stim_interval[0], stim_interval[1], color="0.9", zorder=0)
-            ax.axhline(0.0, color="0.85", lw=0.6, zorder=0)
+            ax.axhline(0.0, color="0.85", lw=guide_linewidth, zorder=0)
 
             for trace_type in resolved_trace_types:
                 summary = _summarize_windowed_repeated_trace(
@@ -1780,17 +1828,28 @@ def visualize_transition_panel(
                 )
                 if summary is None:
                     continue
+                x_seconds = np.asarray(summary["x_seconds"], dtype=float)
+                y_mean = np.asarray(summary["y_mean"], dtype=float)
+                y_sem = np.asarray(summary["y_sem"], dtype=float)
+                ax.fill_between(
+                    x_seconds,
+                    y_mean - y_sem,
+                    y_mean + y_sem,
+                    color=TRACE_COLORS.get(trace_type, "black"),
+                    alpha=fill_alpha,
+                    linewidth=0,
+                )
                 ax.plot(
-                    np.asarray(summary["x_seconds"], dtype=float),
-                    np.asarray(summary["y_mean"], dtype=float),
+                    x_seconds,
+                    y_mean,
                     color=TRACE_COLORS.get(trace_type, "black"),
                     linestyle=TRACE_LINESTYLES.get(trace_type, "-"),
-                    lw=5,
+                    lw=trace_linewidth,
                 )
                 row_bounds.append(
                     (
-                        float(np.min(np.asarray(summary["y_mean"], dtype=float))),
-                        float(np.max(np.asarray(summary["y_mean"], dtype=float))),
+                        float(np.min(y_mean - y_sem)),
+                        float(np.max(y_mean + y_sem)),
                     )
                 )
 
@@ -1808,7 +1867,7 @@ def visualize_transition_panel(
             transform=label_ax.transAxes,
             ha="right",
             va="center",
-            fontsize=32,
+            fontsize=row_label_fontsize,
         )
         if row_bounds:
             row_min = min(bound[0] for bound in row_bounds)
@@ -1819,12 +1878,18 @@ def visualize_transition_panel(
             span = row_max - row_min
             if span <= 0:
                 span = max(abs(row_min), abs(row_max), 0.1)
-            pad = 0.12 * span
+            if match_sector_export_style:
+                center = 0.5 * (row_min + row_max)
+                display_span = max(1.2 * span, 1.35)
+                y_limits = (center - 0.5 * display_span, center + 0.5 * display_span)
+            else:
+                pad = 0.12 * span
+                y_limits = (row_min - pad, row_max + pad)
             for ax in axes[row_idx, :]:
                 if ax.get_visible():
-                    ax.set_ylim(row_min - pad, row_max + pad)
+                    ax.set_ylim(*y_limits)
             if zscore_activity:
-                _add_row_scale_bar(axes[row_idx, :])
+                _add_row_scale_bar(axes[row_idx, :], linewidth=scale_bar_linewidth)
 
     if save_in_transition_subdir:
         plot_dirs = _resolve_plot_dirs(save_path)
@@ -1833,7 +1898,25 @@ def visualize_transition_panel(
         os.makedirs(save_path, exist_ok=True)
         out_path = os.path.join(save_path, f"{name}_{'_'.join(selected_conditions)}.{image_format}")
 
-    fig.savefig(out_path, bbox_inches="tight")
+    if save_csv:
+        export_df = _build_windowed_transition_export(
+            long_dfs_by_transition,
+            ordered_transitions=ordered_transitions,
+            labels=labels,
+            phases=phases,
+            selected_conditions=selected_conditions,
+            baseline_conditions=baseline_conditions,
+            trace_types=resolved_trace_types,
+            stimuli=STIMULI,
+            plot_window=plot_window,
+            zscore_activity=zscore_activity,
+        )
+        export_df.to_csv(os.path.splitext(out_path)[0] + ".csv", index=False)
+
+    save_kwargs = {"dpi": 300}
+    if not match_sector_export_style:
+        save_kwargs["bbox_inches"] = "tight"
+    fig.savefig(out_path, **save_kwargs)
     plt.close(fig)
     return out_path
 

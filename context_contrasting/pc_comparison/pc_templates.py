@@ -1,165 +1,92 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from context_contrasting.paper import model_scatter as paper_scatter
-from context_contrasting.paper import transition_templates as paper_templates
-
 
 N_FEATURES = 3
-BROAD_TUNING_WIDTH = paper_templates.BROAD_TUNING_WIDTH
-NARROW_TUNING_WIDTH = 1
-PV_TUNING_WIDTH = paper_templates.PV_TUNING_WIDTH
-PC_LEARNING_RATE_SCALE = {"PPE": 3.0, "NPE": 12.0}
+LEARNING_RATE_REFERENCE_STEPS = 400
+DEFAULT_CONVERGENCE_TOLERANCE = 0.005
+DEFAULT_BASELINE_DRIVE = 0.2
+DEFAULT_BASELINE_DRIVE_SIGMA = 0.30
+# Calibrated for DEFAULT_PARAMETER_SPACE with seed 7151, 300 samples,
+# 400 steps/phase and seven trials per familiar image at |PE| <= 0.005.
+FULL_PROTOCOL_CALIBRATED_LEARNING_RATE = 0.2820285747289002
 
 
 @dataclass(frozen=True)
-class PCWeightTemplate:
-    name: str
-    weight: float
-    mismatch: str
-    pyc_widths: tuple[str, ...]
-    pyc_ffs: tuple[str, ...]
-    pyc_fbs: tuple[str, ...]
-    pv_ffs: tuple[str, ...]
-    pv_fbs: tuple[str, ...]
-    w_lats: tuple[float, ...]
-    baseline_drive_sigmas: tuple[float, ...]
+class PCParameterSpace:
+    """Circuit-independent search space for matched PPE/NPE populations."""
+
+    pyc_weight_min: float = 0.05
+    pyc_weight_max: float = 0.95
+    pv_weight_min: float = 0.05
+    pv_weight_max: float = 0.95
+    w_lat_min: float = 0.05
+    w_lat_max: float = 0.95
+    pyc_tuning_widths: tuple[int, ...] = (1, 3)
+    pv_tuning_widths: tuple[int, ...] = (1, 3)
+    untuned_weight: float = 0.0
+
+    def validate(self) -> None:
+        for name in (
+            "pyc_weight_min",
+            "pyc_weight_max",
+            "pv_weight_min",
+            "pv_weight_max",
+            "w_lat_min",
+            "w_lat_max",
+            "untuned_weight",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1], got {value}.")
+        for lo_name, hi_name in (
+            ("pyc_weight_min", "pyc_weight_max"),
+            ("pv_weight_min", "pv_weight_max"),
+            ("w_lat_min", "w_lat_max"),
+        ):
+            if float(getattr(self, lo_name)) > float(getattr(self, hi_name)):
+                raise ValueError(f"{lo_name} must not exceed {hi_name}.")
+        for widths_name in ("pyc_tuning_widths", "pv_tuning_widths"):
+            widths = tuple(int(width) for width in getattr(self, widths_name))
+            if not widths or any(width < 1 or width > N_FEATURES for width in widths):
+                raise ValueError(f"{widths_name} must contain widths from 1 to {N_FEATURES}.")
 
 
-# PC templates are balance-mismatch templates, not response templates.
-# PPE compares PyC FF drive against context-driven PV suppression:
-#   under_inhibited -> low lateral inhibition; learning strengthens w_LAT.
-#   over_inhibited  -> high lateral inhibition; signed voltage weakens w_LAT.
-PPE_TEMPLATES: tuple[PCWeightTemplate, ...] = (
-    PCWeightTemplate(
-        name="ppe_under_inhibited",
-        weight=0.52,
-        mismatch="under_inhibited",
-        pyc_widths=("narrow", "broad", "broad"),
-        pyc_ffs=("mid", "strong", "strong"),
-        pyc_fbs=("none",),
-        pv_ffs=("weak", "mid", "mid"),
-        pv_fbs=("strong", "strong", "very_strong"),
-        w_lats=(0.01, 0.02, 0.04),
-        baseline_drive_sigmas=(0.10, 0.14, 0.16),
-    ),
-    PCWeightTemplate(
-        name="ppe_over_inhibited",
-        weight=0.48,
-        mismatch="over_inhibited",
-        pyc_widths=("narrow", "broad", "broad"),
-        pyc_ffs=("very_weak", "weak", "mid"),
-        pyc_fbs=("none",),
-        pv_ffs=("weak", "mid", "mid"),
-        pv_fbs=("very_strong",),
-        w_lats=(0.95,),
-        baseline_drive_sigmas=(0.10, 0.14, 0.16),
-    ),
-)
-
-# NPE compares PyC FB drive against feedforward PV suppression:
-#   over_predicted  -> FB starts too strong; learning weakens w_FB toward PV match.
-#   under_predicted -> FB starts too weak; learning strengthens w_FB toward PV match.
-NPE_TEMPLATES: tuple[PCWeightTemplate, ...] = (
-    PCWeightTemplate(
-        name="npe_over_predicted",
-        weight=0.50,
-        mismatch="over_predicted",
-        pyc_widths=("narrow", "broad", "broad"),
-        pyc_ffs=("silent",),
-        pyc_fbs=("very_strong",),
-        pv_ffs=("strong",),
-        pv_fbs=("none",),
-        w_lats=(0.25, 0.45),
-        baseline_drive_sigmas=(0.10, 0.12, 0.14),
-    ),
-    PCWeightTemplate(
-        name="npe_under_predicted",
-        weight=0.50,
-        mismatch="under_predicted",
-        pyc_widths=("narrow", "broad", "broad"),
-        pyc_ffs=("silent",),
-        pyc_fbs=("very_weak", "weak"),
-        pv_ffs=("mid", "strong", "very_strong"),
-        pv_fbs=("none",),
-        w_lats=(0.12, 0.25, 0.45, 0.70),
-        baseline_drive_sigmas=(0.10, 0.12, 0.14, 0.16),
-    ),
-)
+DEFAULT_PARAMETER_SPACE = PCParameterSpace()
 
 
-def _templates_for(circuit: str) -> tuple[PCWeightTemplate, ...]:
-    if circuit == "PPE":
-        return PPE_TEMPLATES
-    if circuit == "NPE":
-        return NPE_TEMPLATES
-    raise ValueError(f"unknown circuit: {circuit}")
+def scaled_learning_rate(
+    learning_rate: float,
+    n_steps_per_phase: int,
+    *,
+    reference_steps: int = LEARNING_RATE_REFERENCE_STEPS,
+) -> float:
+    """Scale a full-protocol rate to preserve updates per stimulus horizon."""
+    if learning_rate < 0.0:
+        raise ValueError("learning_rate must be nonnegative.")
+    if n_steps_per_phase <= 0 or reference_steps <= 0:
+        raise ValueError("step counts must be positive.")
+    return float(learning_rate) * float(reference_steps) / float(n_steps_per_phase)
 
 
-def _draw_template(rng: np.random.Generator, templates: tuple[PCWeightTemplate, ...]) -> PCWeightTemplate:
-    weights = np.asarray([template.weight for template in templates], dtype=float)
-    return templates[int(rng.choice(len(templates), p=weights / weights.sum()))]
+def _draw_indices(width: int, rng: np.random.Generator) -> tuple[int, ...]:
+    return tuple(sorted(int(idx) for idx in rng.choice(N_FEATURES, size=width, replace=False)))
 
 
-def _draw_option(options: tuple[Any, ...], rng: np.random.Generator) -> Any:
-    return options[int(rng.integers(0, len(options)))]
-
-
-def _draw_indices(width: str, rng: np.random.Generator) -> tuple[int, ...]:
-    if width == "narrow":
-        size = NARROW_TUNING_WIDTH
-    elif width == "broad":
-        size = BROAD_TUNING_WIDTH
-    else:
-        raise ValueError(f"unknown tuning width: {width}")
-    return tuple(sorted(int(idx) for idx in rng.choice(N_FEATURES, size=size, replace=False)))
-
-
-def _bool_vector(indices: tuple[int, ...]) -> tuple[bool, ...]:
-    index_set = set(indices)
-    return tuple(idx in index_set for idx in range(N_FEATURES))
-
-
-def _level_vector(indices: tuple[int, ...], *, tuned: float, silent: float) -> list[float]:
-    index_set = set(indices)
-    return [float(tuned if idx in index_set else silent) for idx in range(N_FEATURES)]
-
-
-def _init_from_ff_level(level: str, indices: tuple[int, ...], rng: np.random.Generator) -> np.ndarray:
-    spec = paper_templates.FF_STRENGTHS[level]
-    init = paper_scatter.weight_init(
-        _level_vector(indices, tuned=spec["tuned"], silent=spec["silent"]),
-        spec["rel"],
-        spec["floor"],
-        _level_vector(indices, tuned=spec["lo"], silent=spec["lo"]),
-        _level_vector(indices, tuned=spec["hi"], silent=spec["hi"]),
-    )
-    return paper_scatter._draw_init(init, rng)
-
-
-def _init_from_pv_level(level: str, indices: tuple[int, ...]) -> np.ndarray:
-    spec = paper_templates.PV_STRENGTHS[level]
-    return np.asarray(_level_vector(indices, tuned=spec["tuned"], silent=spec["silent"]), dtype=float)
-
-
-def _init_from_fb_level(level: str, indices: tuple[int, ...], rng: np.random.Generator) -> np.ndarray:
-    spec = paper_templates.FB_LEVELS[level]
-    none = paper_templates.FB_LEVELS["none"]
-    tuned = float(spec["center"])
-    silent = float(none["center"])
-    init = paper_scatter.weight_init(
-        _level_vector(indices, tuned=tuned, silent=silent),
-        spec["rel"],
-        spec["floor"],
-        _level_vector(indices, tuned=spec["lo"], silent=none["lo"]),
-        _level_vector(indices, tuned=spec["hi"], silent=none["hi"]),
-    )
-    return paper_scatter._draw_init(init, rng)
+def _tuned_vector(
+    tuned_weight: float,
+    tuned_indices: tuple[int, ...],
+    *,
+    untuned_weight: float,
+) -> np.ndarray:
+    values = np.full(N_FEATURES, float(untuned_weight), dtype=float)
+    values[list(tuned_indices)] = float(tuned_weight)
+    return values
 
 
 def _write_init_columns(row: dict[str, Any], key: str, values: np.ndarray) -> None:
@@ -168,86 +95,108 @@ def _write_init_columns(row: dict[str, Any], key: str, values: np.ndarray) -> No
     row[f"{key}.sigma"] = 0.0
 
 
-def _pc_learning_rates(circuit: str, n_steps_per_phase: int) -> dict[str, float]:
-    scale = PC_LEARNING_RATE_SCALE[circuit]
-    rates = paper_templates._effective_learning_rates(n_steps_per_phase)
-    return {name: float(value) * scale for name, value in rates.items()}
+def _stratified_uniform(
+    rng: np.random.Generator,
+    n_samples: int,
+    low: float,
+    high: float,
+) -> np.ndarray:
+    if n_samples == 1:
+        return np.asarray([(low + high) / 2.0], dtype=float)
+    bins = (np.arange(n_samples, dtype=float) + rng.random(n_samples)) / n_samples
+    rng.shuffle(bins)
+    return low + bins * (high - low)
 
 
-def sample_pc_template_configs(
+def sample_shared_pc_configs(
     *,
-    circuit: str,
     n_samples: int,
     seed: int,
     n_steps_per_phase: int,
+    learning_rate: float = 0.0,
+    parameter_space: PCParameterSpace = DEFAULT_PARAMETER_SPACE,
 ) -> pd.DataFrame:
-    templates = _templates_for(circuit)
-    rates = _pc_learning_rates(circuit, n_steps_per_phase)
-    draw_rng = np.random.default_rng(seed + (10_000 if circuit == "PPE" else 20_000))
-    child_rngs = np.random.SeedSequence(seed + (10_000 if circuit == "PPE" else 20_000)).spawn(n_samples)
-    seen: dict[str, int] = {template.name: 0 for template in templates}
+    """Sample one parameter pool that is instantiated as both PPE and NPE.
+
+    Sampling is stratified independently along the three continuous dimensions.
+    The resulting rows are circuit-free: the circuit mapping happens only when
+    a model is instantiated.
+    """
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive.")
+    parameter_space.validate()
+    rng = np.random.default_rng(seed)
+    pyc_weights = _stratified_uniform(
+        rng,
+        n_samples,
+        parameter_space.pyc_weight_min,
+        parameter_space.pyc_weight_max,
+    )
+    pv_weights = _stratified_uniform(
+        rng,
+        n_samples,
+        parameter_space.pv_weight_min,
+        parameter_space.pv_weight_max,
+    )
+    w_lats = _stratified_uniform(
+        rng,
+        n_samples,
+        parameter_space.w_lat_min,
+        parameter_space.w_lat_max,
+    )
+    effective_rate = scaled_learning_rate(learning_rate, n_steps_per_phase)
+
     rows: list[dict[str, Any]] = []
-
-    for sample_global_idx in range(1, n_samples + 1):
-        template = _draw_template(draw_rng, templates)
-        seen[template.name] += 1
-        rng = np.random.default_rng(child_rngs[sample_global_idx - 1])
-        pyc_width = str(_draw_option(template.pyc_widths, rng))
-        pyc_ff = str(_draw_option(template.pyc_ffs, rng))
-        pyc_fb = str(_draw_option(template.pyc_fbs, rng))
-        pv_ff = str(_draw_option(template.pv_ffs, rng))
-        pv_fb = str(_draw_option(template.pv_fbs, rng))
-        w_lat = float(_draw_option(template.w_lats, rng))
-        baseline_drive_sigma = float(_draw_option(template.baseline_drive_sigmas, rng))
+    for sample_idx in range(n_samples):
+        pyc_width = int(rng.choice(parameter_space.pyc_tuning_widths))
+        pv_width = int(rng.choice(parameter_space.pv_tuning_widths))
         pyc_indices = _draw_indices(pyc_width, rng)
-        pv_indices = _draw_indices("broad", rng)
-
-        w_ff = _init_from_ff_level(pyc_ff, pyc_indices, rng)
-        w_fb = _init_from_fb_level(pyc_fb, pyc_indices, rng)
-        w_pv_ff = _init_from_pv_level(pv_ff, pv_indices)
-        w_pv_fb = _init_from_fb_level(pv_fb, pv_indices, rng)
-        w_pv = w_pv_fb if circuit == "PPE" else w_pv_ff
-
+        pv_indices = _draw_indices(pv_width, rng)
+        pyc_vector = _tuned_vector(
+            float(pyc_weights[sample_idx]),
+            pyc_indices,
+            untuned_weight=parameter_space.untuned_weight,
+        )
+        pv_vector = _tuned_vector(
+            float(pv_weights[sample_idx]),
+            pv_indices,
+            untuned_weight=parameter_space.untuned_weight,
+        )
+        tuning_label = f"pyc_{pyc_width}of{N_FEATURES}_pv_{pv_width}of{N_FEATURES}"
         row: dict[str, Any] = {
-            "transition": template.name,
-            "sample_idx": seen[template.name],
-            "sample_global_idx": sample_global_idx,
-            "seed": seed + sample_global_idx,
+            "transition": tuning_label,
+            "sample_idx": sample_idx + 1,
+            "sample_global_idx": sample_idx + 1,
+            "seed": seed + sample_idx + 1,
             "n_features": N_FEATURES,
             "n_pv": 1,
             "n_context": N_FEATURES,
-            "lr_ff": rates["lr_ff"],
-            "lr_fb": rates["lr_fb"],
-            "lr_lat": rates["lr_lat"],
-            "lr_pv": rates["lr_pv"],
-            "pyc_decay": paper_templates.BASE_CONFIG["pyc_decay"],
-            "pv_decay": paper_templates.BASE_CONFIG["pv_decay"],
-            "baseline_drive_sigma": baseline_drive_sigma,
-            "pv_noise_sigma": paper_templates.PV_NOISE_SIGMA,
-            "pc_learning_rate_scale": PC_LEARNING_RATE_SCALE[circuit],
-            "circuit": circuit,
-            "pc_mismatch": template.mismatch,
-            "pc_pyc_width": pyc_width,
-            "pc_pv_width": "broad",
-            "ff_strength": pyc_ff,
-            "fb_level": pyc_fb,
-            "pv_ff_strength": pv_ff,
-            "pv_fb_level": pv_fb,
-            "ff_tuning_width": len(pyc_indices),
-            "pv_tuning_width": len(pv_indices),
-            "receives_context_0": True,
-            "receives_context_1": True,
-            "receives_context_2": True,
+            "learning_rate": effective_rate,
+            "reference_learning_rate": float(learning_rate),
+            "learning_rate_reference_steps": LEARNING_RATE_REFERENCE_STEPS,
+            "pyc_decay": 0.05,
+            "pv_decay": 0.5,
+            "baseline_drive_mu": DEFAULT_BASELINE_DRIVE,
+            "baseline_drive_sigma": DEFAULT_BASELINE_DRIVE_SIGMA,
+            "pv_noise_sigma": 0.0,
+            "pc_pyc_tuning_width": pyc_width,
+            "pc_pv_tuning_width": pv_width,
+            "pyc_tuned_weight": float(pyc_weights[sample_idx]),
+            "pv_tuned_weight": float(pv_weights[sample_idx]),
+            "w_lat_scalar": float(w_lats[sample_idx]),
         }
-        _write_init_columns(row, "w_ff_init", w_ff)
-        _write_init_columns(row, "w_fb_init", w_fb)
-        _write_init_columns(row, "w_lat_init", np.asarray([w_lat], dtype=float))
-        _write_init_columns(row, "W_pv_init", w_pv)
-        _write_init_columns(row, "w_pv_context_init", w_pv_fb)
-        _write_init_columns(row, "w_pv_ff_init", w_pv_ff)
+        _write_init_columns(row, "pyc_excitatory_init", pyc_vector)
+        _write_init_columns(row, "pv_excitatory_init", pv_vector)
+        _write_init_columns(row, "w_lat_init", np.asarray([w_lats[sample_idx]], dtype=float))
         for idx in range(N_FEATURES):
-            row[f"tuned_index_{idx}"] = int(idx in pyc_indices)
+            row[f"pyc_tuned_index_{idx}"] = int(idx in pyc_indices)
             row[f"pv_tuned_index_{idx}"] = int(idx in pv_indices)
         rows.append(row)
-
     return pd.DataFrame(rows)
+
+
+def parameter_space_metadata(parameter_space: PCParameterSpace = DEFAULT_PARAMETER_SPACE) -> dict[str, Any]:
+    metadata = asdict(parameter_space)
+    metadata["pyc_tuning_widths"] = list(parameter_space.pyc_tuning_widths)
+    metadata["pv_tuning_widths"] = list(parameter_space.pv_tuning_widths)
+    return metadata

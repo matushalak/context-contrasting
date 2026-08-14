@@ -1407,6 +1407,11 @@ def _save_sector_average_highlight_panels(
     sector_order = ("+NO axis", "+O axis", "-NO axis", "-O axis")
     sector_labels = {sector: sector.replace(" axis", "") for sector in sector_order}
     sector_modes = ("sector-average", "sector-per-image")
+    diagonal_half_width_rad = np.pi / 8.0
+    diagonal_by_group = {
+        "familiar": ("minus_no_plus_o", "-NO/+O", 3.0 * np.pi / 4.0),
+        "novel": ("plus_no_plus_o", "+NO/+O", np.pi / 4.0),
+    }
     condition_by_image = {
         (image_group, image_idx_original, image_idx_within_group): condition
         for condition, (image_group, image_idx_original, image_idx_within_group) in IMAGE_INFO.items()
@@ -1495,6 +1500,62 @@ def _save_sector_average_highlight_panels(
             return pd.DataFrame(columns=["neuron_idx", "condition", "RotatedSector"])
         return pd.concat(summaries, ignore_index=True)
 
+    def angle_distance(angle: pd.Series | np.ndarray, target: float) -> np.ndarray:
+        values = np.asarray(angle, dtype=float)
+        return np.abs(np.arctan2(np.sin(values - target), np.cos(values - target)))
+
+    def build_diagonal_assignments(*, group: str, sector_mode: str) -> pd.DataFrame:
+        diagonal_key, _diagonal_label, diagonal_angle = diagonal_by_group[group]
+        if sector_mode == "sector-average":
+            summary = th.build_mean_summary(
+                wide,
+                image_group=group,
+                pre_stage="Naive",
+                target_stage="Expert",
+                threshold=threshold,
+            )
+            mask = (
+                angle_distance(summary["Angle"], float(diagonal_angle)) <= diagonal_half_width_rad
+            ) & (summary["dNorm"].astype(float) > threshold)
+            selected = summary.loc[mask, ["neuron_idx"]].copy()
+            selected["RotatedSector"] = diagonal_key
+            return selected
+
+        group_wide = wide.loc[wide["image_group"].eq(group)].copy()
+        if group_wide.empty:
+            return pd.DataFrame(columns=["neuron_idx", "condition", "RotatedSector"])
+        summaries: list[pd.DataFrame] = []
+        image_keys = (
+            group_wide[["image_idx_original", "image_idx_within_group"]]
+            .drop_duplicates()
+            .sort_values(["image_idx_within_group", "image_idx_original"])
+        )
+        for image in image_keys.itertuples(index=False):
+            image_wide = group_wide.loc[
+                group_wide["image_idx_original"].eq(image.image_idx_original)
+                & group_wide["image_idx_within_group"].eq(image.image_idx_within_group)
+            ].copy()
+            summary = th.build_mean_summary(
+                image_wide,
+                image_group=group,
+                pre_stage="Naive",
+                target_stage="Expert",
+                threshold=threshold,
+            )
+            mask = (
+                angle_distance(summary["Angle"], float(diagonal_angle)) <= diagonal_half_width_rad
+            ) & (summary["dNorm"].astype(float) > threshold)
+            condition = condition_by_image.get((group, int(image.image_idx_original), int(image.image_idx_within_group)))
+            if condition is None:
+                continue
+            selected = summary.loc[mask, ["neuron_idx"]].copy()
+            selected["condition"] = condition
+            selected["RotatedSector"] = diagonal_key
+            summaries.append(selected)
+        if not summaries:
+            return pd.DataFrame(columns=["neuron_idx", "condition", "RotatedSector"])
+        return pd.concat(summaries, ignore_index=True)
+
     def trace_df_for_assignments(assignments: pd.DataFrame) -> pd.DataFrame:
         neuron_ids = sorted(assignments["neuron_idx"].astype(int).unique().tolist())
         configs = {
@@ -1527,6 +1588,7 @@ def _save_sector_average_highlight_panels(
         *,
         sector_mode: str,
         selected_conditions: list[str],
+        trace_order: tuple[str, ...] = sector_order,
     ) -> pd.DataFrame:
         if trace_df.empty or assignments.empty:
             return pd.DataFrame()
@@ -1539,9 +1601,16 @@ def _save_sector_average_highlight_panels(
         else:
             sector_lookup = assignments[["cell_id", "condition", "RotatedSector"]].drop_duplicates()
             labeled = traces.merge(sector_lookup, on=["cell_id", "condition"], how="inner", validate="many_to_one")
-        return labeled.loc[labeled["RotatedSector"].astype(str).isin(sector_order)].copy()
+        return labeled.loc[labeled["RotatedSector"].astype(str).isin(trace_order)].copy()
 
-    def summarize_trace_rows(labeled: pd.DataFrame, *, pooled: bool, group: str, sector_mode: str) -> pd.DataFrame:
+    def summarize_trace_rows(
+        labeled: pd.DataFrame,
+        *,
+        pooled: bool,
+        group: str,
+        sector_mode: str,
+        trace_labels: dict[str, str] = sector_labels,
+    ) -> pd.DataFrame:
         if labeled.empty:
             return pd.DataFrame()
         if pooled:
@@ -1584,7 +1653,7 @@ def _save_sector_average_highlight_panels(
         summary["sem"] = summary["sd_y"].fillna(0.0) / np.sqrt(np.maximum(denom.to_numpy(dtype=float), 1.0))
         summary.insert(0, "sector_mode", sector_mode)
         summary.insert(1, "image_group", group)
-        summary["sector_label"] = summary["RotatedSector"].map(sector_labels)
+        summary["sector_label"] = summary["RotatedSector"].map(trace_labels)
         return summary
 
     def save_trace_panel(
@@ -1593,6 +1662,11 @@ def _save_sector_average_highlight_panels(
         trace_summary: pd.DataFrame,
         sector_mode: str,
         pooled: bool,
+        trace_order: tuple[str, ...] = sector_order,
+        trace_labels: dict[str, str] = sector_labels,
+        output_family: str | None = None,
+        name_prefix: str | None = None,
+        title: str = "Sector-average traces +/- SEM",
     ) -> None:
         selected_conditions = ["familiar_1", "familiar_2"] if group == "familiar" else ["novel"]
         if pooled:
@@ -1610,16 +1684,20 @@ def _save_sector_average_highlight_panels(
         if not column_pairs:
             return
 
-        out_dir = output_dir / "sector_average_examples" / sector_mode / group
+        out_root = output_dir / "sector_average_examples"
+        if output_family is not None:
+            out_root = out_root / output_family
+        out_dir = out_root / sector_mode / group
         out_dir.mkdir(parents=True, exist_ok=True)
-        name_prefix = "sector_per_image" if sector_mode == "sector-per-image" else "sector_average"
+        if name_prefix is None:
+            name_prefix = "sector_per_image" if sector_mode == "sector-per-image" else "sector_average"
         pooled_suffix = "_pooled" if pooled else ""
         base = out_dir / f"{name_prefix}_{group}{pooled_suffix}_examples_sem"
         trace_summary.to_csv(f"{base}.csv", index=False)
         fig, axes = plt.subplots(
-            len(sector_order),
+            len(trace_order),
             len(column_pairs),
-            figsize=(max(7.0, 1.65 * len(column_pairs)), 1.8 * len(sector_order) + 1.0),
+            figsize=(max(7.0, 1.65 * len(column_pairs)), 1.8 * len(trace_order) + 1.0),
             squeeze=False,
             sharex=True,
             sharey=False,
@@ -1631,7 +1709,7 @@ def _save_sector_average_highlight_panels(
             title = f"{condition_label}\n{column_spec['label']}"
             axes[0, col_idx].set_title(title, fontsize=8)
 
-        for row_idx, sector in enumerate(sector_order):
+        for row_idx, sector in enumerate(trace_order):
             sector_df = trace_summary.loc[trace_summary["RotatedSector"].astype(str).eq(sector)].copy()
             row_bounds: list[float] = []
             for col_idx, (column_spec, condition) in enumerate(column_pairs):
@@ -1683,7 +1761,7 @@ def _save_sector_average_highlight_panels(
                 ax.text(
                     -0.08,
                     0.5,
-                    sector_labels[sector],
+                    trace_labels[sector],
                     transform=ax.transAxes,
                     ha="right",
                     va="center",
@@ -1696,7 +1774,6 @@ def _save_sector_average_highlight_panels(
                     ax.set_ylim(y_limits)
                 add_scale_bar(axes[row_idx, 0])
 
-        title = "Sector-average traces +/- SEM"
         fig.suptitle(title, y=0.98, fontsize=11)
         fig.savefig(f"{base}.{image_format}", dpi=300)
         plt.close(fig)
@@ -1726,6 +1803,45 @@ def _save_sector_average_highlight_panels(
                     trace_summary=trace_summary,
                     sector_mode=sector_mode,
                     pooled=pooled,
+                )
+
+            diagonal_key, diagonal_label, _diagonal_angle = diagonal_by_group[group]
+            diagonal_order = (diagonal_key,)
+            diagonal_labels = {diagonal_key: diagonal_label}
+            diagonal_assignments = build_diagonal_assignments(group=group, sector_mode=sector_mode)
+            diagonal_trace_df = trace_df_for_assignments(diagonal_assignments)
+            diagonal_labeled = attach_sectors(
+                diagonal_trace_df,
+                diagonal_assignments,
+                sector_mode=sector_mode,
+                selected_conditions=selected_conditions,
+                trace_order=diagonal_order,
+            )
+            if diagonal_labeled.empty:
+                continue
+            diagonal_name_prefix = (
+                f"diagonal_per_image_{diagonal_key}"
+                if sector_mode == "sector-per-image"
+                else f"diagonal_average_{diagonal_key}"
+            )
+            for pooled in (False, True):
+                diagonal_summary = summarize_trace_rows(
+                    diagonal_labeled,
+                    pooled=pooled,
+                    group=group,
+                    sector_mode=sector_mode,
+                    trace_labels=diagonal_labels,
+                )
+                save_trace_panel(
+                    group=group,
+                    trace_summary=diagonal_summary,
+                    sector_mode=sector_mode,
+                    pooled=pooled,
+                    trace_order=diagonal_order,
+                    trace_labels=diagonal_labels,
+                    output_family="diagonal-average",
+                    name_prefix=diagonal_name_prefix,
+                    title=f"{diagonal_label} diagonal traces +/- SEM",
                 )
 
 
