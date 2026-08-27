@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "pandas",
+    "sbi>=0.27.0",
     "scikit-learn",
     "seaborn",
     "torch>=2.5,<2.6",
