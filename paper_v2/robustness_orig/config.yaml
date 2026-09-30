@@ -1,0 +1,273 @@
+protocol:
+  steps_per_trial: 400
+  steps_per_second: 100
+  training_trials: 7
+  test_trials: 10
+  rng_reference_trials: 5
+  training_order_seed: 2026
+  signal_other_value: 0.6
+cells:
+- id: 1
+  source: familiar
+  sector: +NO axis
+  parameters:
+    seed: 2182
+    w_ff:
+    - 0.0554999999999999
+    - 0.0165
+    - 0.0063
+    w_fb:
+    - 0.043
+    - 0.044
+    - 0.046
+    w_lat:
+    - 0.03
+    w_pv_lat:
+    - 0.03
+    W_pv:
+    - 0.033
+    - 0.033
+    - 0.033
+    receives_context:
+    - true
+    - true
+    - true
+    lr_ff: 0.00775
+    lr_fb: 0.000325
+    lr_lat: 0.015
+    pyc_decay: 0.05
+    pv_decay: 0.5
+    apical_drive_threshold: 0.9
+    apical_gain_strength: 8.0
+    apical_gain_k: 8.0
+    apical_gain_threshold: 0.05
+    baseline_drive_sigma: 0.075
+    divisive_gain: 10.0
+    pv_noise_sigma: 0.075
+    ff_accumulator_alpha_factor: 0.05
+    ff_accumulator_power: 2.0
+    ff_accumulator_scale: 2000.0
+- id: 2
+  source: familiar
+  sector: +O axis
+  parameters:
+    seed: 2176
+    w_ff:
+    - 0.0705
+    - 0.0825
+    - 0.0825
+    w_fb:
+    - 0.082
+    - 0.094
+    - 0.088
+    w_lat:
+    - 0.38
+    w_pv_lat:
+    - 0.069
+    W_pv:
+    - 0.51
+    - 0.53
+    - 0.54
+    receives_context:
+    - true
+    - true
+    - true
+    lr_ff: 0.00775
+    lr_fb: 0.000325
+    lr_lat: 0.015
+    pyc_decay: 0.0499999999999999
+    pv_decay: 0.5
+    apical_drive_threshold: 0.07
+    apical_gain_strength: 6.0
+    apical_gain_k: 8.0
+    apical_gain_threshold: 0.0499999999999999
+    baseline_drive_sigma: 0.2
+    divisive_gain: 10.0
+    pv_noise_sigma: 0.075
+    ff_accumulator_alpha_factor: 0.0499999999999999
+    ff_accumulator_power: 2.0
+    ff_accumulator_scale: 2000.0
+- id: 3
+  source: familiar
+  sector: -NO axis
+  parameters:
+    seed: 2172
+    w_ff:
+    - 0.1124999999999999
+    - 0.105
+    - 0.06525
+    w_fb:
+    - 0.031
+    - 0.032
+    - 0.031
+    w_lat:
+    - 0.15
+    w_pv_lat:
+    - 0.074
+    W_pv:
+    - 0.34
+    - 0.41
+    - 0.37
+    receives_context:
+    - false
+    - false
+    - false
+    lr_ff: 0.00775
+    lr_fb: 0.0003249999999999
+    lr_lat: 0.015
+    pyc_decay: 0.0499999999999999
+    pv_decay: 0.5
+    apical_drive_threshold: 0.07
+    apical_gain_strength: 6.0
+    apical_gain_k: 8.0
+    apical_gain_threshold: 0.0499999999999999
+    baseline_drive_sigma: 0.2
+    divisive_gain: 10.0
+    pv_noise_sigma: 0.075
+    ff_accumulator_alpha_factor: 0.0499999999999999
+    ff_accumulator_power: 2.0
+    ff_accumulator_scale: 2000.0
+- id: 4
+  source: novel
+  sector: +NO axis
+  parameters:
+    seed: 2158
+    w_ff:
+    - 0.0075
+    - 0.005625
+    - 0.072
+    w_fb:
+    - 0.048
+    - 0.045
+    - 0.049
+    w_lat:
+    - 0.03
+    w_pv_lat:
+    - 0.03
+    W_pv:
+    - 0.034
+    - 0.029
+    - 0.037
+    receives_context:
+    - true
+    - true
+    - true
+    lr_ff: 0.00775
+    lr_fb: 0.000325
+    lr_lat: 0.015
+    pyc_decay: 0.05
+    pv_decay: 0.5
+    apical_drive_threshold: 0.9
+    apical_gain_strength: 8.0
+    apical_gain_k: 8.0
+    apical_gain_threshold: 0.05
+    baseline_drive_sigma: 0.2
+    divisive_gain: 10.0
+    pv_noise_sigma: 0.075
+    ff_accumulator_alpha_factor: 0.05
+    ff_accumulator_power: 2.0
+    ff_accumulator_scale: 2000.0
+- id: 5
+  source: novel
+  sector: +O axis
+  parameters:
+    seed: 2188
+    w_ff:
+    - 0.0975
+    - 0.0975
+    - 0.0825
+    w_fb:
+    - 0.069
+    - 0.059
+    - 0.07
+    w_lat:
+    - 0.38
+    w_pv_lat:
+    - 0.069
+    W_pv:
+    - 0.49
+    - 0.49
+    - 0.27
+    receives_context:
+    - true
+    - true
+    - true
+    lr_ff: 0.00775
+    lr_fb: 0.000325
+    lr_lat: 0.015
+    pyc_decay: 0.05
+    pv_decay: 0.5
+    apical_drive_threshold: 0.07
+    apical_gain_strength: 6.0
+    apical_gain_k: 8.0
+    apical_gain_threshold: 0.05
+    baseline_drive_sigma: 0.2
+    divisive_gain: 10.0
+    pv_noise_sigma: 0.075
+    ff_accumulator_alpha_factor: 0.05
+    ff_accumulator_power: 2.0
+    ff_accumulator_scale: 2000.0
+- id: 6
+  source: novel
+  sector: -NO axis
+  parameters:
+    seed: 2183
+    w_ff:
+    - 0.09
+    - 0.05025
+    - 0.15
+    w_fb:
+    - 0.0084
+    - 0.0098
+    - 0.0074
+    w_lat:
+    - 0.05
+    w_pv_lat:
+    - 0.1
+    W_pv:
+    - 0.5
+    - 0.51
+    - 0.48
+    receives_context:
+    - false
+    - false
+    - false
+    lr_ff: 0.00775
+    lr_fb: 0.000325
+    lr_lat: 0.015
+    pyc_decay: 0.05
+    pv_decay: 0.5
+    apical_drive_threshold: 0.07
+    apical_gain_strength: 6.0
+    apical_gain_k: 8.0
+    apical_gain_threshold: 0.05
+    baseline_drive_sigma: 0.2
+    divisive_gain: 10.0
+    pv_noise_sigma: 0.075
+    ff_accumulator_alpha_factor: 0.05
+    ff_accumulator_power: 2.0
+    ff_accumulator_scale: 2000.0
+parameter: null
+factors:
+- 0.05
+- 0.1
+- 0.25
+- 0.5
+- 0.75
+- 1
+- 1.25
+- 1.5
+- 2
+- 3
+- 5
+weight_values:
+- 0.01
+- 0.02
+- 0.05
+- 0.1
+- 0.2
+- 0.3
+- 0.5
+- 0.75
+- 1
+magnitude_floor_fraction: 0.25

@@ -13,6 +13,7 @@ dependencies = [
     "matplotlib",
     "numpy",
     "pandas",
+    "pyyaml>=6.0.3",
     "sbi>=0.27.0",
     "scikit-learn",
     "seaborn",
@@ -25,4 +26,7 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["context_contrasting*"]
+include = ["context_contrasting", "context_contrasting.paper", "thesis*", "paper_v2*"]
+
+[tool.setuptools.package-data]
+paper_v2 = ["configs/*.yaml", "ground_truth.csv", "model.csv", "model.yaml"]

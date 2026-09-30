@@ -5,10 +5,10 @@ import unittest
 import numpy as np
 import torch
 
-from context_contrasting.paper import model_scatter
-from context_contrasting.pc_comparison.pc_convergence import convergence_summary
-from context_contrasting.pc_comparison.pc_neuron import CorrectPCneuron
-from context_contrasting.pc_comparison.pc_templates import (
+from thesis.population import model_scatter
+from thesis.pc_comparison.pc_convergence import convergence_summary
+from thesis.pc_comparison.pc_neuron import CorrectPCneuron
+from thesis.pc_comparison.pc_templates import (
     DEFAULT_BASELINE_DRIVE,
     DEFAULT_BASELINE_DRIVE_SIGMA,
     DEFAULT_CONVERGENCE_TOLERANCE,
@@ -16,7 +16,7 @@ from context_contrasting.pc_comparison.pc_templates import (
     sample_shared_pc_configs,
     scaled_learning_rate,
 )
-from context_contrasting.pc_comparison.run_pc_comparison import _model_params_from_row
+from thesis.pc_comparison.run_pc_comparison import _model_params_from_row
 
 
 class PCComparisonTests(unittest.TestCase):

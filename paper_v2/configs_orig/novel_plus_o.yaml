@@ -1,0 +1,26 @@
+id: 5
+source: novel
+sector: +O axis
+parameters:
+  seed: 2188
+  w_ff: [0.0975, 0.0975, 0.0825]
+  w_fb: [0.069, 0.059, 0.07]
+  w_lat: [0.38]
+  w_pv_lat: [0.069]
+  W_pv: [0.49, 0.49, 0.27]
+  receives_context: [true, true, true]
+  lr_ff: 0.00775
+  lr_fb: 0.000325
+  lr_lat: 0.015
+  pyc_decay: 0.05
+  pv_decay: 0.5
+  apical_drive_threshold: 0.07
+  apical_gain_strength: 6.0
+  apical_gain_k: 8.0
+  apical_gain_threshold: 0.05
+  baseline_drive_sigma: 0.2
+  divisive_gain: 10.0
+  pv_noise_sigma: 0.075
+  ff_accumulator_alpha_factor: 0.05
+  ff_accumulator_power: 2.0
+  ff_accumulator_scale: 2000.0

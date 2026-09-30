@@ -1,0 +1,163 @@
+% Paste-ready replacement for the outdated mean-field simulation, robustness,
+% and parameter-table text. Values are read from paper_v2/configs/*.yaml.
+
+\paragraph{Mean-field models and simulation.}
+We studied six independently initialized mean-field models corresponding to the
+familiar and novel $+NO$, $+O$, and $-NO$ transitions.  Each model contained one
+PyC and one PV cell and was initialized directly from a YAML parameter file; no
+population sampling or parameter averaging was performed during this study.
+The PyC and PV instantaneous activations were rectified and clipped to $[0,1]$.
+Thus the somatic activation threshold was zero.  Their discrete-time updates
+used $\alpha_y=0.05$ and $\alpha_p=0.5$.
+
+The fast adaptation state followed the PyC rate with
+$\alpha_{a_f}=0.2\alpha_y=0.01$.  The slow activity accumulator used to modulate
+FF plasticity followed the PyC rate with
+$\alpha_{a_s}=0.05\alpha_y=0.0025$.  Consequently
+$\tau_{a_s}>\tau_{a_f}>\tau_y$.  The apical gain onset was
+$\theta_g=0.05$; the apical-drive threshold $\theta_d$, gain ceiling $g$, and
+PyC baseline-current standard deviation $\sigma_y$ depended on the transition
+(Table~\ref{tab:mean-field-dynamics}).
+
+For image $i$, the NO input was the pair
+$(\mathbf{x}_i,\mathbf{c}_i)$, where $\mathbf{x}_i$ was one-hot and
+\begin{equation}
+ \mathbf{c}_i = \operatorname{perm}_i([1,0.6,0.6])/2.2.
+\end{equation}
+The same unit-sum contextual vector reached the apical compartment and the FB
+plasticity rule.  The O input replaced $\mathbf{x}_i$ with zero.  A trial had
+400 steps ($100$ steps/s): three seconds without input followed by one second
+of stimulus.  Displayed traces contained the final one second before stimulus,
+the one-second stimulus, and two seconds of subsequent ITI.  Familiarization
+comprised seven presentations of each familiar image in a reproducibly shuffled
+order.  Naive and expert responses were measured over 50 trials per image.
+Plasticity was active only during familiarization.
+
+The three plastic updates were
+\begin{align}
+ \Delta\mathbf{w}_{FF}
+ &= -\eta_{FF}\zeta a_s^2 y\mathbf{x}\odot\mathbf{w}_{FF},\\
+ \Delta\mathbf{w}_{FB}
+ &= \eta_{FB}\mathbf{c}\odot(\mathbf{1}-\mathbf{w}_{FB}),\\
+ \Delta w_{LAT}
+ &= \eta_{LAT}yp(1-w_{LAT}).
+\end{align}
+PV feedforward weights and the PyC-to-PV weight were fixed.  The rates were
+$\eta_{FF}=0.00775$, $\eta_{FB}=0.000325$, and
+$\eta_{LAT}=0.015$ per discrete step, with no run-time rescaling.  The slow
+accumulator normalization was $\zeta=2000$ and its exponent was two.  Feedback
+potentiation was undampened and no feedback-specificity matrix was applied.
+
+For the main figures, each model was standardized using one shared mean and
+sample standard deviation calculated over the one-second pre-stimulus windows
+of all naive NO and O probes of all three images.  Familiar transition responses
+were averaged over the two familiar images; novel responses used the novel
+image.  Expert perturbations set contextual input to zero (FB silencing), removed
+the PV-to-PyC term from the divisive denominator (PV silencing), or combined the
+two manipulations.
+
+\subsection{Robustness analysis}
+The robustness analysis varied one continuous parameter at a time around each
+of the six YAML initializations.  Every scalar parameter was multiplied by
+\begin{equation}
+ \{0.05,0.1,0.25,0.5,0.75,1,1.25,1.5,2,3,5\}.
+\end{equation}
+The leak rates $\alpha_y$ and $\alpha_p$, which are fractions per step, were
+capped at one.  Each complete weight family ($\mathbf{w}_{FF}$,
+$\mathbf{w}_{FB}$, $\mathbf{w}_{PV}$, $w_{LAT}$, and $w_{pvLAT}$) was scaled
+coherently by the same factors, and the scaled weights were clipped to the
+allowed interval $[0,1]$.  Every individual weight coordinate was instead set
+to the absolute values
+\begin{equation}
+ \{0.01,0.02,0.05,0.1,0.2,0.3,0.5,0.75,1\}
+\end{equation}
+and to its YAML value, spanning the allowed range independently of its initial
+size.  All unperturbed parameters remained at their YAML values.  Seeds and the
+binary context-reception mask were not perturbed.  The design contained 1,965
+perturbed points across the six models.
+
+Robustness simulations used ten measurement trials by default.  Common random
+numbers were used across perturbations, with separate fixed seeds for training
+and measurement.  Responses were standardized using the full three-second
+pre-stimulus period of the native-image naive probes; this is the pre-specified
+robustness normalization and differs from the one-second plotting baseline used
+for the main traces.  A perturbed transition was retained when it remained in
+the same rotated sector (sector boundaries at the two diagonals) and its vector
+magnitude was at least $25\%$ of the corresponding unperturbed magnitude.
+Zero-variance baselines produced invalid, non-retained points.
+
+\begin{table*}[h!]
+\centering
+\small
+\begin{tabular}{lll}
+\hline
+Symbol & Value & Meaning \\
+\hline
+$\alpha_y$ & 0.05 & PyC leak rate \\
+$\alpha_p$ & 0.5 & PV leak rate \\
+$\alpha_{a_f}$ & 0.01 & Fast adaptation rate \\
+$\alpha_{a_s}$ & 0.0025 & Slow FF-activity accumulator rate \\
+$\theta_y$ & 0 & PyC and PV rectification threshold \\
+$\kappa$ & 10 & Divisive normalization scale \\
+$\sigma_p$ & 0.075 & PV baseline-current s.d. \\
+$\theta_g$ & 0.05 & Apical gain threshold \\
+$k$ & 8 & Apical-gain sigmoid steepness \\
+$\eta_{FF}$ & 0.00775 & FF depression rate per step \\
+$\eta_{FB}$ & 0.000325 & FB potentiation rate per step \\
+$\eta_{LAT}$ & 0.015 & PV-to-PyC potentiation rate per step \\
+$\zeta$ & 2000 & Slow-accumulator scale \\
+$q$ & 2 & Slow-accumulator exponent \\
+$\mathbf{c}_i$ & $\operatorname{perm}_i([1,.6,.6])/2.2$ & Context input \\
+$T$ & 400 & Steps per trial (100 steps/s) \\
+$N_{train}$ & 7 & Training trials per familiar image \\
+$N_{test}$ & 50 & Naive and expert trials per image \\
+\hline
+\end{tabular}
+\caption{Parameters shared by all six mean-field models. Learning rates are not
+rescaled at run time.}
+\label{tab:mean-field-shared}
+\end{table*}
+
+\begin{table*}[h!]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccccccr}
+\hline
+Source & Transition & $\mathbf{w}_{FF}$ & $\mathbf{w}_{FB}$ & $\mathbf{w}_{PV}$
+& $w_{LAT}$ & $w_{pvLAT}$ & Receives FB & Seed \\
+\hline
+Familiar & $+NO$ & $(.0555,.0165,.0063)$ & $(.043,.044,.046)$ & $(.033,.033,.033)$ & .03 & .03 & yes & 2182 \\
+Familiar & $+O$  & $(.0705,.0825,.0825)$ & $(.082,.094,.088)$ & $(.51,.53,.54)$ & .38 & .069 & yes & 2176 \\
+Familiar & $-NO$ & $(.1125,.105,.06525)$ & $(.031,.032,.031)$ & $(.34,.41,.37)$ & .15 & .074 & no & 2172 \\
+Novel & $+NO$ & $(.0075,.005625,.072)$ & $(.048,.045,.049)$ & $(.034,.029,.037)$ & .03 & .03 & yes & 2158 \\
+Novel & $+O$  & $(.0975,.0975,.0825)$ & $(.069,.059,.070)$ & $(.49,.49,.27)$ & .38 & .069 & yes & 2188 \\
+Novel & $-NO$ & $(.09,.05025,.15)$ & $(.0084,.0098,.0074)$ & $(.50,.51,.48)$ & .05 & .10 & no & 2183 \\
+\hline
+\end{tabular}}
+\caption{Initial synaptic parameters of the six YAML-defined mean-field models.
+Stored FB weights of models that do not receive contextual input are masked to
+zero during initialization.}
+\label{tab:mean-field-weights}
+\end{table*}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{llccc}
+\hline
+Source & Transition & $\theta_d$ & $g$ & $\sigma_y$ \\
+\hline
+Familiar & $+NO$ & .90 & 8 & .075 \\
+Familiar & $+O$  & .07 & 6 & .20 \\
+Familiar & $-NO$ & .07 & 6 & .20 \\
+Novel & $+NO$ & .90 & 8 & .20 \\
+Novel & $+O$  & .07 & 6 & .20 \\
+Novel & $-NO$ & .07 & 6 & .20 \\
+\hline
+\end{tabular}
+\caption{Transition-specific neural-dynamics parameters. All unlisted values
+are shared as in Table~\ref{tab:mean-field-shared}.}
+\label{tab:mean-field-dynamics}
+\end{table}

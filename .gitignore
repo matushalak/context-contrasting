@@ -15,3 +15,15 @@ sbi-logs/
 *.csv
 *.json
 *.eps
+
+# The paper's two plot inputs are part of the study, not disposable exports.
+!paper_v2/ground_truth.csv
+!paper_v2/model.csv
+paper_v2/figures/
+paper_v2/robustness/
+thesis/results/
+
+# Preserve assets that were tracked before moving the original code to thesis.
+!thesis/circuit/plots*/Model_Activity_*.png
+!thesis/data_analysis/transitions_act.csv
+!thesis/data_analysis/transitions_post.csv
