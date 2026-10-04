@@ -1,4 +1,4 @@
-"""Plot traces and six transition vectors using only ground_truth.csv and model.csv."""
+"""Plot traces and transition vectors using only ground_truth.csv and model.csv."""
 
 import argparse
 from pathlib import Path
@@ -12,7 +12,9 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent
 SECTORS = ("+NO axis", "+O axis", "-NO axis")
-COLORS = ("#3159a7", "#ef202f", "#e68600")
+DATA_SECTORS = (*SECTORS, "-O axis")
+COLORS = {"+NO axis": "#3159a7", "+O axis": "#ef202f",
+          "-NO axis": "#e68600", "-O axis": "#16843e"}
 SOURCES = ("familiar", "novel")
 LABELS = {"naive": "Naive", "expert": "Expert", "expert_no_fb": "FB silencing",
           "expert_no_lat": "PV silencing", "expert_no_fb_no_lat": "FB & PV silencing"}
@@ -47,8 +49,55 @@ def plot_traces(table, path):
             if row == 0:
                 ax.set_title(f"{LABELS[condition]}\n{source.capitalize()}", fontsize=9)
             if column == 0:
-                ax.set_ylabel(sector.replace(" axis", "") + "\nResponse (baseline SD)", color=COLORS[row])
+                ax.set_ylabel(sector.replace(" axis", "") + "\nResponse (baseline SD)", color=COLORS[sector])
             if row == 2:
+                ax.set_xlabel("Time (s)")
+    axes[0, 0].legend(frameon=False, fontsize=8)
+    save(fig, path)
+
+
+def empirical_sector_weights(data):
+    vectors = data.loc[data.record_type.eq("transition") & data.sector.isin(SECTORS)]
+    counts = vectors.groupby(["source", "sector"])["observation_id"].nunique()
+    return counts / counts.groupby(level="source").transform("sum")
+
+
+def average_traces(table, weights=None):
+    traces = table.loc[table.record_type.eq("trace")]
+    keys = ["source", "sector", "condition_key", "response_type", "time_seconds"]
+    # Average images within a neuron/template before averaging observations.
+    observations = traces.groupby(keys + ["observation_id"])["response"].mean().reset_index()
+    if weights is None:
+        return observations.groupby([key for key in keys if key != "sector"])["response"].mean().reset_index()
+    sectors = observations.groupby(keys)["response"].mean().reset_index()
+    sectors["weight"] = [weights.loc[(source, sector)] for source, sector in
+                         zip(sectors.source, sectors.sector)]
+    sectors["response"] *= sectors["weight"]
+    return sectors.groupby([key for key in keys if key != "sector"])["response"].sum().reset_index()
+
+
+def plot_average_traces(data, model, path):
+    means = ((average_traces(data), "Data"),
+             (average_traces(model, empirical_sector_weights(data)), "Weighted model"))
+    columns = [(condition, source) for condition in ("naive", "expert") for source in SOURCES]
+    fig, axes = plt.subplots(2, len(columns), figsize=(8.2, 4.2), sharex=True, sharey="row",
+                             squeeze=False, layout="constrained")
+    for row, (table, label) in enumerate(means):
+        for column, (condition, source) in enumerate(columns):
+            ax = axes[row, column]
+            frame = table.loc[table.source.eq(source) & table.condition_key.eq(condition)]
+            ax.axvspan(0, 1, color="0.92")
+            ax.axhline(0, color="0.8", lw=0.6)
+            for response, color in (("NO", "black"), ("O", "red")):
+                line = frame.loc[frame.response_type.eq(response)]
+                ax.plot(line.time_seconds, line.response, color=color, lw=1.2, label=response)
+            ax.set_xlim(-1, 3)
+            ax.spines[["top", "right"]].set_visible(False)
+            if row == 0:
+                ax.set_title(f"{LABELS[condition]}\n{source.capitalize()}", fontsize=9)
+            if column == 0:
+                ax.set_ylabel(f"{label}\nResponse (baseline SD)")
+            if row == 1:
                 ax.set_xlabel("Time (s)")
     axes[0, 0].legend(frameon=False, fontsize=8)
     save(fig, path)
@@ -56,14 +105,17 @@ def plot_traces(table, path):
 
 def plot_vectors(data, model, path, uncertainty):
     fig, axes = plt.subplots(2, 2, figsize=(8, 7), layout="constrained")
-    # TODO: get percentage of transitions in each sector
+    weights = empirical_sector_weights(data)
     for row, (table, label) in enumerate(((data, "Data"), (model, "Model"))):
         for column, source in enumerate(SOURCES):
             ax = axes[row, column]
             vectors = table.loc[table.record_type.eq("transition") & table.source.eq(source)]
             extent = 0.5
-            for sector, color in zip(SECTORS, COLORS):
+            for sector in DATA_SECTORS if label == "Data" else SECTORS:
+                color = COLORS[sector]
                 points = vectors.loc[vectors.sector.eq(sector), ["delta_NO", "delta_O"]].to_numpy()
+                if not len(points):
+                    continue
                 center = points.mean(axis=0)
                 radius = np.zeros(2)
                 if len(points) > 1:
@@ -79,6 +131,16 @@ def plot_vectors(data, model, path, uncertainty):
                 ax.annotate("", xy=center, xytext=(0, 0),
                             arrowprops=dict(arrowstyle="-|>", color=color, lw=2.5, mutation_scale=14))
                 ax.plot([], [], color=color, label=sector.replace(" axis", ""))
+            if label == "Data":
+                overall = vectors[["delta_NO", "delta_O"]].mean().to_numpy()
+            else:
+                sector_means = vectors.groupby("sector")[["delta_NO", "delta_O"]].mean()
+                overall = sum(weights.loc[(source, sector)] * sector_means.loc[sector].to_numpy()
+                              for sector in SECTORS)
+            extent = max(extent, np.max(np.abs(overall)) * 1.2)
+            ax.annotate("", xy=overall, xytext=(0, 0),
+                        arrowprops=dict(arrowstyle="-|>", color="black", lw=3.2, mutation_scale=16))
+            ax.plot([], [], color="black", lw=3.2, label="Overall transition")
             ax.axhline(0, color="0.7", lw=0.7)
             ax.axvline(0, color="0.7", lw=0.7)
             ax.set(xlim=(-extent, extent), ylim=(-extent, extent), aspect="equal",
@@ -93,13 +155,17 @@ def main():
     parser.add_argument("--data", type=Path, default=ROOT / "ground_truth.csv")
     parser.add_argument("--model", type=Path, default=ROOT / "model.csv")
     parser.add_argument("--output", type=Path, default=ROOT / "figures")
+    parser.add_argument("--include-minus-o", action="store_true",
+                        help="Include empirical -O cells in overall vectors and traces")
     args = parser.parse_args()
     data, model = pd.read_csv(args.data), pd.read_csv(args.model)
+    plotted_data = data if args.include_minus_o else data.loc[~data.sector.eq("-O axis")]
     args.output.mkdir(parents=True, exist_ok=True)
-    plot_traces(data, args.output / "ground_truth_traces")
+    plot_traces(data.loc[~data.sector.eq("-O axis")], args.output / "ground_truth_traces")
     plot_traces(model, args.output / "model_traces")
+    plot_average_traces(plotted_data, model, args.output / "average_traces")
     for uncertainty in ("sd", "sem"):
-        plot_vectors(data, model, args.output / f"transition_vectors_{uncertainty}", uncertainty)
+        plot_vectors(plotted_data, model, args.output / f"transition_vectors_{uncertainty}", uncertainty)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ import yaml
 from joblib import Parallel, delayed
 
 from .model import CCNeuron
-from .plot import COLORS, SECTORS, save
+from .plot import COLORS, save
 from .simulate import ROOT, load_config, run_phase, stimuli, train
 
 WEIGHTS = ("w_ff", "w_fb", "w_lat", "w_pv_lat", "W_pv")
@@ -160,7 +160,7 @@ def plot(directory):
             ax.plot([-limit, limit], [-sign * limit, sign * limit], color="0.88", ls="--", lw=.8)
         for _, row in rows.iterrows():
             ax.arrow(0, 0, row.delta_NO, row.delta_O, width=.01 * limit, head_width=.06 * limit,
-                     head_length=.1 * limit, length_includes_head=True, color=COLORS[SECTORS.index(row.sector)])
+                     head_length=.1 * limit, length_includes_head=True, color=COLORS[row.sector])
             ax.text(row.delta_NO + .03 * limit, row.delta_O, row.sector.replace(" axis", ""), va="center")
         ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal", title=source.capitalize(),
                xlabel=r"$\Delta R_{NO}$", ylabel=r"$\Delta R_O$")
@@ -174,7 +174,7 @@ def plot(directory):
             for column, color, label in (("delta_NO", "k", r"$\Delta R_{NO}$"), ("delta_O", "red", r"$\Delta R_O$")):
                 ax.plot(points.value, points[column], color=color, marker="o", ms=4, label=label)
                 ax.scatter(failed.value, failed[column], marker="x", s=45, color="#8c3a0c", zorder=5)
-            ax.axvline(points.reference.iloc[0], color=COLORS[0], ls="--", lw=1)
+            ax.axvline(points.reference.iloc[0], color=COLORS["+NO axis"], ls="--", lw=1)
             ax.axhline(0, color="0.8", lw=.8, zorder=0)
             ax.set(title=names[cell_id], xlabel="Parameter value", ylabel="Expert - naive response")
         axes.flat[0].legend(frameon=False, fontsize=9)
