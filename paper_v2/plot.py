@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 import numpy as np
 import pandas as pd
+import seaborn as sns
 
 ROOT = Path(__file__).resolve().parent
 SECTORS = ("+NO axis", "+O axis", "-NO axis")
@@ -103,21 +104,45 @@ def plot_average_traces(data, model, path):
     save(fig, path)
 
 
-def plot_vectors(data, model, path, uncertainty):
+def model_transition_vectors(model, condition):
+    traces = model.loc[model.record_type.eq("trace") & model.time_seconds.between(0, 1)]
+    keys = ["source", "sector", "observation_id", "condition_key", "response_type"]
+    responses = traces.groupby(keys)["response"].mean().unstack(["condition_key", "response_type"])
+    vectors = responses.index.to_frame(index=False)
+    for response in ("NO", "O"):
+        vectors[f"delta_{response}"] = (responses[(condition, response)] -
+                                         responses[("naive", response)]).to_numpy()
+    return vectors
+
+
+def overall_transition(vectors, source, weights=None):
+    frame = vectors.loc[vectors.source.eq(source)]
+    if weights is None:
+        return frame[["delta_NO", "delta_O"]].mean().to_numpy()
+    means = frame.groupby("sector")[["delta_NO", "delta_O"]].mean()
+    return sum(weights.loc[(source, sector)] * means.loc[sector].to_numpy() for sector in SECTORS)
+
+
+def plot_vectors(data, model, path, uncertainty="sd", condition="expert"):
     fig, axes = plt.subplots(2, 2, figsize=(8, 7), layout="constrained")
     weights = empirical_sector_weights(data)
-    for row, (table, label) in enumerate(((data, "Data"), (model, "Model"))):
-        for column, source in enumerate(SOURCES):
+    data_vectors = data.loc[data.record_type.eq("transition")]
+    model_vectors = model_transition_vectors(model, condition)
+    for column, (vectors, label) in enumerate(((data_vectors, "Data"),
+                                                (model_vectors, f"Model ({LABELS[condition]})"))):
+        for row, source in enumerate(SOURCES):
             ax = axes[row, column]
-            vectors = table.loc[table.record_type.eq("transition") & table.source.eq(source)]
+            source_vectors = vectors.loc[vectors.source.eq(source)]
             extent = 0.5
             for sector in DATA_SECTORS if label == "Data" else SECTORS:
                 color = COLORS[sector]
-                points = vectors.loc[vectors.sector.eq(sector), ["delta_NO", "delta_O"]].to_numpy()
+                points = source_vectors.loc[source_vectors.sector.eq(sector),
+                                             ["delta_NO", "delta_O"]].to_numpy()
                 if not len(points):
                     continue
                 center = points.mean(axis=0)
                 radius = np.zeros(2)
+                # For data plot spread of vectors as covariance ellipsoid
                 if len(points) > 1:
                     covariance = np.cov(points, rowvar=False)
                     if uncertainty == "sem":
@@ -131,12 +156,7 @@ def plot_vectors(data, model, path, uncertainty):
                 ax.annotate("", xy=center, xytext=(0, 0),
                             arrowprops=dict(arrowstyle="-|>", color=color, lw=2.5, mutation_scale=14))
                 ax.plot([], [], color=color, label=sector.replace(" axis", ""))
-            if label == "Data":
-                overall = vectors[["delta_NO", "delta_O"]].mean().to_numpy()
-            else:
-                sector_means = vectors.groupby("sector")[["delta_NO", "delta_O"]].mean()
-                overall = sum(weights.loc[(source, sector)] * sector_means.loc[sector].to_numpy()
-                              for sector in SECTORS)
+            overall = overall_transition(vectors, source, None if label == "Data" else weights)
             extent = max(extent, np.max(np.abs(overall)) * 1.2)
             ax.annotate("", xy=overall, xytext=(0, 0),
                         arrowprops=dict(arrowstyle="-|>", color="black", lw=3.2, mutation_scale=16))
@@ -150,6 +170,56 @@ def plot_vectors(data, model, path, uncertainty):
     save(fig, path)
 
 
+def transition_cosine_sim(transitions_A, transitions_B):
+    dot = np.sum(transitions_A * transitions_B, axis=-1)
+    norm = np.linalg.norm(transitions_A, axis=-1) * np.linalg.norm(transitions_B, axis=-1)
+    return np.divide(dot, norm, out=np.full_like(dot, np.nan, dtype=float), where=norm != 0)
+
+
+def plot_cosine_sim(data, model, path, errorbars=False):
+    data_vectors = data.loc[data.record_type.eq("transition")]
+    weights = empirical_sector_weights(data)
+    rows = []
+    for condition in tuple(LABELS)[1:]:
+        model_vectors = model_transition_vectors(model, condition)
+        for source in SOURCES:
+            for sector in SECTORS:
+                observed = data_vectors.loc[data_vectors.source.eq(source) &
+                                             data_vectors.sector.eq(sector),
+                                             ["delta_NO", "delta_O"]].to_numpy()
+                if not errorbars:
+                    observed = observed.mean(axis=0, keepdims=True)
+                predicted = model_vectors.loc[model_vectors.source.eq(source) &
+                                               model_vectors.sector.eq(sector),
+                                               ["delta_NO", "delta_O"]].to_numpy()
+                for similarity in transition_cosine_sim(observed, predicted):
+                    rows.append((source, LABELS[condition], sector.replace(" axis", ""),
+                                 float(similarity)))
+            observed = overall_transition(data_vectors, source)
+            predicted = overall_transition(model_vectors, source, weights)
+            rows.append((source, LABELS[condition], "Overall",
+                         float(transition_cosine_sim(observed, predicted))))
+
+    similarities = pd.DataFrame(rows, columns=["source", "condition", "sector", "similarity"])
+    order = list(LABELS.values())[1:]
+    hues = [sector.replace(" axis", "") for sector in SECTORS] + ["Overall"]
+    palette = {sector.replace(" axis", ""): color for sector, color in COLORS.items()}
+    palette["Overall"] = "black"
+    fig, axes = plt.subplots(2, 1, figsize=(4, 6), sharey=True, layout="constrained")
+    for ax, source in zip(axes, SOURCES):
+        sns.pointplot(data=similarities.loc[similarities.source.eq(source)], x="condition",
+                      y="similarity", hue="sector", order=order, hue_order=hues,
+                      palette=palette, dodge=0.45, errorbar="sd" if errorbars else None, ax=ax,
+                      linestyle = 'none')
+        ax.axhline(0, color="0.7", lw=0.7)
+        ax.set(title=source.capitalize(), xlabel=None, ylabel="Cosine similarity", ylim=(-1.05, 1.05))
+        ax.tick_params(axis="x", rotation=25)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[1].get_legend().remove()
+    axes[0].legend(frameon=False, fontsize=8, title=None)
+    save(fig, path)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, default=ROOT / "ground_truth.csv")
@@ -157,6 +227,8 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "figures")
     parser.add_argument("--include-minus-o", action="store_true",
                         help="Include empirical -O cells in overall vectors and traces")
+    parser.add_argument("--cosine-errorbars", action="store_true",
+                        help="Plot SD across neuron-wise cosine similarities")
     args = parser.parse_args()
     data, model = pd.read_csv(args.data), pd.read_csv(args.model)
     plotted_data = data if args.include_minus_o else data.loc[~data.sector.eq("-O axis")]
@@ -164,8 +236,13 @@ def main():
     plot_traces(data.loc[~data.sector.eq("-O axis")], args.output / "ground_truth_traces")
     plot_traces(model, args.output / "model_traces")
     plot_average_traces(plotted_data, model, args.output / "average_traces")
-    for uncertainty in ("sd", "sem"):
-        plot_vectors(plotted_data, model, args.output / f"transition_vectors_{uncertainty}", uncertainty)
+    vectors_output = args.output / "transition_vectors"
+    vectors_output.mkdir(exist_ok=True)
+    for condition in tuple(LABELS)[1:]:
+        prefix = "" if condition == "expert" else f"_{condition}"
+        plot_vectors(plotted_data, model, vectors_output / f"{prefix}_transition_vectors_sd",
+                     condition=condition)
+    plot_cosine_sim(plotted_data, model, args.output / "cosine_similarity", args.cosine_errorbars)
 
 
 if __name__ == "__main__":

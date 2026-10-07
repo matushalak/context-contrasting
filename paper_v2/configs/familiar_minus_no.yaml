@@ -5,22 +5,22 @@ parameters:
   seed: 2172
   w_ff: [0.1, 0.1, 0.1]
   w_fb: [0.005, 0.005, 0.005]
-  w_lat: [0.1]
-  w_pv_lat: [0.1]
-  W_pv: [0.8, 0.8, 0.8]
+  w_lat: [0.025]
+  w_pv_lat: [0.0]
+  W_pv: [0.5, 0.5, 0.5]
   receives_context: [true, true, true]
-  lr_ff: 0.5
+  lr_ff: 0.3
   lr_fb: 0.0003
-  lr_lat: 0.05
+  lr_lat: 0.003
   pyc_decay: 0.05
   pv_decay: 0.5
-  apical_drive_threshold: 1.0
-  apical_gain_strength: 5.0
-  apical_gain_k: 6.0
-  apical_gain_threshold: 0.05
+  apical_drive_threshold: 0.5
+  apical_gain_strength: 3.0
+  apical_gain_k: 10.0
+  apical_gain_threshold: 0.1
   baseline_drive_sigma: 0.2
   divisive_gain: 10.0
   pv_noise_sigma: 0.2
   ff_accumulator_alpha_factor: 0.025
-  ff_accumulator_power: 4.0
+  ff_accumulator_power: 1.0
   ff_accumulator_scale: 1.0

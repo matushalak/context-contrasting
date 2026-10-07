@@ -2,7 +2,7 @@ protocol:
   steps_per_trial: 400
   steps_per_second: 100
   training_trials: 7
-  test_trials: 50
+  test_trials: 10
   rng_reference_trials: 5
   training_order_seed: 2026
   signal_other_value: 0.6
@@ -17,76 +17,76 @@ cells:
     - 0.005
     - 0.005
     w_fb:
-    - 0.025
-    - 0.025
-    - 0.025
+    - 0.05
+    - 0.05
+    - 0.05
     w_lat:
-    - 0.025
+    - 0.1
     w_pv_lat:
-    - 0.0
+    - 0.1
     W_pv:
-    - 0.1
-    - 0.1
-    - 0.1
+    - 0.05
+    - 0.05
+    - 0.05
     receives_context:
     - true
     - true
     - true
-    lr_ff: 0.3
-    lr_fb: 0.0003
-    lr_lat: 0.003
+    lr_ff: 0.01
+    lr_fb: 0.000325
+    lr_lat: 0.015
     pyc_decay: 0.05
     pv_decay: 0.5
-    apical_drive_threshold: 0.5
-    apical_gain_strength: 15.0
-    apical_gain_k: 10.0
-    apical_gain_threshold: 0.1
+    apical_drive_threshold: 1.0
+    apical_gain_strength: 10.0
+    apical_gain_k: 6.0
+    apical_gain_threshold: 0.05
     baseline_drive_sigma: 0.2
     divisive_gain: 10.0
     pv_noise_sigma: 0.2
     ff_accumulator_alpha_factor: 0.025
-    ff_accumulator_power: 1.0
-    ff_accumulator_scale: 1.0
+    ff_accumulator_power: 4.0
+    ff_accumulator_scale: 1000.0
 - id: 2
   source: familiar
   sector: +O axis
   parameters:
     seed: 2176
     w_ff:
-    - 0.05
-    - 0.05
-    - 0.05
+    - 0.005
+    - 0.005
+    - 0.005
     w_fb:
-    - 0.025
-    - 0.025
-    - 0.025
+    - 0.1
+    - 0.1
+    - 0.1
     w_lat:
-    - 0.025
+    - 0.1
     w_pv_lat:
-    - 0.0
+    - 0.1
     W_pv:
-    - 0.5
-    - 0.5
-    - 0.5
+    - 0.8
+    - 0.8
+    - 0.8
     receives_context:
     - true
     - true
     - true
-    lr_ff: 0.3
-    lr_fb: 0.0003
-    lr_lat: 0.003
+    lr_ff: 0.01
+    lr_fb: 0.000325
+    lr_lat: 0.015
     pyc_decay: 0.05
     pv_decay: 0.5
     apical_drive_threshold: 0.1
-    apical_gain_strength: 3.0
-    apical_gain_k: 10.0
-    apical_gain_threshold: 0.1
+    apical_gain_strength: 5.0
+    apical_gain_k: 6.0
+    apical_gain_threshold: 0.05
     baseline_drive_sigma: 0.2
     divisive_gain: 10.0
     pv_noise_sigma: 0.2
     ff_accumulator_alpha_factor: 0.025
-    ff_accumulator_power: 1.0
-    ff_accumulator_scale: 1.0
+    ff_accumulator_power: 4.0
+    ff_accumulator_scale: 1000.0
 - id: 3
   source: familiar
   sector: -NO axis
@@ -101,32 +101,32 @@ cells:
     - 0.005
     - 0.005
     w_lat:
-    - 0.025
+    - 0.1
     w_pv_lat:
-    - 0.0
+    - 0.1
     W_pv:
-    - 0.5
-    - 0.5
-    - 0.5
+    - 0.8
+    - 0.8
+    - 0.8
     receives_context:
     - true
     - true
     - true
-    lr_ff: 0.3
-    lr_fb: 0.0003
-    lr_lat: 0.003
+    lr_ff: 0.01
+    lr_fb: 0.000325
+    lr_lat: 0.015
     pyc_decay: 0.05
     pv_decay: 0.5
-    apical_drive_threshold: 0.5
-    apical_gain_strength: 3.0
-    apical_gain_k: 10.0
-    apical_gain_threshold: 0.1
+    apical_drive_threshold: 1.0
+    apical_gain_strength: 5.0
+    apical_gain_k: 6.0
+    apical_gain_threshold: 0.05
     baseline_drive_sigma: 0.2
     divisive_gain: 10.0
     pv_noise_sigma: 0.2
     ff_accumulator_alpha_factor: 0.025
-    ff_accumulator_power: 1.0
-    ff_accumulator_scale: 1.0
+    ff_accumulator_power: 4.0
+    ff_accumulator_scale: 1000.0
 - id: 4
   source: novel
   sector: +NO axis
@@ -137,76 +137,76 @@ cells:
     - 0.005
     - 0.05
     w_fb:
-    - 0.025
-    - 0.025
-    - 0.025
+    - 0.05
+    - 0.05
+    - 0.05
     w_lat:
-    - 0.025
+    - 0.1
     w_pv_lat:
-    - 0.0
+    - 0.1
     W_pv:
-    - 0.1
-    - 0.1
-    - 0.1
+    - 0.05
+    - 0.05
+    - 0.05
     receives_context:
     - true
     - true
     - true
-    lr_ff: 0.3
-    lr_fb: 0.0003
-    lr_lat: 0.003
+    lr_ff: 0.01
+    lr_fb: 0.000325
+    lr_lat: 0.015
     pyc_decay: 0.05
     pv_decay: 0.5
-    apical_drive_threshold: 0.5
-    apical_gain_strength: 15.0
-    apical_gain_k: 10.0
-    apical_gain_threshold: 0.1
+    apical_drive_threshold: 1.0
+    apical_gain_strength: 10.0
+    apical_gain_k: 6.0
+    apical_gain_threshold: 0.05
     baseline_drive_sigma: 0.2
     divisive_gain: 10.0
     pv_noise_sigma: 0.2
     ff_accumulator_alpha_factor: 0.025
-    ff_accumulator_power: 1.0
-    ff_accumulator_scale: 1.0
+    ff_accumulator_power: 4.0
+    ff_accumulator_scale: 1000.0
 - id: 5
   source: novel
   sector: +O axis
   parameters:
     seed: 2188
     w_ff:
-    - 0.05
-    - 0.05
-    - 0.05
+    - 0.005
+    - 0.005
+    - 0.005
     w_fb:
-    - 0.025
-    - 0.025
-    - 0.025
+    - 0.1
+    - 0.1
+    - 0.1
     w_lat:
-    - 0.025
+    - 0.1
     w_pv_lat:
-    - 0.0
+    - 0.1
     W_pv:
-    - 0.5
-    - 0.5
-    - 0.5
+    - 0.8
+    - 0.8
+    - 0.8
     receives_context:
     - true
     - true
     - true
-    lr_ff: 0.3
-    lr_fb: 0.0003
-    lr_lat: 0.003
+    lr_ff: 0.01
+    lr_fb: 0.000325
+    lr_lat: 0.015
     pyc_decay: 0.05
     pv_decay: 0.5
     apical_drive_threshold: 0.1
-    apical_gain_strength: 3.0
-    apical_gain_k: 10.0
-    apical_gain_threshold: 0.1
+    apical_gain_strength: 5.0
+    apical_gain_k: 6.0
+    apical_gain_threshold: 0.05
     baseline_drive_sigma: 0.2
     divisive_gain: 10.0
     pv_noise_sigma: 0.2
     ff_accumulator_alpha_factor: 0.025
-    ff_accumulator_power: 1.0
-    ff_accumulator_scale: 1.0
+    ff_accumulator_power: 4.0
+    ff_accumulator_scale: 1000.0
 - id: 6
   source: novel
   sector: -NO axis
@@ -221,29 +221,53 @@ cells:
     - 0.005
     - 0.005
     w_lat:
-    - 0.025
+    - 0.1
     w_pv_lat:
-    - 0.0
+    - 0.1
     W_pv:
-    - 0.5
-    - 0.5
-    - 0.5
+    - 0.8
+    - 0.8
+    - 0.8
     receives_context:
     - true
     - true
     - true
-    lr_ff: 0.3
-    lr_fb: 0.0003
-    lr_lat: 0.003
+    lr_ff: 0.01
+    lr_fb: 0.000325
+    lr_lat: 0.015
     pyc_decay: 0.05
     pv_decay: 0.5
-    apical_drive_threshold: 0.5
-    apical_gain_strength: 3.0
-    apical_gain_k: 10.0
-    apical_gain_threshold: 0.1
+    apical_drive_threshold: 1.0
+    apical_gain_strength: 5.0
+    apical_gain_k: 6.0
+    apical_gain_threshold: 0.05
     baseline_drive_sigma: 0.2
     divisive_gain: 10.0
     pv_noise_sigma: 0.2
     ff_accumulator_alpha_factor: 0.025
-    ff_accumulator_power: 1.0
-    ff_accumulator_scale: 1.0
+    ff_accumulator_power: 4.0
+    ff_accumulator_scale: 1000.0
+parameter: null
+factors:
+- 0.05
+- 0.1
+- 0.25
+- 0.5
+- 0.75
+- 1
+- 1.25
+- 1.5
+- 2
+- 3
+- 5
+weight_values:
+- 0.01
+- 0.02
+- 0.05
+- 0.1
+- 0.2
+- 0.3
+- 0.5
+- 0.75
+- 1
+magnitude_floor_fraction: 0.25
