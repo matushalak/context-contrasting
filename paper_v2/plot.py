@@ -27,12 +27,27 @@ def save(fig, path):
     plt.close(fig)
 
 
-def plot_traces(table, path):
+def observation_columns(table):
+    return ["observation_id"] + (["seed"] if "seed" in table and table.seed.notna().any() else [])
+
+
+def summarize_traces(samples, keys):
+    summary = samples.groupby(keys)["response"].agg(response="mean", sd="std", n="count").reset_index()
+    summary["sem"] = summary.sd / np.sqrt(summary.n)
+    return summary
+
+
+def trace_observations(table):
     traces = table.loc[table.record_type.eq("trace")]
     keys = ["source", "sector", "condition_key", "response_type", "time_seconds"]
-    # Average images within each neuron first, then give neurons equal weight.
-    neurons = traces.groupby(keys + ["observation_id"])["response"].mean()
-    means = neurons.groupby(keys).mean().reset_index()
+    # Images are repeated measures, not independent neurons or seed replicates.
+    return traces.groupby(keys + observation_columns(traces))["response"].mean().reset_index()
+
+
+def plot_traces(table, path, uncertainty="sd"):
+    neurons = trace_observations(table)
+    keys = ["source", "sector", "condition_key", "response_type", "time_seconds"]
+    means = summarize_traces(neurons, keys)
     conditions = [c for c in LABELS if c in means.condition_key.unique()]
     fig, axes = plt.subplots(3, 2 * len(conditions), figsize=(3.1 * len(conditions), 6),
                              sharex=True, sharey="row", squeeze=False, layout="constrained")
@@ -45,6 +60,8 @@ def plot_traces(table, path):
             for response, color in (("NO", "black"), ("O", "red")):
                 line = frame.loc[frame.response_type.eq(response)]
                 ax.plot(line.time_seconds, line.response, color=color, lw=1.2, label=response)
+                ax.fill_between(line.time_seconds, line.response - line[uncertainty],
+                                line.response + line[uncertainty], color=color, alpha=0.18, linewidth=0)
             ax.set_xlim(-1, 3)
             ax.spines[["top", "right"]].set_visible(False)
             if row == 0:
@@ -64,20 +81,28 @@ def empirical_sector_weights(data):
 
 
 def average_traces(table, weights=None):
-    traces = table.loc[table.record_type.eq("trace")]
+    observations = trace_observations(table)
     keys = ["source", "sector", "condition_key", "response_type", "time_seconds"]
-    # Average images within a neuron/template before averaging observations.
-    observations = traces.groupby(keys + ["observation_id"])["response"].mean().reset_index()
+    output_keys = [key for key in keys if key != "sector"]
     if weights is None:
-        return observations.groupby([key for key in keys if key != "sector"])["response"].mean().reset_index()
-    sectors = observations.groupby(keys)["response"].mean().reset_index()
+        return summarize_traces(observations, output_keys)
+    # Preserve covariance across templates sharing a replicate seed: weight first,
+    # then summarize complete seed-level population traces, never pool templates.
+    if "seed" not in observations:
+        observations["seed"] = 0
+    sectors = observations.groupby(keys + ["seed"])["response"].mean().reset_index()
     sectors["weight"] = [weights.loc[(source, sector)] for source, sector in
                          zip(sectors.source, sectors.sector)]
     sectors["response"] *= sectors["weight"]
-    return sectors.groupby([key for key in keys if key != "sector"])["response"].sum().reset_index()
+    counts = sectors.groupby(output_keys + ["seed"])["sector"].nunique()
+    expected = counts.index.get_level_values("source").map(weights.groupby(level="source").size())
+    if not np.array_equal(counts.to_numpy(), expected.to_numpy()):
+        raise ValueError("Weighted model traces require every sector for each seed/time/condition")
+    samples = sectors.groupby(output_keys + ["seed"])["response"].sum().reset_index()
+    return summarize_traces(samples, output_keys)
 
 
-def plot_average_traces(data, model, path):
+def plot_average_traces(data, model, path, uncertainty="sd"):
     means = ((average_traces(data), "Data"),
              (average_traces(model, empirical_sector_weights(data)), "Weighted model"))
     columns = [(condition, source) for condition in ("naive", "expert") for source in SOURCES]
@@ -92,6 +117,8 @@ def plot_average_traces(data, model, path):
             for response, color in (("NO", "black"), ("O", "red")):
                 line = frame.loc[frame.response_type.eq(response)]
                 ax.plot(line.time_seconds, line.response, color=color, lw=1.2, label=response)
+                ax.fill_between(line.time_seconds, line.response - line[uncertainty],
+                                line.response + line[uncertainty], color=color, alpha=0.18, linewidth=0)
             ax.set_xlim(-1, 3)
             ax.spines[["top", "right"]].set_visible(False)
             if row == 0:
@@ -106,7 +133,7 @@ def plot_average_traces(data, model, path):
 
 def model_transition_vectors(model, condition):
     traces = model.loc[model.record_type.eq("trace") & model.time_seconds.between(0, 1)]
-    keys = ["source", "sector", "observation_id", "condition_key", "response_type"]
+    keys = ["source", "sector"] + observation_columns(traces) + ["condition_key", "response_type"]
     responses = traces.groupby(keys)["response"].mean().unstack(["condition_key", "response_type"])
     vectors = responses.index.to_frame(index=False)
     for response in ("NO", "O"):
@@ -124,7 +151,8 @@ def overall_transition(vectors, source, weights=None):
 
 
 def plot_vectors(data, model, path, uncertainty="sd", condition="expert"):
-    fig, axes = plt.subplots(2, 2, figsize=(8, 7), layout="constrained")
+    fig, axes = plt.subplots(2, 2, figsize=(8, 7), layout="constrained",
+                             sharex='all', sharey = 'all')
     weights = empirical_sector_weights(data)
     data_vectors = data.loc[data.record_type.eq("transition")]
     model_vectors = model_transition_vectors(model, condition)
@@ -142,7 +170,7 @@ def plot_vectors(data, model, path, uncertainty="sd", condition="expert"):
                     continue
                 center = points.mean(axis=0)
                 radius = np.zeros(2)
-                # For data plot spread of vectors as covariance ellipsoid
+                # Neuron-to-neuron (data) or seed-to-seed (model) covariance.
                 if len(points) > 1:
                     covariance = np.cov(points, rowvar=False)
                     if uncertainty == "sem":
@@ -163,7 +191,7 @@ def plot_vectors(data, model, path, uncertainty="sd", condition="expert"):
             ax.plot([], [], color="black", lw=3.2, label="Overall transition")
             ax.axhline(0, color="0.7", lw=0.7)
             ax.axvline(0, color="0.7", lw=0.7)
-            ax.set(xlim=(-extent, extent), ylim=(-extent, extent), aspect="equal",
+            ax.set(xlim=(-2, 2), ylim=(-2, 2), aspect="equal",
                    title=f"{label}: {source}", xlabel="Delta NO", ylabel="Delta O")
             ax.spines[["top", "right"]].set_visible(False)
     axes[0, 0].legend(frameon=False, fontsize=8)
@@ -176,7 +204,7 @@ def transition_cosine_sim(transitions_A, transitions_B):
     return np.divide(dot, norm, out=np.full_like(dot, np.nan, dtype=float), where=norm != 0)
 
 
-def plot_cosine_sim(data, model, path, errorbars=False):
+def cosine_similarities(data, model):
     data_vectors = data.loc[data.record_type.eq("transition")]
     weights = empirical_sector_weights(data)
     rows = []
@@ -187,11 +215,9 @@ def plot_cosine_sim(data, model, path, errorbars=False):
                 observed = data_vectors.loc[data_vectors.source.eq(source) &
                                              data_vectors.sector.eq(sector),
                                              ["delta_NO", "delta_O"]].to_numpy()
-                if not errorbars:
-                    observed = observed.mean(axis=0, keepdims=True)
                 predicted = model_vectors.loc[model_vectors.source.eq(source) &
                                                model_vectors.sector.eq(sector),
-                                               ["delta_NO", "delta_O"]].to_numpy()
+                                               ["delta_NO", "delta_O"]].mean().to_numpy()
                 for similarity in transition_cosine_sim(observed, predicted):
                     rows.append((source, LABELS[condition], sector.replace(" axis", ""),
                                  float(similarity)))
@@ -200,7 +226,11 @@ def plot_cosine_sim(data, model, path, errorbars=False):
             rows.append((source, LABELS[condition], "Overall",
                          float(transition_cosine_sim(observed, predicted))))
 
-    similarities = pd.DataFrame(rows, columns=["source", "condition", "sector", "similarity"])
+    return pd.DataFrame(rows, columns=["source", "condition", "sector", "similarity"])
+
+
+def plot_cosine_sim(data, model, path, errorbars=False):
+    similarities = cosine_similarities(data, model)
     order = list(LABELS.values())[1:]
     hues = [sector.replace(" axis", "") for sector in SECTORS] + ["Overall"]
     palette = {sector.replace(" axis", ""): color for sector, color in COLORS.items()}
@@ -229,19 +259,23 @@ def main():
                         help="Include empirical -O cells in overall vectors and traces")
     parser.add_argument("--cosine-errorbars", action="store_true",
                         help="Plot SD across neuron-wise cosine similarities")
+    parser.add_argument("--uncertainty", choices=("sd", "sem", "both"), default="both",
+                        help="Trace bands and vector covariance ellipses (default: both)")
     args = parser.parse_args()
     data, model = pd.read_csv(args.data), pd.read_csv(args.model)
     plotted_data = data if args.include_minus_o else data.loc[~data.sector.eq("-O axis")]
     args.output.mkdir(parents=True, exist_ok=True)
-    plot_traces(data.loc[~data.sector.eq("-O axis")], args.output / "ground_truth_traces")
-    plot_traces(model, args.output / "model_traces")
-    plot_average_traces(plotted_data, model, args.output / "average_traces")
     vectors_output = args.output / "transition_vectors"
     vectors_output.mkdir(exist_ok=True)
-    for condition in tuple(LABELS)[1:]:
-        prefix = "" if condition == "expert" else f"_{condition}"
-        plot_vectors(plotted_data, model, vectors_output / f"{prefix}_transition_vectors_sd",
-                     condition=condition)
+    for uncertainty in ("sd", "sem") if args.uncertainty == "both" else (args.uncertainty,):
+        suffix = "" if uncertainty == "sd" else "_sem"
+        plot_traces(data.loc[~data.sector.eq("-O axis")], args.output / f"ground_truth_traces{suffix}", uncertainty)
+        plot_traces(model, args.output / f"model_traces{suffix}", uncertainty)
+        plot_average_traces(plotted_data, model, args.output / f"average_traces{suffix}", uncertainty)
+        for condition in tuple(LABELS)[1:]:
+            prefix = "" if condition == "expert" else f"_{condition}"
+            plot_vectors(plotted_data, model, vectors_output / f"{prefix}_transition_vectors_{uncertainty}",
+                         uncertainty=uncertainty, condition=condition)
     plot_cosine_sim(plotted_data, model, args.output / "cosine_similarity", args.cosine_errorbars)
 
 

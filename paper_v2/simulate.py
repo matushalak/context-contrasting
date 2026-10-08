@@ -1,6 +1,7 @@
 """Run the six YAML models and save model.csv. Run from the repository root."""
 
 import argparse
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -84,7 +85,8 @@ def simulate(cell, protocol):
     ])
     mean, std = baseline.mean(), baseline.std(ddof=1)
     native_images = (0, 1) if cell["source"] == "familiar" else (2,)
-    common = dict(source=cell["source"], sector=cell["sector"], observation_id=cell["id"])
+    common = dict(source=cell["source"], sector=cell["sector"], observation_id=cell["id"],
+                  seed=cell["parameters"]["seed"])
     rows = []
     responses = {}
     for (condition, image, response), values in traces.items():
@@ -105,25 +107,47 @@ def simulate(cell, protocol):
             vector[f"{label}_{response}"] = np.mean([responses[phase, i, response] for i in native_images])
         vector[f"delta_{response}"] = vector[f"target_{response}"] - vector[f"naive_{response}"]
     rows.append(pd.DataFrame([vector]))
-    print(f"{cell['source']} {cell['sector']}: delta NO={vector['delta_NO']:.4f}, O={vector['delta_O']:.4f}", flush=True)
+    print(f"{cell['source']} {cell['sector']} seed={common['seed']}: "
+          f"delta NO={vector['delta_NO']:.4f}, O={vector['delta_O']:.4f}", flush=True)
     return pd.concat(rows, ignore_index=True)
+
+
+def seeded_cell(cell, seed):
+    cell = copy.deepcopy(cell)
+    cell["parameters"]["seed"] = seed
+    return cell
+
+
+def simulate_ensemble(cells, protocol, seeds=tuple(range(10)), jobs=-1):
+    # Separate processes isolate PyTorch's global RNG; each task uses one thread.
+    frames = Parallel(n_jobs=jobs, backend="loky")(
+        delayed(simulate)(seeded_cell(cell, seed), protocol) for seed in seeds for cell in cells)
+    return pd.concat(frames, ignore_index=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configs", type=Path, default=ROOT / "configs")
     parser.add_argument("--output", type=Path, default=ROOT / "model.csv")
-    parser.add_argument("--test-trials", type=int)
-    parser.add_argument("--jobs", type=int, default=6)
+    parser.add_argument("--test-trials", type=int, default=20)
+    parser.add_argument("--seeds", type=int, nargs="+", default=list(range(10)),
+                        help="Replicate seeds shared across configs (default: 0 through 9); overrides YAML seeds")
+    parser.add_argument("--jobs", type=int, default=-1,
+                        help="Independent worker processes (-1: all available CPU cores)")
     args = parser.parse_args()
+    if args.test_trials < 1 or len(set(args.seeds)) != len(args.seeds):
+        parser.error("test-trials must be positive and seeds must be unique")
+    if args.jobs == 0:
+        parser.error("jobs cannot be zero")
     cells, protocol = load_config(args.configs)
     if args.test_trials is not None:
         protocol["test_trials"] = args.test_trials
-    frames = Parallel(n_jobs=args.jobs)(delayed(simulate)(cell, protocol) for cell in cells)
+    frame = simulate_ensemble(cells, protocol, args.seeds, args.jobs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    pd.concat(frames, ignore_index=True).to_csv(args.output, index=False)
+    frame.to_csv(args.output, index=False)
     # Save the exact inputs alongside the result for later inspection.
-    args.output.with_suffix(".yaml").write_text(yaml.safe_dump(dict(protocol=protocol, cells=cells), sort_keys=False))
+    args.output.with_suffix(".yaml").write_text(yaml.safe_dump(
+        dict(protocol=protocol, cells=cells, seeds=args.seeds), sort_keys=False))
 
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
-id: 3
-source: familiar
+id: 6
+source: novel
 sector: -NO axis
 parameters:
-  seed: 5
+  seed: 2183
   w_ff: [0.05, 0.05, 0.05]
   w_fb: [0.005, 0.005, 0.005]
-  w_lat: [0.025]
+  w_lat: [0.1]
   w_pv_lat: [0.0]
-  W_pv: [0.1, 0.1, 0.1]
+  W_pv: [0.8, 0.8, 0.8]
   receives_context: [true, true, true]
   lr_ff: 0.6
   lr_fb: 0.0003
@@ -15,7 +15,7 @@ parameters:
   pyc_decay: 0.05
   pv_decay: 0.5
   apical_drive_threshold: 0.25
-  apical_gain_strength: 5.0
+  apical_gain_strength: 2.0 # 3
   apical_gain_k: 10.0
   apical_gain_threshold: 0.1
   baseline_drive_sigma: 0.15
