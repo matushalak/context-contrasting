@@ -191,7 +191,7 @@ def plot_vectors(data, model, path, uncertainty="sd", condition="expert"):
             ax.plot([], [], color="black", lw=3.2, label="Overall transition")
             ax.axhline(0, color="0.7", lw=0.7)
             ax.axvline(0, color="0.7", lw=0.7)
-            ax.set(xlim=(-2, 2), ylim=(-2, 2), aspect="equal",
+            ax.set(xlim=(-1.5, 1.5), ylim=(-1.5, 1.5), aspect="equal",
                    title=f"{label}: {source}", xlabel="Delta NO", ylabel="Delta O")
             ax.spines[["top", "right"]].set_visible(False)
     axes[0, 0].legend(frameon=False, fontsize=8)
@@ -237,12 +237,14 @@ def plot_cosine_sim(data, model, path, errorbars=False):
     palette["Overall"] = "black"
     fig, axes = plt.subplots(2, 1, figsize=(4, 6), sharey=True, layout="constrained")
     for ax, source in zip(axes, SOURCES):
+        ax.axhline(0, color="0.7", lw=0.7, linestyle = '--')
+        ax.axhline(-1, color="0.7", lw=0.7, linestyle = '--')
+        ax.axhline(1, color="0.7", lw=0.7, linestyle = '--')
         sns.pointplot(data=similarities.loc[similarities.source.eq(source)], x="condition",
                       y="similarity", hue="sector", order=order, hue_order=hues,
                       palette=palette, dodge=0.45, errorbar="sd" if errorbars else None, ax=ax,
                       linestyle = 'none')
-        ax.axhline(0, color="0.7", lw=0.7)
-        ax.set(title=source.capitalize(), xlabel=None, ylabel="Cosine similarity", ylim=(-1.05, 1.05))
+        ax.set(title=source.capitalize(), xlabel=None, ylabel="Cosine similarity", ylim=(-1.2, 1.2))
         ax.tick_params(axis="x", rotation=25)
         ax.spines[["top", "right"]].set_visible(False)
     axes[1].get_legend().remove()

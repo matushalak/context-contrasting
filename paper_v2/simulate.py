@@ -129,7 +129,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configs", type=Path, default=ROOT / "configs")
     parser.add_argument("--output", type=Path, default=ROOT / "model.csv")
-    parser.add_argument("--test-trials", type=int, default=20)
+    parser.add_argument("--test-trials", type=int, default=50)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(10)),
                         help="Replicate seeds shared across configs (default: 0 through 9); overrides YAML seeds")
     parser.add_argument("--jobs", type=int, default=-1,

@@ -96,17 +96,17 @@ Symbol & Value & Meaning \\
 $\alpha_y$ & 0.05 & PyC leak rate \\
 $\alpha_p$ & 0.5 & PV leak rate \\
 $\alpha_{a_f}$ & 0.01 & Fast adaptation rate \\
-$\alpha_{a_s}$ & 0.00125 & Slow FF-activity accumulator rate \\
+$\alpha_{a_s}$ & 0.0005 & Slow FF-activity accumulator rate \\
 % $\theta_y$ & 0 & PyC and PV rectification threshold \\
 $\kappa$ & 10 & Divisive normalization scale \\
-$\sigma_p$ & 0.2 & PV baseline-current s.d. \\
-$\theta_g$ & 0.05 & Apical gain threshold \\
-$k$ & 6 & Apical-gain sigmoid steepness \\
-$\eta_{FF}$ & 0.5 & FF depression rate per step \\
+$\sigma_p$ & 0.15 & PV baseline-current s.d. \\
+$\theta_g$ & 0.1 & Apical gain threshold \\
+$k$ & 10 & Apical-gain sigmoid steepness \\
+$\eta_{FF}$ & 0.6 & FF depression rate per step \\
 $\eta_{FB}$ & 0.0003 & FB potentiation rate per step \\
-$\eta_{LAT}$ & 0.05 & PV-to-PyC potentiation rate per step \\
+$\eta_{LAT}$ & 0.009 & PV-to-PyC potentiation rate per step \\
 $\zeta$ & 1 & Slow-accumulator scale \\
-$q$ & 4 & Slow-accumulator exponent \\
+$q$ & 1 & Slow-accumulator exponent \\
 $\mathbf{x}_i$ & $\text{perm}_i([1,0,0])$ & Feedforward input \\
 $\mathbf{c}_i$ & $\text{perm}_i([1,.6,.6])/2.2$ & Contextual input \\
 $T$ & 400 & Steps per trial (100 steps/s) \\
@@ -128,12 +128,12 @@ $N_{test}$ & 50 & Naive and expert trials per image \\
 Source & Transition & $\mathbf{w}_{FF}$ & $\mathbf{w}_{FB}$ & $\mathbf{w}_{PV}$
 & $w_{LAT}$ & $w_{pvLAT}$\\
 \hline
-Familiar & $+NO$ & $(.05,.005,.005)$ & $(.05,.05,.05)$ & $(.05,.05,.05)$ & .1 & .1\\
-Familiar & $+O$  & $(.05,.05,.05)$ & $(.1,.1,.1)$ & $(.8,.8,.8)$ & .1 & .1\\
-Familiar & $-NO$ & $(.1,.1,.1)$ & $(.005,.005,.005)$ & $(.8,.8,.8)$ & .1 & .1\\
-Novel & $+NO$ & $(.005,.005,.05)$ & $(.05,.05,.05)$ & $(.05,.05,.05)$ & .1 & .1\\
-Novel & $+O$  & $(.05,.05,.05)$ & $(.1,.1,.1)$ & $(.8,.8,.8)$ & .1 & .1\\
-Novel & $-NO$ & $(.1,.1,.1)$ & $(.005,.005,.005)$ & $(.8,.8,.8)$ & .1 & .1\\
+Familiar & $+NO$ & $(.04,.004,.004)$ & $(.025,.025,.025)$ & $(.1,.1,.1)$ & .025 & 0\\
+Familiar & $+O$  & $(.05,.05,.05)$ & $(.05,.05,.05)$ & $(.6,.6,.6)$ & .05 & 0\\
+Familiar & $-NO$ & $(.06,.06,.06)$ & $(.006,.006,.006)$ & $(.1,.1,.1)$ & .025 & 0\\
+Novel & $+NO$ & $(.02,.02,.02)$ & $(.025,.025,.025)$ & $(.1,.1,.1)$ & .025 & 0\\
+Novel & $+O$  & $(.05,.05,.05)$ & $(.05,.05,.05)$ & $(.6,.6,.6)$ & .05 & 0\\
+Novel & $-NO$ & $(.05,.05,.05)$ & $(.005,.005,.005)$ & $(.5,.5,.5)$ & .05 & 0\\
 \hline
 \end{tabular}}
 \caption{Initial synaptic parameters of the six mean-field models.}
@@ -147,12 +147,12 @@ Novel & $-NO$ & $(.1,.1,.1)$ & $(.005,.005,.005)$ & $(.8,.8,.8)$ & .1 & .1\\
 \hline
 Source & Transition & $\theta_d$ & $g$ & $\sigma_y$ \\
 \hline
-Familiar & $+NO$ & 1 & 10 & .2 \\
-Familiar & $+O$  & .1 & 5 & .2 \\
-Familiar & $-NO$ & 1 & 5 & .2 \\
-Novel & $+NO$ & 1 & 10 & .2 \\
-Novel & $+O$  & .1 & 5 & .2 \\
-Novel & $-NO$ & 1 & 5 & .2 \\
+Familiar & $+NO$ & .2 & 18 & .15 \\
+Familiar & $+O$  & .14 & 8 & .15 \\
+Familiar & $-NO$ & .2 & 5 & .15 \\
+Novel & $+NO$ & .14 & 12 & .15 \\
+Novel & $+O$  & .14 & 8 & .15 \\
+Novel & $-NO$ & .2 & 5 & .15 \\
 \hline
 \end{tabular}
 \caption{Transition-specific neural-dynamics parameters. All unlisted values

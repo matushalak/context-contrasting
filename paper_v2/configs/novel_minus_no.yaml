@@ -4,7 +4,7 @@ sector: -NO axis
 parameters:
   seed: 6
   w_ff: [0.05, 0.05, 0.05]
-  w_fb: [0.005, 0.005, 0.005]
+  w_fb: [0.0125, 0.0125, 0.0125]
   w_lat: [0.05]
   w_pv_lat: [0.0]
   W_pv: [0.5, 0.5, 0.5]
@@ -14,8 +14,8 @@ parameters:
   lr_lat: 0.009
   pyc_decay: 0.05
   pv_decay: 0.5
-  apical_drive_threshold: 0.25
-  apical_gain_strength: 5.0
+  apical_drive_threshold: 0.14
+  apical_gain_strength: 4.0
   apical_gain_k: 10.0
   apical_gain_threshold: 0.1
   baseline_drive_sigma: 0.15
