@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 
 from paper_v2.plot import (SECTORS, SOURCES, LABELS, average_traces, cosine_similarities,
-                          model_transition_vectors, plot_vectors, summarize_traces,
-                          trace_observations)
+                          empirical_sector_weights, model_transition_vectors, plot_traces,
+                          plot_vectors, summarize_traces, trace_limits, trace_observations,
+                          trace_summary)
 from paper_v2.simulate import load_config, seeded_cell, simulate, simulate_ensemble
 
 
@@ -91,13 +92,38 @@ class EnsembleTests(unittest.TestCase):
         widths = []
         for uncertainty in ("sd", "sem"):
             with patch("paper_v2.plot.save") as save:
-                plot_vectors(data, model, "unused", uncertainty)
+                plot_vectors(data, model, "familiar", "unused", uncertainty)
                 fig = save.call_args.args[0]
                 patches = fig.axes[1].patches  # familiar model panel
                 self.assertEqual(len(patches), 3)
                 widths.append(patches[0].width)
                 plt.close(fig)
         self.assertAlmostEqual(widths[0] / widths[1], np.sqrt(2))
+
+    def test_trace_rows_scale_bars_and_source_limits(self):
+        data, model = examples()
+        summary = trace_summary(model, weights=empirical_sector_weights(data))
+        summary.loc[summary.sector.eq("+O axis"), "response"] += 5
+        limits = trace_limits(summary)
+        self.assertNotEqual(limits["Overall"], limits["+O axis"])
+        for source in SOURCES:
+            with patch("paper_v2.plot.save") as save:
+                plot_traces(summary, source, "unused", conditions=("naive", "expert"),
+                            limits=limits)
+                fig = save.call_args.args[0]
+                self.assertEqual(len(fig.axes), 8)
+                self.assertEqual([fig.axes[i].texts[0].get_text() for i in (0, 2, 4, 6)],
+                                 ["Overall", "-NO", "+O", "+NO"])
+                for row, sector in enumerate(("Overall", *SECTORS)):
+                    self.assertTrue(all(ax.get_ylim() == limits[sector]
+                                        for ax in fig.axes[2 * row:2 * row + 2]))
+                    ax = fig.axes[2 * row]
+                    self.assertEqual([text.get_text() for text in ax.texts[-2:]],
+                                     ["1 s", "1 S.D."])
+                    self.assertTrue(all(line.get_linewidth() == ax.lines[0].get_linewidth()
+                                        for line in ax.lines[-2:]))
+                self.assertTrue(all(not ax.axison for ax in fig.axes))
+                plt.close(fig)
 
     def test_legacy_single_run_has_no_fabricated_uncertainty(self):
         _, model = examples()
@@ -115,9 +141,17 @@ class EnsembleTests(unittest.TestCase):
         self.assertEqual(cells[0]["parameters"]["seed"], original_seed)
         protocol.update(steps_per_trial=40, steps_per_second=10, training_trials=1,
                         test_trials=2, rng_reference_trials=1)
-        a, b = simulate(cell, protocol), simulate(cell, protocol)
+        a, trial_responses = simulate(cell, protocol, include_trial_responses=True)
+        b = simulate(cell, protocol)
         pd.testing.assert_frame_equal(a, b)
         self.assertTrue(a.seed.eq(123).all())
+        self.assertEqual(set(trial_responses.condition_key), set(LABELS))
+        self.assertEqual(set(trial_responses.test_trial), {1, 2})
+        self.assertEqual(set(trial_responses.seed), {123})
+        trial_mean = trial_responses.query('condition_key=="naive" and image_id==1').response_NO.mean()
+        trace_mean = a.query('record_type=="trace" and condition_key=="naive" and '
+                             'image_id==1 and response_type=="NO" and 0<=time_seconds<=1').response.mean()
+        self.assertAlmostEqual(trial_mean, trace_mean)
         v = model_transition_vectors(a, "expert").iloc[0]
         saved = a[a.record_type.eq("transition")].iloc[0]
         np.testing.assert_allclose(v[["delta_NO", "delta_O"]].astype(float),

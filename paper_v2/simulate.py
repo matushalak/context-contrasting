@@ -1,4 +1,4 @@
-"""Run the six YAML models and save model.csv. Run from the repository root."""
+"""Run the six YAML models and save traces and trial responses. Run from the repository root."""
 
 import argparse
 import copy
@@ -45,12 +45,12 @@ def run_phase(model, x, c, learn=False, silence_pv=False):
 
 def train(model, protocol):
     images = [0, 1] * protocol["training_trials"]
-    images = np.random.default_rng(protocol["training_order_seed"]).permutation(images)
+    # images = np.random.default_rng(protocol["training_order_seed"]).permutation(images)
     x, c = stimuli(images, protocol, post=False)
     run_phase(model, x, c, learn=True)
 
 
-def simulate(cell, protocol):
+def simulate(cell, protocol, include_trial_responses=False):
     torch.set_num_threads(1)
     model = CCNeuron(cell["parameters"])
     initial_rng = torch.random.get_rng_state()
@@ -88,14 +88,20 @@ def simulate(cell, protocol):
     common = dict(source=cell["source"], sector=cell["sector"], observation_id=cell["id"],
                   seed=cell["parameters"]["seed"])
     rows = []
+    trial_rows = []
     responses = {}
     for (condition, image, response), values in traces.items():
         if image not in native_images:
             continue
-        y = ((values - mean) / std).mean(axis=0)
+        normalized = (values - mean) / std
+        y = normalized.mean(axis=0)
         time = (np.arange(n) - n // 4) / protocol["steps_per_second"]
         # The saved final vectors include the first sample at stimulus offset.
         responses[condition, image, response] = y[n // 4:n // 2 + 1].mean()
+        if include_trial_responses:
+            for trial, value in enumerate(normalized[:, n // 4:n // 2 + 1].mean(axis=1), 1):
+                trial_rows.append(dict(**common, condition_key=condition, image_id=image + 1,
+                                       test_trial=trial, response_type=response, response=value))
         rows.append(pd.DataFrame(dict(
             **common, record_type="trace", condition_key=condition,
             image_id=image + 1, response_type=response, time_seconds=time, response=y,
@@ -109,7 +115,14 @@ def simulate(cell, protocol):
     rows.append(pd.DataFrame([vector]))
     print(f"{cell['source']} {cell['sector']} seed={common['seed']}: "
           f"delta NO={vector['delta_NO']:.4f}, O={vector['delta_O']:.4f}", flush=True)
-    return pd.concat(rows, ignore_index=True)
+    traces_and_vectors = pd.concat(rows, ignore_index=True)
+    if not include_trial_responses:
+        return traces_and_vectors
+    trial_responses = pd.DataFrame(trial_rows).pivot(
+        index=["source", "sector", "observation_id", "seed", "condition_key", "image_id", "test_trial"],
+        columns="response_type", values="response").reset_index()
+    trial_responses.columns.name = None
+    return traces_and_vectors, trial_responses.rename(columns={"NO": "response_NO", "O": "response_O"})
 
 
 def seeded_cell(cell, seed):
@@ -118,10 +131,14 @@ def seeded_cell(cell, seed):
     return cell
 
 
-def simulate_ensemble(cells, protocol, seeds=tuple(range(10)), jobs=-1):
+def simulate_ensemble(cells, protocol, seeds=tuple(range(10)), jobs=-1,
+                      include_trial_responses=False):
     # Separate processes isolate PyTorch's global RNG; each task uses one thread.
     frames = Parallel(n_jobs=jobs, backend="loky")(
-        delayed(simulate)(seeded_cell(cell, seed), protocol) for seed in seeds for cell in cells)
+        delayed(simulate)(seeded_cell(cell, seed), protocol, include_trial_responses)
+        for seed in seeds for cell in cells)
+    if include_trial_responses:
+        return tuple(pd.concat(parts, ignore_index=True) for parts in zip(*frames))
     return pd.concat(frames, ignore_index=True)
 
 
@@ -129,6 +146,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--configs", type=Path, default=ROOT / "configs")
     parser.add_argument("--output", type=Path, default=ROOT / "model.csv")
+    parser.add_argument("--trial-output", type=Path,
+                        help="Trial-level response CSV (default: model_trial_responses.csv beside --output)")
     parser.add_argument("--test-trials", type=int, default=50)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(10)),
                         help="Replicate seeds shared across configs (default: 0 through 9); overrides YAML seeds")
@@ -142,9 +161,13 @@ def main():
     cells, protocol = load_config(args.configs)
     if args.test_trials is not None:
         protocol["test_trials"] = args.test_trials
-    frame = simulate_ensemble(cells, protocol, args.seeds, args.jobs)
+    frame, trial_responses = simulate_ensemble(cells, protocol, args.seeds, args.jobs,
+                                               include_trial_responses=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(args.output, index=False)
+    trial_output = args.trial_output or args.output.with_name(args.output.stem + "_trial_responses.csv")
+    trial_output.parent.mkdir(parents=True, exist_ok=True)
+    trial_responses.to_csv(trial_output, index=False)
     # Save the exact inputs alongside the result for later inspection.
     args.output.with_suffix(".yaml").write_text(yaml.safe_dump(
         dict(protocol=protocol, cells=cells, seeds=args.seeds), sort_keys=False))

@@ -16,9 +16,10 @@ sbi-logs/
 *.json
 *.eps
 
-# The paper's two plot inputs are part of the study, not disposable exports.
+# The paper's plot inputs and trial-level responses are part of the study.
 !paper_v2/ground_truth.csv
 !paper_v2/model.csv
+!paper_v2/model_trial_responses.csv
 paper_v2/figures/
 paper_v2/robustness/
 thesis/results/

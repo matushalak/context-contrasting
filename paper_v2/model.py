@@ -43,13 +43,13 @@ class CCNeuron:
             q["apical_gain_k"] * (fb - q["apical_gain_threshold"])
         ) - q["apical_gain_strength"] / 2).clamp(min=1)
         noise = (torch.randn(1, 1) * q["baseline_drive_sigma"]).squeeze()
-        target = ((gain * ff + drive) / (1 + q["divisive_gain"] * lateral)
-                  + noise - self.adaptation).clamp(0, 1)
-        self.y = ((1 - q["pyc_decay"]) * self.y + q["pyc_decay"] * target).clamp(max=1)
+        voltage = ((gain * ff + drive) / (1 + q["divisive_gain"] * lateral)
+                  + noise - self.adaptation)
+        self.y = ((1 - q["pyc_decay"]) * self.y + q["pyc_decay"] * voltage.clamp(0, 1))
 
         if learn:
             rate = q["pyc_decay"] * q["ff_accumulator_alpha_factor"]
-            self.accumulator = (1 - rate) * self.accumulator + rate * self.y
+            self.accumulator = (1 - rate) * self.accumulator + rate * ff
             scale = q["ff_accumulator_scale"] * self.accumulator ** q["ff_accumulator_power"]
             self.w_ff += -q["lr_ff"] * scale * (self.y * x) * self.w_ff
             self.w_fb += q["lr_fb"] * (c * self.receives_context) * (1 - self.w_fb)

@@ -27,14 +27,16 @@ Plots exclude the empirical -O sector by default. To include it in the overall e
 uv run python -m paper_v2.plot --include-minus-o
 ```
 
-The transition-vector figures are written under `figures/transition_vectors/` and include the expert and all three acute-silencing conditions, each calculated from naive to that condition. Cosines compare the seed-averaged model vector with each individual empirical neuron vector, then average those similarities. `--cosine-errorbars` adds SD across neurons without changing that comparison. The overall point compares the two overall average vectors.
+Figures are written separately under `figures/familiar/` and `figures/novel/`, with matching limits for each pair. Each folder has empirical traces, model traces in `core` (naive and expert), `ablations` (three silencing conditions), and `all` versions, cosine similarities, and a `transition_vectors/` subfolder. Trace rows and cosine legend entries follow Overall, -NO, +O, +NO. The weighted model Overall trace is the first row of each model trace figure; the empirical Overall trace is the first row of the empirical figure. Empirical and model traces share the axis-free layout, with a separate y range and 1 s / 1 S.D. scale bars on every row. Ground-truth and core-model figures use the same y limits within each row. The bars have the same line width as the traces. All figure text uses Myriad Pro, with a minimum size of 6 pt. Plotting loads Myriad Pro from the installed Adobe Acrobat font files.
 
-Simulation defaults to **20 measurement trials and 10 seeds (0 through 9) per config**. `--seeds` supplies an explicit, reproducible seed set, overriding the seeds inside individual YAML configs. The same seed set is used for every config, so familiar/novel comparisons do not rely on different lucky seeds. The output YAML preserves the original cell configs and records the overriding `seeds` list; every CSV row carries the actual `seed` used.
+Transition vectors include the expert and all three acute-silencing conditions, each calculated from naive to that condition. Cosines compare the seed-averaged model vector with each individual empirical neuron vector, then average those similarities. `--cosine-errorbars` adds SD across neurons without changing that comparison. The overall point compares the two overall average vectors.
+
+Simulation defaults to **50 measurement trials and 10 seeds (0 through 9) per config**. `--seeds` supplies an explicit, reproducible seed set, overriding the seeds inside individual YAML configs. The same seed set is used for every config, so familiar/novel comparisons do not rely on different lucky seeds. The output YAML preserves the original cell configs and records the overriding `seeds` list; every CSV row carries the actual `seed` used.
 
 Each config/seed pair is an independent process task. The default `--jobs -1` uses all available CPU cores; use, for example, `--jobs 8` to leave resources free. PyTorch runs one thread per task, avoiding nested thread oversubscription. Each task sets its own RNG seed, so changing worker count does not change results. Parallelism uses processes, not threads, because PyTorch's RNG state is process-global.
 
 ```bash
-uv run python -m paper_v2.simulate --test-trials 20 --seeds 0 1 2 3 4 5 6 7 8 9
+uv run python -m paper_v2.simulate --test-trials 50 --seeds 0 1 2 3 4 5 6 7 8 9
 uv run python -m paper_v2.plot --uncertainty both --cosine-errorbars
 ```
 
@@ -42,7 +44,7 @@ Plotting produces **both SD and SEM** versions by default (`--uncertainty sd` or
 
 Ellipses use the covariance of seed/neuron transition vectors; SEM divides covariance by the number of observations. These are one-SD/one-SEM ellipses, not 95% confidence regions. Trace bands likewise use sample SD (ddof=1) or SD/sqrt(n). Seed-to-seed spread includes training-noise and finite-test-trial variation; using 10 seeds measures variability, rather than making every individual seed robust.
 
-Run from the repository root. Simulation writes `model.csv` and an exact input snapshot, `model.yaml`. Plotting writes PNG/SVG figures to `figures/`. Robustness writes `robustness/results.csv`, its input snapshot `config.yaml`, and PNG/SVG figures: retention heatmaps for scalars, weight coordinates, and weight families; the thirty most sensitive model/parameter combinations; the baseline transition vectors; and one ΔNO/ΔO sweep curve per parameter under `curves/`. `--plot-only` redraws the figures from a saved run. To try a small robustness sweep:
+Run from the repository root. Simulation writes `model.csv`, `model_trial_responses.csv`, and an exact input snapshot, `model.yaml`. Plotting writes PNG/SVG figures to the two source folders under `figures/`. Robustness writes `robustness/results.csv`, its input snapshot `config.yaml`, and PNG/SVG figures: retention heatmaps for scalars, weight coordinates, and weight families; the thirty most sensitive model/parameter combinations; the baseline transition vectors; and one ΔNO/ΔO sweep curve per parameter under `curves/`. `--plot-only` redraws the figures from a saved run. To try a small robustness sweep:
 
 ```bash
 uv run python -m paper_v2.robustness --parameter lr_fb --factors 0.8 1.2 \
@@ -68,6 +70,7 @@ Displayed traces span -1 to +3 seconds and average trials. All conditions of a m
 
 - `ground_truth.csv`: fixed empirical sector memberships, individual-neuron traces, and individual-neuron transition vectors for the familiar and novel expert groups. It retains 197 neuron/group transition rows and 297,600 trace rows across the +NO, +O, -NO, and -O sectors. Images are averaged within neuron before averaging neurons.
 - `model.csv`: 36,000 trial-averaged trace samples and six transition rows **per seed**, including naive, expert, FB silencing, PV silencing, and combined silencing. The default 10-seed run contains 360,000 trace rows and 60 transition rows.
+- `model_trial_responses.csv`: one row per source, sector, seed, condition, native image, and test trial, with `response_NO` and `response_O` averaged from stimulus onset through offset (0–1 s, inclusive). These responses use the same naive baseline mean and SD as `model.csv`. Load directly with `pd.read_csv("paper_v2/model_trial_responses.csv")`; average over `image_id` if a single familiar response per trial is needed. Use `--trial-output` to choose another path.
 
 Both use `record_type` (`trace` or `transition`), `source`, `sector`, and `observation_id`. Trace rows have `condition_key`, `image_id`, `response_type`, `time_seconds`, and `response`. Transition rows have `naive_NO`, `target_NO`, `naive_O`, `target_O`, `delta_NO`, and `delta_O`. Unused fields are empty. The model also records `seed`, trial counts and baseline statistics. Its `observation_id` identifies the configuration; `(observation_id, seed)` identifies a replicate. Biological neuron IDs are preserved; `sector` is a fixed group label, not recalculated by plotting.
 
