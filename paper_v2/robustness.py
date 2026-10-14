@@ -64,10 +64,12 @@ def design(cell, parameter=None, factors=None):
                 yield ("scalar", name, -1, value)
 
 
-def run_point(cell, protocol, change):
+def run_point(cell, protocol, change, seed=None):
     torch.set_num_threads(1)
     kind, parameter, coordinate, value = change
     p = copy.deepcopy(cell["parameters"])
+    if seed is not None:
+        p["seed"] = seed
     if kind == "coordinate":
         p[parameter][coordinate] = value
     elif kind == "family":
@@ -83,7 +85,7 @@ def run_point(cell, protocol, change):
         if phase == "expert":
             torch.manual_seed(200_000 + p["seed"])
             train(model, protocol)
-        # Common random numbers across perturbations, and across pre/post probes.
+        # Reuse measurement noise only across the naive/expert probes of this point.
         torch.manual_seed(100_000 + p["seed"])
         traces = {}
         for image in images:
@@ -102,7 +104,7 @@ def run_point(cell, protocol, change):
     direction = ("+O axis" if np.pi / 4 <= angle < 3 * np.pi / 4 else
                  "-NO axis" if angle >= 3 * np.pi / 4 or angle < -3 * np.pi / 4 else
                  "-O axis" if -3 * np.pi / 4 <= angle < -np.pi / 4 else "+NO axis")
-    return dict(cell_id=cell["id"], source=cell["source"], sector=cell["sector"], kind=kind,
+    return dict(cell_id=cell["id"], source=cell["source"], sector=cell["sector"], seed=p["seed"], kind=kind,
                 parameter=parameter, coordinate=coordinate, value=value, **responses,
                 delta_NO=dno, delta_O=do, magnitude=np.hypot(dno, do), direction=direction,
                 naive_baseline_mean=mean, naive_baseline_std=std)
@@ -198,9 +200,12 @@ def main():
         return plot(args.output)
     cells, protocol = load_config(args.configs)
     protocol["test_trials"] = args.test_trials
-    jobs = [(cell, change) for cell in cells for change in design(cell, args.parameter, args.factors)]
+    changes = [(cell, change) for cell in cells for change in design(cell, args.parameter, args.factors)]
+    jobs = [(cell, change, cell["parameters"]["seed"] if change[0] == "baseline" else 1_000_000 + i)
+            for i, (cell, change) in enumerate(changes)]
     print(f"Running {len(jobs)} points", flush=True)
-    results = pd.DataFrame(Parallel(n_jobs=args.jobs)(delayed(run_point)(cell, protocol, change) for cell, change in jobs))
+    results = pd.DataFrame(Parallel(n_jobs=args.jobs)(delayed(run_point)(cell, protocol, change, seed)
+                                               for cell, change, seed in jobs))
     baseline = results.loc[results.kind.eq("baseline")].set_index("cell_id").magnitude
     results["relative_magnitude"] = results.magnitude / results.cell_id.map(baseline)
     results["retained"] = results.direction.eq(results.sector) & results.relative_magnitude.ge(.25)
@@ -208,7 +213,7 @@ def main():
     results.to_csv(args.output / "results.csv", index=False)
     (args.output / "config.yaml").write_text(yaml.safe_dump(dict(protocol=protocol, cells=cells,
         parameter=args.parameter, factors=list(args.factors or FACTORS), weight_values=list(WEIGHT_VALUES),
-        magnitude_floor_fraction=.25), sort_keys=False))
+        magnitude_floor_fraction=.25, seed_rule="Baseline: YAML seed; each perturbation: 1000000 + zero-based design index"), sort_keys=False))
     plot(args.output)
 
 if __name__ == "__main__":

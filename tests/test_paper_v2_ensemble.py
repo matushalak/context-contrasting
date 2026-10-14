@@ -10,7 +10,7 @@ import pandas as pd
 from paper_v2.plot import (SECTORS, SOURCES, LABELS, average_traces, cosine_similarities,
                           empirical_sector_weights, model_transition_vectors, plot_traces,
                           plot_vectors, summarize_traces, trace_limits, trace_observations,
-                          trace_summary)
+                          trace_summary, transition_similarities)
 from paper_v2.simulate import load_config, seeded_cell, simulate, simulate_ensemble
 
 
@@ -87,6 +87,14 @@ class EnsembleTests(unittest.TestCase):
         self.assertEqual(len(values), 2)
         np.testing.assert_allclose(values.similarity, np.array([1, 3]) / np.sqrt(10))
 
+    def test_dot_and_distance_use_the_same_vector_pairs(self):
+        data, model = examples()
+        for metric, expected in (("dot", [0.5, 1.5]),
+                                 ("distance", [np.sqrt(2.5), np.sqrt(0.5)])):
+            values = transition_similarities(data, model, metric)
+            values = values.query('source=="familiar" and condition=="Expert" and sector=="+O"')
+            np.testing.assert_allclose(values.similarity, expected)
+
     def test_model_ellipses_and_sem_scaling(self):
         data, model = examples()
         widths = []
@@ -124,6 +132,15 @@ class EnsembleTests(unittest.TestCase):
                                         for line in ax.lines[-2:]))
                 self.assertTrue(all(not ax.axison for ax in fig.axes))
                 plt.close(fig)
+        with patch("paper_v2.plot.save") as save:
+            plot_traces(summary, "novel", "unused", uncertainty="sem",
+                        conditions=("naive", "expert"), limits=limits, rows=("+O axis",))
+            fig = save.call_args.args[0]
+            self.assertEqual(len(fig.axes), 2)
+            self.assertTrue(all(ax.get_ylim() == limits["+O axis"] for ax in fig.axes))
+            self.assertEqual([text.get_text() for text in fig.axes[0].texts[-2:]],
+                             ["1 s", "1 S.D."])
+            plt.close(fig)
 
     def test_legacy_single_run_has_no_fabricated_uncertainty(self):
         _, model = examples()

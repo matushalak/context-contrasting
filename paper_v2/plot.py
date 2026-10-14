@@ -3,11 +3,12 @@
 import argparse
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
+# import matplotlib
+# matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from matplotlib.patches import Ellipse
+from matplotlib.ticker import PercentFormatter
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -18,6 +19,7 @@ TRACE_ROWS = ("Overall", *SECTORS)
 DATA_SECTORS = (*SECTORS, "-O axis")
 COLORS = {"+NO axis": "#3159a7", "+O axis": "#ef202f",
           "-NO axis": "#e68600", "-O axis": "#16843e"}
+SECTOR_SHORT = {sector: sector.replace(" axis", "") for sector in COLORS}
 SOURCES = ("familiar", "novel")
 LABELS = {"naive": "Naive", "expert": "Expert", "expert_no_fb": "FB silencing",
           "expert_no_lat": "PV silencing", "expert_no_fb_no_lat": "FB & PV silencing"}
@@ -82,14 +84,14 @@ def trace_limits(summary):
     return limits
 
 
-def plot_traces(summary, source, path, uncertainty="sd", conditions=None, limits=None):
+def plot_traces(summary, source, path, uncertainty="sd", conditions=None, limits=None, rows=TRACE_ROWS):
     conditions = tuple(LABELS) if conditions is None else conditions
     limits = trace_limits(summary) if limits is None else limits
     trace_width = 1.2
-    fig, axes = plt.subplots(len(TRACE_ROWS), len(conditions),
-                             figsize=(2.2 * len(conditions), 6.3),
+    fig, axes = plt.subplots(len(rows), len(conditions),
+                             figsize=(2.2 * len(conditions), 1.7 if len(rows) == 1 else 6.3),
                              sharex=True, sharey="row", squeeze=False, layout="constrained")
-    for row, sector in enumerate(TRACE_ROWS):
+    for row, sector in enumerate(rows):
         for column, condition in enumerate(conditions):
             ax = axes[row, column]
             ax.axvspan(0, 1, color="0.92")
@@ -165,7 +167,7 @@ def overall_transition(vectors, source, weights=None):
 
 
 def plot_vectors(data, model, source, path, uncertainty="sd", condition="expert"):
-    fig, axes = plt.subplots(1, 2, figsize=(6, 3), #layout="constrained",
+    fig, axes = plt.subplots(1, 2, figsize=(7, 5), #layout="constrained",
                              sharex=True, sharey=True, squeeze=False)
     weights = empirical_sector_weights(data)
     data_vectors = data.loc[data.record_type.eq("transition")]
@@ -212,7 +214,17 @@ def transition_cosine_sim(transitions_A, transitions_B):
     return np.divide(dot, norm, out=np.full_like(dot, np.nan, dtype=float), where=norm != 0)
 
 
-def cosine_similarities(data, model):
+def transition_metric(observed, predicted, metric="cosine"):
+    if metric == "cosine":
+        return transition_cosine_sim(observed, predicted)
+    if metric == "dot":
+        return np.sum(observed * predicted, axis=-1)
+    if metric in ("l2", "distance"):
+        return np.linalg.norm(observed - predicted, axis=-1)
+    raise ValueError("metric must be 'cosine', 'dot', or 'l2'")
+
+
+def transition_similarities(data, model, metric="cosine"):
     data_vectors = data.loc[data.record_type.eq("transition")]
     weights = empirical_sector_weights(data)
     rows = []
@@ -226,35 +238,209 @@ def cosine_similarities(data, model):
                 predicted = model_vectors.loc[model_vectors.source.eq(source) &
                                                model_vectors.sector.eq(sector),
                                                ["delta_NO", "delta_O"]].mean().to_numpy()
-                for similarity in transition_cosine_sim(observed, predicted):
+                for similarity in transition_metric(observed, predicted, metric):
                     rows.append((source, LABELS[condition], sector.replace(" axis", ""),
                                  float(similarity)))
             observed = overall_transition(data_vectors, source)
             predicted = overall_transition(model_vectors, source, weights)
             rows.append((source, LABELS[condition], "Overall",
-                         float(transition_cosine_sim(observed, predicted))))
+                         float(transition_metric(observed, predicted, metric))))
 
     return pd.DataFrame(rows, columns=["source", "condition", "sector", "similarity"])
 
 
-def plot_cosine_sim(data, model, source, path, errorbars=False):
-    similarities = cosine_similarities(data, model)
+def cosine_similarities(data, model):
+    return transition_similarities(data, model)
+
+
+def plot_similarities(data, model, source, path, errorbars=False, 
+                      metric="cosine", uncertainty = 'sd'):
     order = list(LABELS.values())[1:]
     hues = ["Overall"] + [sector.replace(" axis", "") for sector in SECTORS]
     palette = {sector.replace(" axis", ""): color for sector, color in COLORS.items()}
     palette["Overall"] = "black"
+    similarities = transition_similarities(data, model, metric)
     fig, ax = plt.subplots(figsize=(4, 3.3), layout="constrained")
-    for value in (-1, 0, 1):
+    for value in (-1, 0, 1) if metric == "cosine" else (0,):
         ax.axhline(value, color="0.7", lw=0.7, linestyle="--")
     sns.pointplot(data=similarities.loc[similarities.source.eq(source)], x="condition",
                   y="similarity", hue="sector", order=order, hue_order=hues,
-                  palette=palette, dodge=0.45, errorbar="sd" if errorbars else None, ax=ax,
+                  palette=palette, dodge=0.45, errorbar=uncertainty if errorbars else None, ax=ax,
                   linestyle="none")
-    ax.set(xlabel=None, ylabel="Cosine similarity", ylim=(-1.2, 1.2))
+    labels = {"cosine": "Cosine similarity", "dot": "Dot product", "l2": "Euclidean distance"}
+    ax.set(xlabel=None, ylabel=labels[metric])
+    if metric == "cosine":
+        ax.set_ylim(-1.2, 1.2)
     ax.tick_params(axis="x", rotation=25)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, title=None)
     save(fig, path)
+
+
+def plot_transition_proportions(data, path):
+    transitions = data.loc[data.record_type.eq("transition")]
+    counts = transitions.groupby(["source", "sector"])["observation_id"].nunique().unstack(fill_value=0)
+    proportions = counts.reindex(index=SOURCES, columns=DATA_SECTORS, fill_value=0)
+    proportions = proportions.div(proportions.sum(axis=1), axis=0)
+    fig, ax = plt.subplots(figsize=(4.6, 4), layout="constrained")
+    bottom = np.zeros(len(SOURCES))
+    for sector in reversed(DATA_SECTORS):
+        values = proportions[sector].to_numpy()
+        ax.bar(range(len(SOURCES)), values, bottom=bottom, color=COLORS[sector],
+               label=sector.replace(" axis", ""), width=0.65)
+        bottom += values
+    ax.set(ylim=(0, 1), ylabel="Proportion of transitions")
+    ax.set_xticks(range(len(SOURCES)), [source.capitalize() for source in SOURCES])
+    ax.yaxis.set_major_formatter(PercentFormatter(1))
+    ax.spines[["top", "right"]].set_visible(False)
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles[::-1], labels[::-1], frameon=False, title=None,
+              loc="upper left", bbox_to_anchor=(1.02, 1))
+    save(fig, path)
+
+
+def plot_empirical_overall_vectors(data, path):
+    vectors = data.loc[data.record_type.eq("transition")]
+    means = {source: overall_transition(vectors, source) for source in SOURCES}
+    limit = 1.3 * max(abs(value).max() for value in means.values())
+    fig, axes = plt.subplots(1, len(SOURCES), figsize=(6, 3),
+                             sharex=True, sharey=True, layout="constrained")
+    for ax, source in zip(axes, SOURCES):
+        value = means[source]
+        ax.axhline(0, color="0.7", lw=0.7)
+        ax.axvline(0, color="0.7", lw=0.7)
+        ax.annotate("", xy=value, xytext=(0, 0),
+                    arrowprops=dict(arrowstyle="-|>", color="black", lw=3, mutation_scale=16))
+        ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal",
+               title=source.capitalize(), xlabel="Delta NO", ylabel="Delta O")
+        ax.spines[["top", "right"]].set_visible(False)
+    save(fig, path)
+
+
+def _trace_axis(ax, summary, source, sector, condition, uncertainty, limits, fontsize):
+    frame = summary.loc[summary.sector.eq(sector) & summary.source.eq(source) &
+                        summary.condition_key.eq(condition)]
+    ax.axvspan(0, 1, color="0.92")
+    for response, color in (("NO", "black"), ("O", "red")):
+        line = frame.loc[frame.response_type.eq(response)].sort_values("time_seconds")
+        ax.plot(line.time_seconds, line.response, color=color, lw=1.2)
+        ax.fill_between(line.time_seconds, line.response - line[uncertainty],
+                        line.response + line[uncertainty], color=color, alpha=0.18, linewidth=0)
+    ax.set(xlim=(-1, 3), ylim=limits[sector])
+    ax.set_axis_off()
+    return frame
+
+
+def _plot_proportion_bar(ax, data, source, fontsize):
+    transitions = data.loc[data.record_type.eq("transition")]
+    counts = transitions.loc[transitions.source.eq(source)].groupby("sector").observation_id.nunique()
+    total = counts.sum()
+    bottom = 0.0
+    for sector in reversed(DATA_SECTORS):
+        proportion = counts.get(sector, 0) / total
+        ax.bar(0, proportion, bottom=bottom, color=COLORS[sector], width=0.72)
+        ax.text(0.43, bottom + proportion / 2, f"{sector.replace(' axis', '')}\n{proportion:.1%}",
+                color=COLORS[sector], ha="left", va="center", fontsize=fontsize * 0.7)
+        bottom += proportion
+    ax.set(xlim=(-0.55, 1.35), ylim=(0, 1), ylabel="Proportion of transitions",
+           title=source.capitalize())
+    ax.set_xticks([])
+    ax.yaxis.set_major_formatter(PercentFormatter(1))
+    ax.tick_params(labelsize=fontsize * 0.7)
+    ax.yaxis.label.set_size(fontsize)
+    ax.spines[["top", "right", "bottom"]].set_visible(False)
+
+
+def panel_b_proportions(data, source, width=2, height=3, fontsize=12):
+    """Export the labeled transition-proportion bar used beside one Panel B."""
+    fig, ax = plt.subplots(figsize=(width, height), layout="constrained")
+    _plot_proportion_bar(ax, data, source, fontsize)
+    return fig, ax
+
+
+def panel_b(data, model, source, width=8, height=2.8, fontsize=12,
+            uncertainty="sd", show_proportions=True):
+    """One familiar or novel B panel: proportion bar and four trace subpanels."""
+    plotted_data = data.loc[~data.sector.eq("-O axis")]
+    data_summary = trace_summary(data, plotted_data)
+    model_summary = trace_summary(model, weights=empirical_sector_weights(data))
+    core = model_summary.loc[model_summary.condition_key.isin(MODEL_VERSIONS["core"])]
+    data_limits, model_limits = trace_limits(data_summary), trace_limits(core)
+    columns = ((data_summary, "naive", "Data\nNaive", data_limits),
+               (data_summary, "expert", "Data\nExpert", data_limits),
+               (model_summary, "naive", "Model\nNaive", model_limits),
+               (model_summary, "expert", "Model\nExpert", model_limits))
+    if show_proportions:
+        fig = plt.figure(figsize=(width, height), layout="constrained")
+        grid = fig.add_gridspec(1, 5, width_ratios=(0.9, 1, 1, 1, 1))
+        proportion_ax = fig.add_subplot(grid[0, 0])
+        _plot_proportion_bar(proportion_ax, data, source, fontsize)
+        trace_axes = [fig.add_subplot(grid[0, i]) for i in range(1, 5)]
+    else:
+        fig, trace_axes = plt.subplots(1, 4, figsize=(width, height), layout="constrained")
+    for ax, (summary, condition, title, limits) in zip(trace_axes, columns):
+        _trace_axis(ax, summary, source, "Overall", condition, uncertainty, limits, fontsize)
+        ax.set_title(title, fontsize=fontsize * 1.5)
+    trace_axes[0].text(-0.05, 0.5, source.capitalize(), transform=trace_axes[0].transAxes,
+                       rotation=90, ha="right", va="center", fontsize=fontsize)
+    trace_axes[-1].legend(handles=[plt.Line2D([], [], color="black", label="NO"),
+                                   plt.Line2D([], [], color="red", label="O")],
+                          frameon=False, fontsize=fontsize * 0.8, ncol=2, loc="upper right")
+    _add_trace_scale(trace_axes[0], data_limits["Overall"], fontsize#, uncertainty
+                     )
+    return fig, trace_axes
+
+
+def _add_trace_scale(ax, limits, fontsize, uncertainty="sd"):
+    lower, upper = limits
+    x, y = -0.8, lower + 0.02 * (upper - lower)
+    ax.plot([x, x + 1], [y, y], color="black", lw=1.2, clip_on=False)
+    ax.plot([x, x], [y, y + 1], color="black", lw=1.2, clip_on=False)
+    ax.text(x + 0.5, y, "1 s", ha="center", va="top", fontsize=fontsize * 0.65)
+    label = "1 S.D." if uncertainty == "sd" else "1 S.E.M."
+    ax.text(x + 0.06, y + 1, label, ha="left", va="bottom", fontsize=fontsize * 0.65)
+
+
+def _trace_grid(data, model, width, height, fontsize, uncertainty, model_conditions):
+    plotted_data = data.loc[~data.sector.eq("-O axis")]
+    data_summary = trace_summary(data, plotted_data)
+    model_summary = trace_summary(model, weights=empirical_sector_weights(data))
+    data_limits = trace_limits(data_summary)
+    model_plot = model_summary.loc[model_summary.condition_key.isin(("naive", *model_conditions))]
+    model_limits = trace_limits(model_plot)
+    columns = ((data_summary, "naive", "Data\nNaive", data_limits),
+               (data_summary, "expert", "Data\nExpert", data_limits),
+               (model_summary, "naive", "Model\nNaive", model_limits),
+               *((model_summary, condition, f"Model\n{LABELS[condition]}", model_limits)
+                 for condition in model_conditions))
+    fig, axes = plt.subplots(len(SECTORS) * len(SOURCES), len(columns),
+                             figsize=(width, height), squeeze=False, layout="constrained")
+    for row, (sector, source) in enumerate((sector, source) for sector in SECTORS for source in SOURCES):
+        for col, (summary, condition, title, limits) in enumerate(columns):
+            ax = axes[row, col]
+            _trace_axis(ax, summary, source, sector, condition, uncertainty, limits, fontsize)
+            if row == 0:
+                ax.set_title(title, fontsize=fontsize * 1.5)
+        axes[row, 0].text(-0.05, 0.5, f"{SECTOR_SHORT[sector]}\n{source.capitalize()}",
+                          transform=axes[row, 0].transAxes, ha="right", va="center",
+                          fontsize=fontsize, color=COLORS[sector])
+    # axes[0, -1].legend(handles=[plt.Line2D([], [], color="black", label="NO"),
+    #                             plt.Line2D([], [], color="red", label="O")],
+    #                    frameon=False, fontsize=fontsize * 0.8, ncol=2, loc="upper right")
+    _add_trace_scale(axes[0, 0], data_limits[SECTORS[0]], fontsize, #uncertainty
+                     )
+    return fig, axes
+
+
+def panel_c(data, model, width=8, height=6.5, fontsize=10, uncertainty="sd"):
+    """Panel C: empirical and core model traces, grouped by data sector."""
+    return _trace_grid(data, model, width, height, fontsize, uncertainty, ("expert",))
+
+
+def panel_c_appendix(data, model, width=12, height=6.5, fontsize=10, uncertainty="sd"):
+    """Appendix C: Panel C plus model FB, PV, and combined silencing columns."""
+    return _trace_grid(data, model, width, height, fontsize, uncertainty,
+                       ("expert", "expert_no_fb", "expert_no_lat", "expert_no_fb_no_lat"))
 
 
 def main():
@@ -264,44 +450,68 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "figures")
     parser.add_argument("--include-minus-o", action="store_true",
                         help="Include empirical -O cells in overall vectors and traces")
-    parser.add_argument("--cosine-errorbars", action="store_true",
-                        help="Plot SD across neuron-wise cosine similarities")
+    parser.add_argument("--similarity-errorbars", "--cosine-errorbars", action="store_true",
+                        help="Plot SD across neuron-wise values in all three similarity panels")
     parser.add_argument("--uncertainty", choices=("sd", "sem", "both"), default="both",
                         help="Trace bands and vector covariance ellipses (default: both)")
+    parser.add_argument("--overall-only", action="store_true",
+                        help="Export only the empirical Overall traces and transition vectors")
     args = parser.parse_args()
     use_myriad_pro()
     data, model = pd.read_csv(args.data), pd.read_csv(args.model)
     plotted_data = data if args.include_minus_o else data.loc[~data.sector.eq("-O axis")]
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.overall_only:
+        summary = trace_summary(data, plotted_data)
+        limits = trace_limits(summary)
+        for source in SOURCES:
+            for uncertainty in ("sd", "sem") if args.uncertainty == "both" else (args.uncertainty,):
+                suffix = "" if uncertainty == "sd" else "_sem"
+                plot_traces(summary, source, args.output / f"{source}_ground_truth_overall_traces{suffix}",
+                            uncertainty, conditions=MODEL_VERSIONS["core"], limits=limits, rows=("Overall",))
+        plot_empirical_overall_vectors(plotted_data, args.output / "ground_truth_overall_transition_vectors")
+        return
+    plot_transition_proportions(data, args.output / "transition_proportions")
     weights = empirical_sector_weights(data)
     data_summary = trace_summary(data, plotted_data)
     model_summary = trace_summary(model, weights=weights)
     core_conditions = MODEL_VERSIONS["core"]
-    core_limits = trace_limits(pd.concat([
-        data_summary, model_summary.loc[model_summary.condition_key.isin(core_conditions)]
-    ]))
+    data_limits = trace_limits(data_summary)
     model_limits = {version: trace_limits(model_summary.loc[
         model_summary.condition_key.isin(conditions)]) for version, conditions in MODEL_VERSIONS.items()}
-    model_limits["core"] = core_limits
     for uncertainty in ("sd", "sem") if args.uncertainty == "both" else (args.uncertainty,):
         suffix = "" if uncertainty == "sd" else "_sem"
         for source in SOURCES:
             output = args.output / source
+            traces_output = args.output / "traces" / source
+            traces_output.mkdir(parents=True, exist_ok=True)
             vectors_output = output / "transition_vectors"
             vectors_output.mkdir(parents=True, exist_ok=True)
-            plot_traces(data_summary, source, output / f"ground_truth_traces{suffix}",
-                        uncertainty, conditions=core_conditions, limits=core_limits)
+            plot_traces(data_summary, source, traces_output / f"ground_truth_traces{suffix}",
+                        uncertainty, conditions=core_conditions, limits=data_limits)
+            if uncertainty == "sem":
+                for sector in TRACE_ROWS:
+                    name = sector.lower().replace(" axis", "").replace("+", "plus_").replace("-", "minus_")
+                    plot_traces(data_summary, source, traces_output / f"ground_truth_traces_sem_{name}",
+                                uncertainty, conditions=core_conditions, limits=data_limits, rows=(sector,))
             for version, conditions in MODEL_VERSIONS.items():
-                plot_traces(model_summary, source, output / f"model_traces_{version}{suffix}",
+                plot_traces(model_summary, source, traces_output / f"model_traces_{version}{suffix}",
                             uncertainty, conditions=conditions, limits=model_limits[version])
+            if uncertainty == "sem":
+                for sector in TRACE_ROWS:
+                    name = sector.lower().replace(" axis", "").replace("+", "plus_").replace("-", "minus_")
+                    plot_traces(model_summary, source, traces_output / f"model_traces_core_sem_{name}",
+                                uncertainty, conditions=core_conditions, limits=model_limits["core"], rows=(sector,))
             for condition in tuple(LABELS)[1:]:
                 prefix = "" if condition == "expert" else f"_{condition}"
                 plot_vectors(plotted_data, model, source,
                              vectors_output / f"{prefix}_transition_vectors_{uncertainty}",
                              uncertainty=uncertainty, condition=condition)
     for source in SOURCES:
-        plot_cosine_sim(plotted_data, model, source, args.output / source / "cosine_similarity",
-                        args.cosine_errorbars)
+        similarity_output = args.output / "similarity"
+        similarity_output.mkdir(parents=True, exist_ok=True)
+        plot_similarities(plotted_data, model, source, similarity_output / f"{source}_similarity",
+                          args.similarity_errorbars)
 
 
 if __name__ == "__main__":

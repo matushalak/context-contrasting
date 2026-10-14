@@ -17,9 +17,9 @@ cells:
     - 0.0015
     - 0.0015
     w_fb:
-    - 0.025
-    - 0.025
-    - 0.025
+    - 0.0125
+    - 0.0125
+    - 0.0125
     w_lat:
     - 0.0125
     w_pv_lat:
@@ -37,7 +37,7 @@ cells:
     lr_lat: 0.05
     pyc_decay: 0.05
     pv_decay: 0.5
-    apical_drive_threshold: 0.15
+    apical_drive_threshold: 0.14
     apical_gain_strength: 35.0
     apical_gain_k: 10.0
     apical_gain_threshold: 0.1

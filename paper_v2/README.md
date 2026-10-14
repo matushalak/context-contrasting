@@ -11,25 +11,18 @@ Six independent models: familiar and novel, each with +NO, +O, and -NO transitio
 | `model.py` | One PyC/PV pair: dynamics and three plastic synapses |
 | `simulate.py` | Naive probes, familiar training, expert probes and acute silencing |
 | `export_ground_truth.py` | Rebuild the empirical plotting CSV from the saved Pre/Post tables |
-| `plot.py` | Traces and transition vectors, reading only the two CSVs |
+| `plot.py` | Composable final figure panels, reading only the two CSVs |
+| `final_results.ipynb` | Assemble and export panels B–E and the appendix C panel |
 | `robustness.py` | One-at-a-time parameter and initial-weight sweeps |
 
 ```bash
 uv run python -m paper_v2.export_ground_truth
 uv run python -m paper_v2.simulate
-uv run python -m paper_v2.plot
 uv run python -m paper_v2.robustness
 ```
 
-Plots exclude the empirical -O sector by default. To include it in the overall empirical transition arrows and average traces, use:
+Open `final_results.ipynb` to assemble the final publication panels from `ground_truth.csv` and `model.csv`. Familiar and Novel B panels are exported separately with labeled transition proportions; those bar plots can also be exported on their own. Panel C is grouped by sector. Appendix C preserves that layout and adds Model FB silencing, Model PV silencing, and Model FB & PV silencing columns. B/C accept panel dimensions and font size; D/E call the existing vector and cosine plotting functions. The cosine plot supports `cosine` (default), `dot`, and `l2`. The notebook saves SVG and PNG files under `figures/final_layout/`.
 
-```bash
-uv run python -m paper_v2.plot --include-minus-o
-```
-
-Figures are written separately under `figures/familiar/` and `figures/novel/`, with matching limits for each pair. Each folder has empirical traces, model traces in `core` (naive and expert), `ablations` (three silencing conditions), and `all` versions, cosine similarities, and a `transition_vectors/` subfolder. Trace rows and cosine legend entries follow Overall, -NO, +O, +NO. The weighted model Overall trace is the first row of each model trace figure; the empirical Overall trace is the first row of the empirical figure. Empirical and model traces share the axis-free layout, with a separate y range and 1 s / 1 S.D. scale bars on every row. Ground-truth and core-model figures use the same y limits within each row. The bars have the same line width as the traces. All figure text uses Myriad Pro, with a minimum size of 6 pt. Plotting loads Myriad Pro from the installed Adobe Acrobat font files.
-
-Transition vectors include the expert and all three acute-silencing conditions, each calculated from naive to that condition. Cosines compare the seed-averaged model vector with each individual empirical neuron vector, then average those similarities. `--cosine-errorbars` adds SD across neurons without changing that comparison. The overall point compares the two overall average vectors.
 
 Simulation defaults to **50 measurement trials and 10 seeds (0 through 9) per config**. `--seeds` supplies an explicit, reproducible seed set, overriding the seeds inside individual YAML configs. The same seed set is used for every config, so familiar/novel comparisons do not rely on different lucky seeds. The output YAML preserves the original cell configs and records the overriding `seeds` list; every CSV row carries the actual `seed` used.
 
@@ -37,14 +30,13 @@ Each config/seed pair is an independent process task. The default `--jobs -1` us
 
 ```bash
 uv run python -m paper_v2.simulate --test-trials 50 --seeds 0 1 2 3 4 5 6 7 8 9
-uv run python -m paper_v2.plot --uncertainty both --cosine-errorbars
 ```
 
-Plotting produces **both SD and SEM** versions by default (`--uncertainty sd` or `sem` selects one). Unsuffixed trace files show SD; `_sem` trace files show SEM. Vector filenames end in `_sd` or `_sem`. Images are averaged within a seed/neuron before calculating uncertainty. Model uncertainty is across seeds, empirical uncertainty across neurons, not across images or individual time samples. Weighted model traces first combine the sector templates within each seed, then calculate SD/SEM across those complete weighted traces. This retains between-sector covariance. A legacy single-run CSV still plots, but has no estimable model SD/SEM band.
+Open `final_results.ipynb` after the simulation to regenerate the final panels from the exported CSVs. Traces average images within neuron/seed before calculating SD or SEM. Weighted model Overall traces combine sector templates within each seed before estimating uncertainty, preserving between-sector covariance.
 
 Ellipses use the covariance of seed/neuron transition vectors; SEM divides covariance by the number of observations. These are one-SD/one-SEM ellipses, not 95% confidence regions. Trace bands likewise use sample SD (ddof=1) or SD/sqrt(n). Seed-to-seed spread includes training-noise and finite-test-trial variation; using 10 seeds measures variability, rather than making every individual seed robust.
 
-Run from the repository root. Simulation writes `model.csv`, `model_trial_responses.csv`, and an exact input snapshot, `model.yaml`. Plotting writes PNG/SVG figures to the two source folders under `figures/`. Robustness writes `robustness/results.csv`, its input snapshot `config.yaml`, and PNG/SVG figures: retention heatmaps for scalars, weight coordinates, and weight families; the thirty most sensitive model/parameter combinations; the baseline transition vectors; and one ΔNO/ΔO sweep curve per parameter under `curves/`. `--plot-only` redraws the figures from a saved run. To try a small robustness sweep:
+Run from the repository root. Simulation writes `model.csv`, `model_trial_responses.csv`, and an exact input snapshot, `model.yaml`. Plotting writes PNG/SVG figures under `figures/`. Robustness writes `robustness/results.csv`, its input snapshot `config.yaml`, and PNG/SVG figures: retention heatmaps for scalars, weight coordinates, and weight families; the thirty most sensitive model/parameter combinations; the baseline transition vectors; and one ΔNO/ΔO sweep curve per parameter under `curves/`. `--plot-only` redraws the figures from a saved run. To try a small robustness sweep:
 
 ```bash
 uv run python -m paper_v2.robustness --parameter lr_fb --factors 0.8 1.2 \
@@ -72,6 +64,8 @@ Displayed traces span -1 to +3 seconds and average trials. All conditions of a m
 - `model.csv`: 36,000 trial-averaged trace samples and six transition rows **per seed**, including naive, expert, FB silencing, PV silencing, and combined silencing. The default 10-seed run contains 360,000 trace rows and 60 transition rows.
 - `model_trial_responses.csv`: one row per source, sector, seed, condition, native image, and test trial, with `response_NO` and `response_O` averaged from stimulus onset through offset (0–1 s, inclusive). These responses use the same naive baseline mean and SD as `model.csv`. Load directly with `pd.read_csv("paper_v2/model_trial_responses.csv")`; average over `image_id` if a single familiar response per trial is needed. Use `--trial-output` to choose another path.
 
+The second cell of `silencing_quant.ipynb` summarizes these trial responses in `figures/silencing_response_points.png` and `.svg`, with the underlying 30 estimates in `figures/silencing_response_summary.csv`. Trials and familiar images are averaged within each seed before calculating the point estimate and ±2 SEM whiskers across the ten seeds. The 2×3 plot uses marker shape for condition and the existing sector colors.
+
 Both use `record_type` (`trace` or `transition`), `source`, `sector`, and `observation_id`. Trace rows have `condition_key`, `image_id`, `response_type`, `time_seconds`, and `response`. Transition rows have `naive_NO`, `target_NO`, `naive_O`, `target_O`, `delta_NO`, and `delta_O`. Unused fields are empty. The model also records `seed`, trial counts and baseline statistics. Its `observation_id` identifies the configuration; `(observation_id, seed)` identifies a replicate. Biological neuron IDs are preserved; `sector` is a fixed group label, not recalculated by plotting.
 
 `ground_truth.csv` is generated by `export_ground_truth.py` from `thesis/data_analysis/transitions_post.csv` and `transitions_post_traces.csv`. For each source separately, responses are averaged across images within a neuron, the Pre-to-Post vector is calculated, cells with transition magnitude at most 0.3 are excluded, and the remaining cells are assigned to a directional sector. That fixed `(source, neuron_idx)` membership is then joined back to every saved per-image trace. `Full`/`Occl` become `NO`/`O`, and `Pre`/`Post` become `naive`/`expert`. Running the export command above reproduces the checked-in CSV.
@@ -80,9 +74,9 @@ The checked-in CSV retains -O so this choice does not require rebuilding data. B
 
 ## Robustness
 
-Every continuous scalar and complete weight family is tested at `0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5` times its YAML value, leaving everything else fixed. Scaled family weights are clipped to the allowed `[0, 1]`, and the PyC and PV leak rates, which are fractions per step, are capped at 1. Each individual weight coordinate is instead set to the absolute values `0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1` and to its YAML value. Seeds and binary context masks are not perturbed. A point is retained if its directional sector is unchanged and its transition magnitude is at least 25% of its baseline magnitude; degenerate zero-SD probes are invalid.
+Every continuous scalar and complete weight family is tested at `0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 5` times its YAML value, leaving everything else fixed. Scaled family weights are clipped to the allowed `[0, 1]`, and the PyC and PV leak rates, which are fractions per step, are capped at 1. Each individual weight coordinate is instead set to the absolute values `0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1` and to its YAML value. Binary context masks are not perturbed. Each baseline uses its YAML seed; every perturbation receives a distinct, reproducible seed recorded in `results.csv`. A point is retained if its directional sector is unchanged and its transition magnitude is at least 25% of its baseline magnitude; degenerate zero-SD probes are invalid. A single independent seed per point spreads seed effects across the grid but does not establish seed-wise robustness for any particular parameter value.
 
-The robustness protocol preserves the previous robustness method: ten measurement trials by default, separate fixed training and measurement seeds, normalization over the full three-second native-image naive baseline, and response means over the stimulus samples only. Thus robustness baselines differ slightly from the main figure baselines. This distinction is explicit in the two short simulation routines rather than hidden in exporter dependencies.
+The robustness protocol preserves ten measurement trials by default, separate training and measurement random streams for each point, normalization over the full three-second native-image naive baseline, and response means over the stimulus samples only. Thus robustness baselines differ slightly from the main figure baselines. This distinction is explicit in the two short simulation routines rather than hidden in exporter dependencies.
 
 ## Provenance and validation
 
@@ -92,6 +86,6 @@ context_contrasting/paper/done-amen/figures/organized_sector_results/mean_field_
 
 The empirical inputs and sector calculation are shared with `thesis/data_analysis/export_real_mean_field_style.py`; the separate task/act analysis is outside this study. No data extraction is needed to plot the saved CSVs.
 
-Validation of this migration: a complete 50-trial simulation matched all 36,000 native trace samples and six transition vectors from the checkpoint to below 3e-15 absolute error. The model also matched the original implementation exactly over 400 learning steps for every configuration. The robustness design contains 326–329 points per model (1,971 total, including the six baselines). In the saved full run, 1,804 of 1,965 perturbed points (91.8%) are retained: 92.9% of scalar, 90.1% of weight-coordinate, and 91.8% of weight-family points.
+Validation of this migration: a complete 50-trial simulation matched all 36,000 native trace samples and six transition vectors from the checkpoint to below 3e-15 absolute error. The model also matched the original implementation exactly over 400 learning steps for every configuration. For the current configs and distinct-seed robustness run, see `robustness/report.md`: 1,740 of 1,944 sweep points (89.5%) retained their direction and at least 25% of baseline magnitude; all 186 unchanged-value checks passed with independent seeds.
 
 All six two-trial robustness baselines were also compared directly with the previous robustness routine, matching to below 1e-15 absolute error. The six ten-trial baseline vectors and all 816 perturbed points shared with the earlier `robustness_oat_extensive` screen reproduce it to below 6e-15; retention fractions differ only because the grids differ.
