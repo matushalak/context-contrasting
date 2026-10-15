@@ -401,7 +401,8 @@ def _add_trace_scale(ax, limits, fontsize, uncertainty="sd"):
     ax.text(x + 0.06, y + 1, label, ha="left", va="bottom", fontsize=fontsize * 0.65)
 
 
-def _trace_grid(data, model, width, height, fontsize, uncertainty, model_conditions):
+def _trace_grid(data, model, width, height, fontsize, uncertainty, model_conditions, 
+                model_only = False, data_only = False):
     plotted_data = data.loc[~data.sector.eq("-O axis")]
     data_summary = trace_summary(data, plotted_data)
     model_summary = trace_summary(model, weights=empirical_sector_weights(data))
@@ -413,6 +414,12 @@ def _trace_grid(data, model, width, height, fontsize, uncertainty, model_conditi
                (model_summary, "naive", "Model\nNaive", model_limits),
                *((model_summary, condition, f"Model\n{LABELS[condition]}", model_limits)
                  for condition in model_conditions))
+    if model_only:
+        columns = columns[2:]
+
+    elif data_only:
+        columns = columns[:2]
+
     fig, axes = plt.subplots(len(SECTORS) * len(SOURCES), len(columns),
                              figsize=(width, height), squeeze=False, layout="constrained")
     for row, (sector, source) in enumerate((sector, source) for sector in SECTORS for source in SOURCES):
@@ -437,10 +444,12 @@ def panel_c(data, model, width=8, height=6.5, fontsize=10, uncertainty="sd"):
     return _trace_grid(data, model, width, height, fontsize, uncertainty, ("expert",))
 
 
-def panel_c_appendix(data, model, width=12, height=6.5, fontsize=10, uncertainty="sd"):
+def panel_c_appendix(data, model, width=12, height=6.5, fontsize=10, uncertainty="sd",
+                     model_only = False, data_only = False):
     """Appendix C: Panel C plus model FB, PV, and combined silencing columns."""
     return _trace_grid(data, model, width, height, fontsize, uncertainty,
-                       ("expert", "expert_no_fb", "expert_no_lat", "expert_no_fb_no_lat"))
+                       ("expert", "expert_no_fb", "expert_no_lat", "expert_no_fb_no_lat"),
+                       model_only, data_only)
 
 
 def main():
