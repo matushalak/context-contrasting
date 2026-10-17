@@ -419,6 +419,11 @@ def _trace_grid(data, model, width, height, fontsize, uncertainty, model_conditi
 
     elif data_only:
         columns = columns[:2]
+    # one y-scale per sector across every column shown, so data and model traces are directly comparable
+    shown = [c[3] for c in columns]
+    shared = {sector: (min(l[sector][0] for l in shown), max(l[sector][1] for l in shown)) for sector in TRACE_ROWS}
+    columns = tuple((summary, condition, title, shared) for summary, condition, title, _ in columns)
+    data_limits = shared
 
     fig, axes = plt.subplots(len(SECTORS) * len(SOURCES), len(columns),
                              figsize=(width, height), squeeze=False, layout="constrained")
